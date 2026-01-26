@@ -358,6 +358,15 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     selected: {_useSystemKeyboard},
                     showSelectedIcon: false,
                     style: ButtonStyle(
+                      backgroundColor: WidgetStateProperty.resolveWith(
+                        (states) => Colors.grey.shade200,
+                      ),
+                      foregroundColor: WidgetStateProperty.resolveWith(
+                        (states) => Colors.black87,
+                      ),
+                      overlayColor: WidgetStateProperty.all(
+                        Colors.black.withValues(alpha: 0.08),
+                      ),
                       visualDensity: VisualDensity.compact,
                       tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       textStyle: WidgetStateProperty.all(

@@ -76,6 +76,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     }
     
     DeviceSelectManager.lastSelectedDevice = widget.device;
+
+    // Load saved connect password (local only).
+    final savedPasswordKey = 'connectPassword_${widget.device.uid}';
+    final savedPassword =
+        SharedPreferencesManager.getString(savedPasswordKey) ?? '';
+    if (savedPassword.isNotEmpty) {
+      _passwordController.text = savedPassword;
+    }
     // 从缓存中加载虚拟显示器尺寸，如果没有则使用默认值
     _virtualDisplayWidth = SharedPreferencesManager.getInt('virtualDisplayWidth') ?? 1920;
     _virtualDisplayHeight = SharedPreferencesManager.getInt('virtualDisplayHeight') ?? 1080;
@@ -497,13 +505,33 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                             controller: _passwordController,
                             obscureText: true,
                             decoration: InputDecoration(
-                              labelText: '连接密码',
+                              labelText: _passwordController.text.isEmpty
+                                  ? '连接密码'
+                                  : '已保存（本地）',
                               border: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8),
                               ),
                               contentPadding: const EdgeInsets.symmetric(
                                   horizontal: 12, vertical: 8),
                             ),
+                          ),
+                          const SizedBox(height: 8),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  _passwordController.text.isEmpty
+                                      ? '未保存连接密码'
+                                      : '已保存连接密码（本地）',
+                                  style: const TextStyle(
+                                      fontSize: 12, color: Colors.grey),
+                                ),
+                              ),
+                              TextButton(
+                                onPressed: _clearSavedConnectPassword,
+                                child: const Text('清除'),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 16),
                           SizedBox(
@@ -1022,6 +1050,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     }
     StreamingSettings.updateScreenId(_selectedMonitorId - 1);
     StreamingSettings.connectPassword = _passwordController.text;
+    // Persist connect password locally for this device.
+    await SharedPreferencesManager.setString(
+        'connectPassword_${widget.device.uid}', _passwordController.text);
     StreamingSettings.syncMousePosition = _syncRemoteMousePosition;
     
     // 设置流模式
@@ -1048,6 +1079,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   }
 
   late TextEditingController _passwordController;
+
+  Future<void> _clearSavedConnectPassword() async {
+    await SharedPreferencesManager.setString(
+        'connectPassword_${widget.device.uid}', '');
+    setState(() {
+      _passwordController.text = '';
+    });
+  }
 
   void _unhostDevice(BuildContext context) {
     ApplicationInfo.connectable = false;

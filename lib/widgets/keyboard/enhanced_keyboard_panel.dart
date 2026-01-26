@@ -153,7 +153,10 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
                     height: scaledHeight,
                     color: Colors.transparent,
                     child: VirtualKeyboard(
-                      keyBackgroundColor: Colors.black.withValues(alpha: 0.72),
+                      keyBackgroundColor: Colors.grey.shade300,
+                      keyHighlightColor: Colors.grey.shade400,
+                      textColor: Colors.black87,
+                      fontSize: 16,
                       height: scaledHeight,
                       type: VirtualKeyboardType.Hardware,
                       keyPressedCallback: (keyCode, isDown) {
