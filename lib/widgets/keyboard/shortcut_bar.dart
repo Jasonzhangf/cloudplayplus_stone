@@ -49,6 +49,24 @@ class _ShortcutBarState extends State<ShortcutBar> {
   @override
   Widget build(BuildContext context) {
     final shortcuts = widget.settings.enabledShortcuts;
+    final arrowIds = {'arrow-left', 'arrow-right', 'arrow-up', 'arrow-down'};
+    final arrowShortcuts = <String, ShortcutItem>{
+      for (final s in shortcuts)
+        if (arrowIds.contains(s.id)) s.id: s,
+    };
+
+    // Remove individual arrow shortcuts from the flat list; we'll render them as a cluster.
+    final filteredShortcuts =
+        shortcuts.where((s) => !arrowIds.contains(s.id)).toList();
+
+    // Insert arrow cluster at the earliest position where any arrow existed.
+    int insertIndex = 0;
+    for (int i = 0; i < shortcuts.length; i++) {
+      if (arrowIds.contains(shortcuts[i].id)) {
+        insertIndex = i;
+        break;
+      }
+    }
 
     return Container(
       decoration: BoxDecoration(
@@ -74,11 +92,48 @@ class _ShortcutBarState extends State<ShortcutBar> {
             _buildSettingsButton(),
             const SizedBox(width: 8),
             // 快捷键按钮列表
-            ...shortcuts.map((shortcut) => _buildShortcutButton(shortcut)),
+            ..._buildShortcutButtonsWithArrows(
+              filteredShortcuts,
+              arrowShortcuts,
+              insertIndex,
+            ),
           ],
         ),
       ),
     );
+  }
+
+  List<Widget> _buildShortcutButtonsWithArrows(
+    List<ShortcutItem> shortcuts,
+    Map<String, ShortcutItem> arrows,
+    int insertIndex,
+  ) {
+    final widgets = <Widget>[];
+    int currentIndex = 0;
+    for (final shortcut in shortcuts) {
+      if (currentIndex == insertIndex && arrows.isNotEmpty) {
+        widgets.add(_ArrowClusterButton(
+          left: arrows['arrow-left'],
+          right: arrows['arrow-right'],
+          up: arrows['arrow-up'],
+          down: arrows['arrow-down'],
+          onShortcutPressed: widget.onShortcutPressed,
+        ));
+        widgets.add(const SizedBox(width: 8));
+      }
+      widgets.add(_buildShortcutButton(shortcut));
+      currentIndex++;
+    }
+    if (arrows.isNotEmpty && insertIndex >= shortcuts.length) {
+      widgets.add(_ArrowClusterButton(
+        left: arrows['arrow-left'],
+        right: arrows['arrow-right'],
+        up: arrows['arrow-up'],
+        down: arrows['arrow-down'],
+        onShortcutPressed: widget.onShortcutPressed,
+      ));
+    }
+    return widgets;
   }
 
   /// 构建设置按钮
@@ -196,6 +251,90 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
             ],
           ],
         ),
+      ),
+    );
+  }
+}
+
+/// A compact D-pad cluster button for arrow keys.
+class _ArrowClusterButton extends StatelessWidget {
+  final ShortcutItem? left;
+  final ShortcutItem? right;
+  final ShortcutItem? up;
+  final ShortcutItem? down;
+  final ValueChanged<ShortcutItem> onShortcutPressed;
+
+  const _ArrowClusterButton({
+    required this.left,
+    required this.right,
+    required this.up,
+    required this.down,
+    required this.onShortcutPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget buildKey(String label, ShortcutItem? shortcut) {
+      return InkWell(
+        onTap: shortcut == null ? null : () => onShortcutPressed(shortcut),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.65),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.18),
+              width: 1,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Colors.white.withValues(alpha: shortcut == null ? 0.25 : 0.92),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(4),
+      decoration: BoxDecoration(
+        color: Colors.black.withValues(alpha: 0.75),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.14),
+          width: 1,
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(width: 28),
+              buildKey('↑', up),
+              const SizedBox(width: 28),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              buildKey('←', left),
+              const SizedBox(width: 4),
+              buildKey('↓', down),
+              const SizedBox(width: 4),
+              buildKey('→', right),
+            ],
+          ),
+        ],
       ),
     );
   }
