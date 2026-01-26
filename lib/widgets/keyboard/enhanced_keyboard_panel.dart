@@ -147,13 +147,6 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  // 快捷键条（手机模式显示在键盘上方）
-                  if (_settings.enabledShortcuts.isNotEmpty)
-                    ShortcutBar(
-                      settings: _settings,
-                      onSettingsChanged: _handleSettingsChanged,
-                      onShortcutPressed: _handleShortcutPressed,
-                    ),
                   // 虚拟键盘
                   Container(
                     width: scaledWidth,
