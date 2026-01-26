@@ -217,6 +217,7 @@ class _ShortcutSettingsSheet extends StatefulWidget {
 
 class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
   late ShortcutSettings _settings;
+  bool _reorderMode = false;
 
   @override
   void initState() {
@@ -245,6 +246,121 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
       return s;
     }).toList();
     _updateSettings(_settings.copyWith(shortcuts: newShortcuts));
+  }
+
+  void _moveShortcut(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final items = List<ShortcutItem>.from(_settings.shortcuts);
+      final moved = items.removeAt(oldIndex);
+      items.insert(newIndex, moved);
+      // Reassign order based on current list order.
+      final updated = <ShortcutItem>[];
+      for (int i = 0; i < items.length; i++) {
+        updated.add(items[i].copyWith(order: i + 1));
+      }
+      _settings = _settings.copyWith(shortcuts: updated);
+    });
+    widget.onSettingsChanged(_settings);
+  }
+
+  void _showAddShortcutSheet() {
+    // UI-only placeholder for now.
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return Container(
+          height: MediaQuery.of(context).size.height * 0.85,
+          decoration: const BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+          ),
+          child: Column(
+            children: [
+              // Top drag indicator
+              Container(
+                margin: const EdgeInsets.symmetric(vertical: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: Row(
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                    const Expanded(
+                      child: Center(
+                        child: Text(
+                          '添加快捷键',
+                          style: TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.close),
+                      onPressed: () => Navigator.pop(context),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 8),
+              // Tabs (visual)
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16),
+                child: SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment<int>(value: 0, label: Text('键盘按键')),
+                    ButtonSegment<int>(value: 1, label: Text('系统操作')),
+                  ],
+                  selected: const {0},
+                  showSelectedIcon: false,
+                  onSelectionChanged: (_) {},
+                  style: ButtonStyle(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Expanded(
+                child: Center(
+                  child: Text(
+                    'TODO: 下一步实现“添加快捷键”逻辑（按键选择/系统操作）',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                ),
+              ),
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: SizedBox(
+                    width: double.infinity,
+                    height: 48,
+                    child: ElevatedButton(
+                      onPressed: null,
+                      child: const Text('添加'),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
   }
 
   @override
@@ -294,33 +410,55 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
           // 平台选择
           Padding(
             padding: const EdgeInsets.all(16),
-            child: Wrap(
-              spacing: 8,
-              children: ShortcutPlatform.values.map((platform) {
-                final isSelected = _settings.currentPlatform == platform;
-                return FilterChip(
-                  label: Text(getPlatformDisplayName(platform)),
-                  selected: isSelected,
-                  onSelected: (_) => _switchPlatform(platform),
-                  selectedColor: const Color(0xFF667EEA).withValues(alpha: 0.2),
-                  checkmarkColor: const Color(0xFF667EEA),
-                );
-              }).toList(),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Wrap(
+                    spacing: 8,
+                    children: ShortcutPlatform.values.map((platform) {
+                      final isSelected = _settings.currentPlatform == platform;
+                      return FilterChip(
+                        label: Text(getPlatformDisplayName(platform)),
+                        selected: isSelected,
+                        onSelected: (_) => _switchPlatform(platform),
+                        selectedColor:
+                            Colors.black.withValues(alpha: 0.08),
+                        checkmarkColor: Colors.black,
+                      );
+                    }).toList(),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '添加快捷键',
+                  onPressed: _showAddShortcutSheet,
+                  icon: const Icon(Icons.add_circle_outline),
+                ),
+              ],
             ),
           ),
           const Divider(height: 1),
           // 快捷键列表
           Flexible(
-            child: ListView.separated(
-              shrinkWrap: true,
+            child: ReorderableListView.builder(
               padding: const EdgeInsets.all(16),
               itemCount: _settings.shortcuts.length,
-              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              onReorder: _moveShortcut,
+              buildDefaultDragHandles: false,
               itemBuilder: (context, index) {
                 final shortcut = _settings.shortcuts[index];
-                return _ShortcutTile(
-                  shortcut: shortcut,
-                  onToggle: () => _toggleShortcut(shortcut.id),
+                return Padding(
+                  key: ValueKey(shortcut.id),
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: _ShortcutTile(
+                    shortcut: shortcut,
+                    reorderMode: _reorderMode,
+                    onToggle: () => _toggleShortcut(shortcut.id),
+                    onDragHandle: () {
+                      setState(() {
+                        _reorderMode = true;
+                      });
+                    },
+                  ),
                 );
               },
             ),
@@ -337,10 +475,14 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
 class _ShortcutTile extends StatelessWidget {
   final ShortcutItem shortcut;
   final VoidCallback onToggle;
+  final bool reorderMode;
+  final VoidCallback? onDragHandle;
 
   const _ShortcutTile({
     required this.shortcut,
     required this.onToggle,
+    this.reorderMode = false,
+    this.onDragHandle,
   });
 
   @override
@@ -354,9 +496,6 @@ class _ShortcutTile extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       child: Row(
         children: [
-          // 图标
-          Text(shortcut.icon, style: const TextStyle(fontSize: 24)),
-          const SizedBox(width: 12),
           // 名称和快捷键
           Expanded(
             child: Column(
@@ -381,12 +520,21 @@ class _ShortcutTile extends StatelessWidget {
               ],
             ),
           ),
-          // 开关
-          Switch(
-            value: shortcut.enabled,
-            onChanged: (_) => onToggle(),
-            activeThumbColor: const Color(0xFF667EEA),
-          ),
+          // 右侧：默认是开关；长按/进入编辑后显示排序把手
+          if (!reorderMode)
+            Switch(
+              value: shortcut.enabled,
+              onChanged: (_) => onToggle(),
+              activeColor: Colors.black87,
+            )
+          else
+            ReorderableDragStartListener(
+              index: shortcut.order - 1,
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 8),
+                child: Icon(Icons.drag_handle, color: Colors.black54),
+              ),
+            ),
         ],
       ),
     );

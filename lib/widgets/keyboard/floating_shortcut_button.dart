@@ -186,6 +186,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     return Stack(
       children: [
         // 悬浮按钮
@@ -248,7 +249,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         if (_isPanelVisible)
           Positioned(
             right: 16,
-            bottom: 80,
+            // Keep the panel anchored to the bottom-right but avoid being "too high"
+            // and avoid overlapping the system keyboard.
+            bottom: 80 + (_useSystemKeyboard ? bottomInset : 0),
             child: _buildShortcutPanel(context),
           ),
       ],
@@ -401,8 +404,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ],
               ),
             ),
-            if (_useSystemKeyboard && bottomInset > 0)
-              SizedBox(height: (bottomInset * 0.05).clamp(0.0, 12.0)),
             // 快捷键条
             Flexible(
               child: SingleChildScrollView(
