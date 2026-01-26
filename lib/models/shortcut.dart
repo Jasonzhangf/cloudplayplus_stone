@@ -153,280 +153,490 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
     case ShortcutPlatform.windows:
       return [
         ShortcutItem(
+          id: 'arrow-left',
+          label: '左',
+          icon: '',
+          keys: [ShortcutKey(key: '←', keyCode: 'ArrowLeft')],
+          platform: platform,
+          order: 1,
+        ),
+        ShortcutItem(
+          id: 'arrow-right',
+          label: '右',
+          icon: '',
+          keys: [ShortcutKey(key: '→', keyCode: 'ArrowRight')],
+          platform: platform,
+          order: 2,
+        ),
+        ShortcutItem(
+          id: 'arrow-up',
+          label: '上',
+          icon: '',
+          keys: [ShortcutKey(key: '↑', keyCode: 'ArrowUp')],
+          platform: platform,
+          order: 3,
+        ),
+        ShortcutItem(
+          id: 'arrow-down',
+          label: '下',
+          icon: '',
+          keys: [ShortcutKey(key: '↓', keyCode: 'ArrowDown')],
+          platform: platform,
+          order: 4,
+        ),
+        ShortcutItem(
+          id: 'backspace',
+          label: '退格',
+          icon: '',
+          keys: [ShortcutKey(key: 'Backspace', keyCode: 'Backspace')],
+          platform: platform,
+          order: 5,
+        ),
+        ShortcutItem(
+          id: 'delete',
+          label: '删除',
+          icon: '',
+          keys: [ShortcutKey(key: 'Del', keyCode: 'Delete')],
+          platform: platform,
+          order: 6,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
-          icon: '📋',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 1,
+          order: 7,
         ),
         ShortcutItem(
           id: 'paste',
           label: '粘贴',
-          icon: '📄',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 2,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'cut',
+          label: '剪切',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'X', keyCode: 'KeyX')
+          ],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
+          id: 'select-all',
+          label: '全选',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'A', keyCode: 'KeyA')
+          ],
+          platform: platform,
+          order: 10,
         ),
         ShortcutItem(
           id: 'save',
           label: '保存',
-          icon: '💾',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'S', keyCode: 'KeyS')
           ],
           platform: platform,
-          order: 3,
+          order: 11,
         ),
         ShortcutItem(
           id: 'find',
           label: '查找',
-          icon: '🔍',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'F', keyCode: 'KeyF')
           ],
           platform: platform,
-          order: 4,
+          order: 12,
         ),
         ShortcutItem(
           id: 'undo',
           label: '撤销',
-          icon: '↶',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'Z', keyCode: 'KeyZ')
           ],
           platform: platform,
-          order: 5,
+          order: 13,
         ),
         ShortcutItem(
           id: 'alt-tab',
           label: '切换窗口',
-          icon: '🗔',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Alt', keyCode: 'AltLeft'),
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 6,
+          order: 14,
         ),
         ShortcutItem(
           id: 'lock',
           label: '锁屏',
-          icon: '🔒',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Win', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'L', keyCode: 'KeyL')
           ],
           platform: platform,
-          order: 7,
+          order: 15,
         ),
         ShortcutItem(
           id: 'task-manager',
           label: '任务管理器',
-          icon: '⚡',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
             ShortcutKey(key: 'Esc', keyCode: 'Escape'),
           ],
           platform: platform,
-          order: 8,
+          order: 16,
         ),
       ];
 
     case ShortcutPlatform.macos:
       return [
         ShortcutItem(
+          id: 'arrow-left',
+          label: '左',
+          icon: '',
+          keys: [ShortcutKey(key: '←', keyCode: 'ArrowLeft')],
+          platform: platform,
+          order: 1,
+        ),
+        ShortcutItem(
+          id: 'arrow-right',
+          label: '右',
+          icon: '',
+          keys: [ShortcutKey(key: '→', keyCode: 'ArrowRight')],
+          platform: platform,
+          order: 2,
+        ),
+        ShortcutItem(
+          id: 'arrow-up',
+          label: '上',
+          icon: '',
+          keys: [ShortcutKey(key: '↑', keyCode: 'ArrowUp')],
+          platform: platform,
+          order: 3,
+        ),
+        ShortcutItem(
+          id: 'arrow-down',
+          label: '下',
+          icon: '',
+          keys: [ShortcutKey(key: '↓', keyCode: 'ArrowDown')],
+          platform: platform,
+          order: 4,
+        ),
+        ShortcutItem(
+          id: 'backspace',
+          label: '退格',
+          icon: '',
+          keys: [ShortcutKey(key: 'Backspace', keyCode: 'Backspace')],
+          platform: platform,
+          order: 5,
+        ),
+        ShortcutItem(
+          id: 'delete',
+          label: '删除',
+          icon: '',
+          keys: [ShortcutKey(key: 'Del', keyCode: 'Delete')],
+          platform: platform,
+          order: 6,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
-          icon: '📋',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 1,
+          order: 7,
         ),
         ShortcutItem(
           id: 'paste',
           label: '粘贴',
-          icon: '📄',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 2,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'cut',
+          label: '剪切',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
+            ShortcutKey(key: 'X', keyCode: 'KeyX')
+          ],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
+          id: 'select-all',
+          label: '全选',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
+            ShortcutKey(key: 'A', keyCode: 'KeyA')
+          ],
+          platform: platform,
+          order: 10,
         ),
         ShortcutItem(
           id: 'save',
           label: '保存',
-          icon: '💾',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'S', keyCode: 'KeyS')
           ],
           platform: platform,
-          order: 3,
+          order: 11,
         ),
         ShortcutItem(
           id: 'find',
           label: '查找',
-          icon: '🔍',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'F', keyCode: 'KeyF')
           ],
           platform: platform,
-          order: 4,
+          order: 12,
         ),
         ShortcutItem(
           id: 'undo',
           label: '撤销',
-          icon: '↶',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'Z', keyCode: 'KeyZ')
           ],
           platform: platform,
-          order: 5,
+          order: 13,
         ),
         ShortcutItem(
           id: 'cmd-tab',
           label: '切换窗口',
-          icon: '🗔',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 6,
+          order: 14,
         ),
         ShortcutItem(
           id: 'lock',
           label: '锁屏',
-          icon: '🔒',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'Q', keyCode: 'KeyQ'),
           ],
           platform: platform,
-          order: 7,
+          order: 15,
         ),
         ShortcutItem(
           id: 'screenshot',
           label: '截图',
-          icon: '📷',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
             ShortcutKey(key: '4', keyCode: 'Digit4'),
           ],
           platform: platform,
-          order: 8,
+          order: 16,
         ),
       ];
 
     case ShortcutPlatform.linux:
       return [
         ShortcutItem(
+          id: 'arrow-left',
+          label: '左',
+          icon: '',
+          keys: [ShortcutKey(key: '←', keyCode: 'ArrowLeft')],
+          platform: platform,
+          order: 1,
+        ),
+        ShortcutItem(
+          id: 'arrow-right',
+          label: '右',
+          icon: '',
+          keys: [ShortcutKey(key: '→', keyCode: 'ArrowRight')],
+          platform: platform,
+          order: 2,
+        ),
+        ShortcutItem(
+          id: 'arrow-up',
+          label: '上',
+          icon: '',
+          keys: [ShortcutKey(key: '↑', keyCode: 'ArrowUp')],
+          platform: platform,
+          order: 3,
+        ),
+        ShortcutItem(
+          id: 'arrow-down',
+          label: '下',
+          icon: '',
+          keys: [ShortcutKey(key: '↓', keyCode: 'ArrowDown')],
+          platform: platform,
+          order: 4,
+        ),
+        ShortcutItem(
+          id: 'backspace',
+          label: '退格',
+          icon: '',
+          keys: [ShortcutKey(key: 'Backspace', keyCode: 'Backspace')],
+          platform: platform,
+          order: 5,
+        ),
+        ShortcutItem(
+          id: 'delete',
+          label: '删除',
+          icon: '',
+          keys: [ShortcutKey(key: 'Del', keyCode: 'Delete')],
+          platform: platform,
+          order: 6,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
-          icon: '📋',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 1,
+          order: 7,
         ),
         ShortcutItem(
           id: 'paste',
           label: '粘贴',
-          icon: '📄',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 2,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'cut',
+          label: '剪切',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'X', keyCode: 'KeyX')
+          ],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
+          id: 'select-all',
+          label: '全选',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'A', keyCode: 'KeyA')
+          ],
+          platform: platform,
+          order: 10,
         ),
         ShortcutItem(
           id: 'save',
           label: '保存',
-          icon: '💾',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'S', keyCode: 'KeyS')
           ],
           platform: platform,
-          order: 3,
+          order: 11,
         ),
         ShortcutItem(
           id: 'find',
           label: '查找',
-          icon: '🔍',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'F', keyCode: 'KeyF')
           ],
           platform: platform,
-          order: 4,
+          order: 12,
         ),
         ShortcutItem(
           id: 'undo',
           label: '撤销',
-          icon: '↶',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'Z', keyCode: 'KeyZ')
           ],
           platform: platform,
-          order: 5,
+          order: 13,
         ),
         ShortcutItem(
           id: 'alt-tab',
           label: '切换窗口',
-          icon: '🗔',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Alt', keyCode: 'AltLeft'),
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 6,
+          order: 14,
         ),
         ShortcutItem(
           id: 'lock',
           label: '锁屏',
-          icon: '🔒',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Super', keyCode: 'MetaLeft'),
             ShortcutKey(key: 'L', keyCode: 'KeyL')
           ],
           platform: platform,
-          order: 7,
+          order: 15,
         ),
         ShortcutItem(
           id: 'terminal',
           label: '终端',
-          icon: '💻',
+          icon: '',
           keys: [
             ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
             ShortcutKey(key: 'Alt', keyCode: 'AltLeft'),
             ShortcutKey(key: 'T', keyCode: 'KeyT'),
           ],
           platform: platform,
-          order: 8,
+          order: 16,
         ),
       ];
   }
