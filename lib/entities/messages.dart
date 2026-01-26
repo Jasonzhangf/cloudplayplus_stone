@@ -20,6 +20,8 @@ const int LP_KEYPRESSED = 1 << 4; //16
 const int LP_EMPTY = 1 << 6; //64
 const int LP_AUDIO_CONNECT = 65;
 const int LP_AUDIO_DISCONNECT = 66;
+// Text input (UTF-8 string over RTCDataChannel text message)
+const String LP_TEXT_INPUT_KEY = 'textInput';
 const int LP_DISCONNECT = 1 << 7;
 // [--end of message definitions--]
 

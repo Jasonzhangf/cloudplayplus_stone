@@ -863,6 +863,11 @@ class StreamingSession {
           Clipboard.setData(ClipboardData(text: data['clipboard']));
           _lastClipboardContent = data['clipboard'];
           break;
+        case "textInput":
+          // Text input from controller (mobile).
+          // TODO: implement host-side unicode text injection (macOS first, then Windows).
+          // For now we accept the message to avoid "unhandled" logs.
+          break;
         default:
           VLOG0("unhandled message from client.please debug");
       }

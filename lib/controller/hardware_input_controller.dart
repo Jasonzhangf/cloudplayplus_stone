@@ -493,6 +493,23 @@ class InputController {
     }
   }
 
+  /// Send committed text input to the host.
+  /// This uses RTCDataChannel *text* message so host can decode as UTF-8 string.
+  void requestTextInput(String text) {
+    if (text.isEmpty) return;
+    final mapData = {
+      'textInput': {
+        'text': text,
+      }
+    };
+    channel.send(RTCDataChannelMessage(jsonEncode(mapData)));
+    if (sendEmptyPacket) {
+      for (int i = 0; i < resendCount; i++) {
+        channel.send(emptyMessage);
+      }
+    }
+  }
+
   static int controllerCount = 0;
   static List<GameController> controllers = [];
   //"gamepad: id message"

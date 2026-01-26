@@ -300,18 +300,24 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       WebrtcService.currentRenderingSession?.inputController;
                   if (inputController == null) return;
 
-                  // Send typed characters as key events.
-                  for (final rune in value.runes) {
-                    final vkCode = _vkFromRune(rune);
-                    if (vkCode == null) continue;
-                    final needsShift = _needsShiftForRune(rune);
-                    if (needsShift) {
-                      inputController.requestKeyEvent(0xA0, true); // VK_LSHIFT
-                    }
-                    inputController.requestKeyEvent(vkCode, true);
-                    inputController.requestKeyEvent(vkCode, false);
-                    if (needsShift) {
-                      inputController.requestKeyEvent(0xA0, false);
+                  final hasNonAscii = value.runes.any((r) => r > 0x7F);
+                  if (hasNonAscii) {
+                    // For IME / non-ascii text (e.g. Chinese), send as text message.
+                    inputController.requestTextInput(value);
+                  } else {
+                    // ASCII: send as key events.
+                    for (final rune in value.runes) {
+                      final vkCode = _vkFromRune(rune);
+                      if (vkCode == null) continue;
+                      final needsShift = _needsShiftForRune(rune);
+                      if (needsShift) {
+                        inputController.requestKeyEvent(0xA0, true); // VK_LSHIFT
+                      }
+                      inputController.requestKeyEvent(vkCode, true);
+                      inputController.requestKeyEvent(vkCode, false);
+                      if (needsShift) {
+                        inputController.requestKeyEvent(0xA0, false);
+                      }
                     }
                   }
 
