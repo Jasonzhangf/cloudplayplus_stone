@@ -114,51 +114,74 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     return keyCodeMap[keyCodeStr] ?? 0;
   }
 
+  // ASCII 字符到 Windows VK 的映射，并标记是否需要 Shift 键
+  // 仅处理基础 ASCII 与常用符号
+  static final Map<int, ({int vkCode, bool needsShift})> _asciiToVkMap = {
+    // Digits (VK_0 - VK_9)
+    0x30: (vkCode: 0x30, needsShift: false),
+    0x31: (vkCode: 0x31, needsShift: false),
+    0x32: (vkCode: 0x32, needsShift: false),
+    0x33: (vkCode: 0x33, needsShift: false),
+    0x34: (vkCode: 0x34, needsShift: false),
+    0x35: (vkCode: 0x35, needsShift: false),
+    0x36: (vkCode: 0x36, needsShift: false),
+    0x37: (vkCode: 0x37, needsShift: false),
+    0x38: (vkCode: 0x38, needsShift: false),
+    0x39: (vkCode: 0x39, needsShift: false),
+
+    // Whitespace / control
+    0x20: (vkCode: 0x20, needsShift: false), // Space
+    0x08: (vkCode: 0x08, needsShift: false), // Backspace
+    0x0D: (vkCode: 0x0D, needsShift: false), // Enter
+    0x09: (vkCode: 0x09, needsShift: false), // Tab
+
+    // Shifted number symbols
+    0x21: (vkCode: 0x31, needsShift: true),  // !
+    0x40: (vkCode: 0x32, needsShift: true),  // @
+    0x23: (vkCode: 0x33, needsShift: true),  // #
+    0x24: (vkCode: 0x34, needsShift: true),  // $
+    0x25: (vkCode: 0x35, needsShift: true),  // %
+    0x5E: (vkCode: 0x36, needsShift: true),  // ^
+    0x26: (vkCode: 0x37, needsShift: true),  // &
+    0x2A: (vkCode: 0x38, needsShift: true),  // *
+    0x28: (vkCode: 0x39, needsShift: true),  // (
+    0x29: (vkCode: 0x30, needsShift: true),  // )
+
+    // OEM keys (US layout)
+    0x2D: (vkCode: 0xBD, needsShift: false), // -
+    0x5F: (vkCode: 0xBD, needsShift: true),  // _
+    0x3D: (vkCode: 0xBB, needsShift: false), // =
+    0x2B: (vkCode: 0xBB, needsShift: true),  // +
+    0x5B: (vkCode: 0xDB, needsShift: false), // [
+    0x7B: (vkCode: 0xDB, needsShift: true),  // {
+    0x5D: (vkCode: 0xDD, needsShift: false), // ]
+    0x7D: (vkCode: 0xDD, needsShift: true),  // }
+    0x5C: (vkCode: 0xDC, needsShift: false), // \
+    0x7C: (vkCode: 0xDC, needsShift: true),  // |
+    0x3B: (vkCode: 0xBA, needsShift: false), // ;
+    0x3A: (vkCode: 0xBA, needsShift: true),  // :
+    0x27: (vkCode: 0xDE, needsShift: false), // '
+    0x22: (vkCode: 0xDE, needsShift: true),  // "
+    0x60: (vkCode: 0xC0, needsShift: false), // `
+    0x7E: (vkCode: 0xC0, needsShift: true),  // ~
+    0x2C: (vkCode: 0xBC, needsShift: false), // ,
+    0x3C: (vkCode: 0xBC, needsShift: true),  // <
+    0x2E: (vkCode: 0xBE, needsShift: false), // .
+    0x3E: (vkCode: 0xBE, needsShift: true),  // >
+    0x2F: (vkCode: 0xBF, needsShift: false), // /
+    0x3F: (vkCode: 0xBF, needsShift: true),  // ?
+  };
+
   int? _vkFromRune(int rune) {
-    // Minimal ASCII -> Windows VK mapping.
-    // Letters
     if (rune >= 0x61 && rune <= 0x7A) return rune - 0x20; // a-z -> A-Z
     if (rune >= 0x41 && rune <= 0x5A) return rune; // A-Z
+    return _asciiToVkMap[rune]?.vkCode;
+  }
 
-    // Digits
-    if (rune >= 0x30 && rune <= 0x39) return rune;
-
-    // Common punctuation / whitespace
-    switch (rune) {
-      case 0x20:
-        return 0x20; // Space
-      case 0x0A:
-      case 0x0D:
-        return 0x0D; // Enter
-      case 0x08:
-        return 0x08; // Backspace
-      case 0x09:
-        return 0x09; // Tab
-      case 0x2D:
-        return 0xBD; // -
-      case 0x3D:
-        return 0xBB; // =
-      case 0x5B:
-        return 0xDB; // [
-      case 0x5D:
-        return 0xDD; // ]
-      case 0x5C:
-        return 0xDC; // \
-      case 0x3B:
-        return 0xBA; // ;
-      case 0x27:
-        return 0xDE; // '
-      case 0x2C:
-        return 0xBC; // ,
-      case 0x2E:
-        return 0xBE; // .
-      case 0x2F:
-        return 0xBF; // /
-      case 0x60:
-        return 0xC0; // `
-      default:
-        return null;
-    }
+  bool _needsShiftForRune(int rune) {
+    if (rune >= 0x61 && rune <= 0x7A) return false; // a-z
+    if (rune >= 0x41 && rune <= 0x5A) return true;  // A-Z
+    return _asciiToVkMap[rune]?.needsShift ?? false;
   }
 
   @override
@@ -275,12 +298,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   if (inputController == null) return;
 
                   // Send typed characters as key events.
-                  // NOTE: This is a minimal implementation; we map common ASCII to VK.
                   for (final rune in value.runes) {
-                    final keyCode = _vkFromRune(rune);
-                    if (keyCode == null) continue;
-                    inputController.requestKeyEvent(keyCode, true);
-                    inputController.requestKeyEvent(keyCode, false);
+                    final vkCode = _vkFromRune(rune);
+                    if (vkCode == null) continue;
+                    final needsShift = _needsShiftForRune(rune);
+                    if (needsShift) {
+                      inputController.requestKeyEvent(0xA0, true); // VK_LSHIFT
+                    }
+                    inputController.requestKeyEvent(vkCode, true);
+                    inputController.requestKeyEvent(vkCode, false);
+                    if (needsShift) {
+                      inputController.requestKeyEvent(0xA0, false);
+                    }
                   }
 
                   // Clear the buffer so we don't re-send accumulated text.
