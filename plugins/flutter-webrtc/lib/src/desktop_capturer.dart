@@ -32,6 +32,16 @@ abstract class DesktopCapturerSource {
   /// chromeMediaSourceId constraint when calling
   String get id;
 
+  /// Platform window identifier (best-effort).
+  /// On macOS this maps to SCWindow.windowID / CGWindowID when available.
+  int? get windowId;
+
+  /// Owning application bundle identifier (best-effort).
+  String? get appId;
+
+  /// Owning application name (best-effort).
+  String? get appName;
+
   /// A screen source will be named either Entire Screen or Screen <index>,
   /// while the name of a window source will match the window title.
   String get name;

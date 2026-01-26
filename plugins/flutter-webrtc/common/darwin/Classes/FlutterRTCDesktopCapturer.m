@@ -163,6 +163,41 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
 
 @end
 
+// Map RTCDesktopSource.sourceId (string) -> stable window metadata.
+// On macOS 15+ some legacy window APIs are deprecated/unavailable; ScreenCaptureKit
+// provides a stable CGWindowID (SCWindow.windowID) plus owningApplication metadata.
+static NSDictionary* _Nullable flutter_sck_lookup_window_meta(NSString* sourceId) {
+  if (@available(macOS 12.3, *)) {
+    __block NSDictionary* meta = nil;
+    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    [SCShareableContent getShareableContentWithCompletionHandler:^(
+        SCShareableContent* _Nullable content, NSError* _Nullable error) {
+      if (content && !error) {
+        // WebRTC's RTCDesktopSource.sourceId is typically a numeric string.
+        uint32_t sid = (uint32_t)[sourceId intValue];
+        for (SCWindow* w in content.windows) {
+          if (w.windowID == sid) {
+            NSString* appName = w.owningApplication.applicationName ?: @"";
+            NSString* bundleId = w.owningApplication.bundleIdentifier ?: @"";
+            // Return stable identifiers for the Dart layer.
+            meta = @{
+              @"windowId" : @(w.windowID),
+              @"appName" : appName,
+              @"appId" : bundleId,
+              @"title" : w.title ?: @"",
+            };
+            break;
+          }
+        }
+      }
+      dispatch_semaphore_signal(sema);
+    }];
+    dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1 * NSEC_PER_SEC)));
+    return meta;
+  }
+  return nil;
+}
+
 RTCDesktopMediaList* _screen = nil;
 RTCDesktopMediaList* _window = nil;
 NSArray<RTCDesktopSource*>* _captureSources;
@@ -366,13 +401,22 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
         data = [imageRep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
       }
     }
-    [sources addObject:@{
+    NSMutableDictionary* entry = [@{
       @"id" : object.sourceId,
       @"name" : object.name,
       @"thumbnailSize" : data ? @{@"width" : @320, @"height" : @180} : @{@"width" : @0, @"height" : @0},
       @"type" : object.sourceType == RTCDesktopSourceTypeScreen ? @"screen" : @"window",
       @"thumbnail" : data ?: [NSNull null],
-    }];
+    } mutableCopy];
+
+    if (object.sourceType == RTCDesktopSourceTypeWindow) {
+      NSDictionary* meta = flutter_sck_lookup_window_meta(object.sourceId);
+      if (meta) {
+        [entry addEntriesFromDictionary:meta];
+      }
+    }
+
+    [sources addObject:entry];
   }
   result(@{@"sources" : sources});
 #else

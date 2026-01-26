@@ -7,13 +7,32 @@ import 'utils.dart';
 
 class DesktopCapturerSourceNative extends DesktopCapturerSource {
   DesktopCapturerSourceNative(
-      this._id, this._name, this._thumbnailSize, this._type);
+      this._id,
+      this._name,
+      this._thumbnailSize,
+      this._type,
+      this._windowId,
+      this._appId,
+      this._appName,
+      );
   factory DesktopCapturerSourceNative.fromMap(Map<dynamic, dynamic> map) {
     var sourceType = (map['type'] as String) == 'window'
         ? SourceType.Window
         : SourceType.Screen;
-    var source = DesktopCapturerSourceNative(map['id'], map['name'],
-        ThumbnailSize.fromMap(map['thumbnailSize']), sourceType);
+    final int? windowId = map['windowId'] is int
+        ? map['windowId'] as int
+        : (map['windowId'] is num ? (map['windowId'] as num).toInt() : null);
+    final String? appId = map['appId'] as String?;
+    final String? appName = map['appName'] as String?;
+    var source = DesktopCapturerSourceNative(
+      map['id'],
+      map['name'],
+      ThumbnailSize.fromMap(map['thumbnailSize']),
+      sourceType,
+      windowId,
+      appId,
+      appName,
+    );
     if (map['thumbnail'] != null) {
       source.thumbnail = map['thumbnail'] as Uint8List;
     }
@@ -38,6 +57,9 @@ class DesktopCapturerSourceNative extends DesktopCapturerSource {
   final String _id;
   final ThumbnailSize _thumbnailSize;
   final SourceType _type;
+  final int? _windowId;
+  final String? _appId;
+  final String? _appName;
 
   set thumbnail(Uint8List? value) {
     _thumbnail = value;
@@ -49,6 +71,15 @@ class DesktopCapturerSourceNative extends DesktopCapturerSource {
 
   @override
   String get id => _id;
+
+  @override
+  int? get windowId => _windowId;
+
+  @override
+  String? get appId => _appId;
+
+  @override
+  String? get appName => _appName;
 
   @override
   String get name => _name;

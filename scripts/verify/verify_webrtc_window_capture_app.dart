@@ -147,7 +147,9 @@ class _VerifyWebRTCWindowCapturePageState
       });
 
       if (initial != null) {
-        _log('Auto-selected window: name="${initial.name}" id=${initial.id}');
+        _log(
+          'Auto-selected window: name="${initial.name}" id=${initial.id} windowId=${initial.windowId} appId=${initial.appId} appName=${initial.appName}',
+        );
       } else {
         _log('No window sources available to auto-select');
       }

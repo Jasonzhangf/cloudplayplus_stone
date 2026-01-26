@@ -1338,6 +1338,11 @@ static FlutterWebRTCPlugin *sharedSingleton;
   } else if ([@"getDesktopSources" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
     [self getDesktopSources:argsMap result:result];
+} else if ([@"getDesktopSourcesV2" isEqualToString:call.method]) {
+    // Backwards-compatible alias of getDesktopSources.
+    // Intended for clients that rely on embedded thumbnails + stable window metadata.
+    NSDictionary* argsMap = call.arguments;
+    [self getDesktopSources:argsMap result:result];
   } else if ([@"updateDesktopSources" isEqualToString:call.method]) {
     NSDictionary* argsMap = call.arguments;
     [self updateDesktopSources:argsMap result:result];
