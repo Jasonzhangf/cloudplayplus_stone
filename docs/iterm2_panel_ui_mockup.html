@@ -1,0 +1,441 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>iTerm2 Panel 串流 UI 原型</title>
+  <style>
+    :root{
+      --bg:#0b0f17;
+      --panel:#121a27;
+      --panel2:#0f1622;
+      --stroke:rgba(255,255,255,.12);
+      --stroke2:rgba(255,255,255,.18);
+      --text:rgba(255,255,255,.88);
+      --muted:rgba(255,255,255,.6);
+      --accent:#00b0cb;
+      --danger:#ff5a5a;
+      --success:#4caf50;
+      --warning:#ff9800;
+      --shadow:0 18px 45px rgba(0,0,0,.45);
+      --r:16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background: radial-gradient(1200px 500px at 50% -10%, rgba(0,176,203,.25), transparent 60%),
+                  radial-gradient(900px 600px at 110% 30%, rgba(255,90,90,.14), transparent 55%),
+                  var(--bg);
+      color:var(--text);
+      font-family:var(--sans);
+      padding:20px;
+    }
+    header {
+      margin-bottom:24px;
+    }
+    h1 {
+      margin:0 0 8px;
+      font-size:24px;
+      letter-spacing:.2px;
+    }
+    .subtitle {
+      color:var(--muted);
+      font-size:14px;
+      margin:0;
+    }
+    .container {
+      max-width:1200px;
+      margin:0 auto;
+      display:grid;
+      grid-template-columns:1fr 360px;
+      gap:20px;
+    }
+    .stream-area {
+      background:var(--panel);
+      border:1px solid var(--stroke);
+      border-radius:var(--r);
+      padding:16px;
+      position:relative;
+    }
+    .stream-preview {
+      width:100%;
+      aspect-ratio:16/9;
+      background:linear-gradient(135deg, #1a2332 0%, #0d1117 100%);
+      border-radius:12px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      position:relative;
+      overflow:hidden;
+      border:1px solid var(--stroke2);
+    }
+    .iterm-window {
+      width:90%;
+      height:90%;
+      background:#1d1f21;
+      border-radius:8px;
+      border:1px solid rgba(255,255,255,.1);
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      grid-template-rows:1fr 1fr;
+      gap:2px;
+      padding:2px;
+    }
+    .panel {
+      background:#282a2e;
+      border-radius:4px;
+      padding:8px;
+      font-family:var(--mono);
+      font-size:10px;
+      color:#c5c8c6;
+      position:relative;
+      cursor:pointer;
+      transition:all .2s;
+      overflow:hidden;
+    }
+    .panel:hover {
+      background:#32353a;
+    }
+    .panel.active {
+      box-shadow:0 0 0 2px var(--accent), inset 0 0 0 1px var(--accent);
+      background:#2a3e4a;
+    }
+    .panel-header {
+      display:flex;
+      justify-content:space-between;
+      margin-bottom:4px;
+      opacity:.7;
+    }
+    .panel-content {
+      white-space:pre;
+      line-height:1.4;
+    }
+    .panel-badge {
+      position:absolute;
+      top:8px;
+      right:8px;
+      background:var(--accent);
+      color:#fff;
+      font-size:9px;
+      padding:2px 6px;
+      border-radius:4px;
+      font-weight:600;
+    }
+    .control-panel {
+      background:var(--panel);
+      border:1px solid var(--stroke);
+      border-radius:var(--r);
+      padding:16px;
+      display:flex;
+      flex-direction:column;
+      gap:16px;
+    }
+    .section-title {
+      font-size:13px;
+      font-weight:600;
+      color:var(--muted);
+      text-transform:uppercase;
+      letter-spacing:.5px;
+      margin:0 0 12px;
+    }
+    .status-bar {
+      background:var(--panel2);
+      border:1px solid var(--stroke);
+      border-radius:10px;
+      padding:12px;
+      display:flex;
+      align-items:center;
+      gap:10px;
+    }
+    .status-indicator {
+      width:8px;
+      height:8px;
+      border-radius:50%;
+      background:var(--success);
+      animation:pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity:1; }
+      50% { opacity:.5; }
+    }
+    .status-text {
+      flex:1;
+      font-size:13px;
+    }
+    .panel-list {
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+    .panel-item {
+      background:var(--panel2);
+      border:1px solid var(--stroke);
+      border-radius:10px;
+      padding:12px;
+      cursor:pointer;
+      transition:all .2s;
+      display:flex;
+      align-items:center;
+      gap:12px;
+    }
+    .panel-item:hover {
+      background:rgba(255,255,255,.05);
+      border-color:var(--stroke2);
+    }
+    .panel-item.selected {
+      background:linear-gradient(135deg, rgba(0,176,203,.15), rgba(0,176,203,.05));
+      border-color:var(--accent);
+      box-shadow:0 0 0 1px var(--accent);
+    }
+    .panel-number {
+      width:32px;
+      height:32px;
+      border-radius:8px;
+      background:var(--kbd);
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      font-weight:600;
+      font-size:14px;
+      color:var(--text);
+    }
+    .panel-item.selected .panel-number {
+      background:var(--accent);
+      color:#fff;
+    }
+    .panel-info {
+      flex:1;
+    }
+    .panel-name {
+      font-size:13px;
+      font-weight:500;
+      margin:0 0 2px;
+    }
+    .panel-detail {
+      font-size:11px;
+      color:var(--muted);
+      margin:0;
+    }
+    .action-buttons {
+      display:flex;
+      gap:8px;
+    }
+    .btn {
+      flex:1;
+      padding:10px;
+      border:1px solid var(--stroke);
+      background:var(--panel2);
+      color:var(--text);
+      border-radius:8px;
+      font-size:13px;
+      cursor:pointer;
+      transition:all .2s;
+      font-weight:500;
+    }
+    .btn:hover {
+      background:rgba(255,255,255,.05);
+      border-color:var(--stroke2);
+    }
+    .btn-primary {
+      background:linear-gradient(135deg, var(--accent), #0099b3);
+      border-color:transparent;
+      color:#fff;
+    }
+    .btn-primary:hover {
+      transform:translateY(-1px);
+      box-shadow:0 4px 12px rgba(0,176,203,.3);
+    }
+    .shortcut-hint {
+      background:var(--panel2);
+      border:1px solid var(--stroke);
+      border-radius:10px;
+      padding:12px;
+      font-size:12px;
+      color:var(--muted);
+      line-height:1.6;
+    }
+    .kbd {
+      display:inline-block;
+      padding:2px 6px;
+      background:var(--kbd);
+      border:1px solid var(--stroke);
+      border-radius:4px;
+      font-family:var(--mono);
+      font-size:11px;
+      margin:0 2px;
+    }
+    @media (max-width: 1024px) {
+      .container {
+        grid-template-columns:1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📺 iTerm2 Panel 串流控制</h1>
+    <p class="subtitle">选择并串流 iTerm2 窗口中的特定 panel</p>
+  </header>
+  <div class="container">
+    <div class="stream-area">
+      <h3 class="section-title">串流画面预览</h3>
+      <div class="stream-preview">
+        <div class="iterm-window" id="itermWindow">
+          <div class="panel" data-panel="1">
+            <div class="panel-header"><span>~/projects</span><span>zsh</span></div>
+            <div class="panel-content">$ git status
+On branch main
+Your branch is up to date</div>
+          </div>
+          <div class="panel active" data-panel="2">
+            <div class="panel-badge">串流中</div>
+            <div class="panel-header"><span>~/projects/app</span><span>vim</span></div>
+            <div class="panel-content">class MainApp {
+  void run() {
+    print("Hello");
+  }
+}</div>
+          </div>
+          <div class="panel" data-panel="3">
+            <div class="panel-header"><span>~/logs</span><span>tail</span></div>
+            <div class="panel-content">INFO: Server started
+DEBUG: Connection OK
+WARN: High CPU usage</div>
+          </div>
+          <div class="panel" data-panel="4">
+            <div class="panel-header"><span>~</span><span>htop</span></div>
+            <div class="panel-content">CPU: [||||||||  ] 45%
+MEM: [||||||    ] 62%
+Tasks: 245 running</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="control-panel">
+      <div>
+        <h3 class="section-title">串流状态</h3>
+        <div class="status-bar">
+          <div class="status-indicator"></div>
+          <div class="status-text">
+            <div style="font-weight:500">Panel 2 (vim) 串流中</div>
+            <div style="font-size:11px; color:var(--muted); margin-top:2px">1920x1080 @ 60fps</div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 class="section-title">可用 Panel</h3>
+        <div class="panel-list" id="panelList">
+          <div class="panel-item" data-panel="1">
+            <div class="panel-number">1</div>
+            <div class="panel-info">
+              <div class="panel-name">Shell - git status</div>
+              <div class="panel-detail">~/projects • zsh</div>
+            </div>
+          </div>
+          <div class="panel-item selected" data-panel="2">
+            <div class="panel-number">2</div>
+            <div class="panel-info">
+              <div class="panel-name">Editor - MainApp.dart</div>
+              <div class="panel-detail">~/projects/app • vim</div>
+            </div>
+          </div>
+          <div class="panel-item" data-panel="3">
+            <div class="panel-number">3</div>
+            <div class="panel-info">
+              <div class="panel-name">Logs - tail -f</div>
+              <div class="panel-detail">~/logs • tail</div>
+            </div>
+          </div>
+          <div class="panel-item" data-panel="4">
+            <div class="panel-number">4</div>
+            <div class="panel-info">
+              <div class="panel-name">Monitor - htop</div>
+              <div class="panel-detail">~ • htop</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div>
+        <h3 class="section-title">操作</h3>
+        <div class="action-buttons">
+          <button class="btn">刷新列表</button>
+          <button class="btn btn-primary">切换 Panel</button>
+        </div>
+      </div>
+      <div class="shortcut-hint">
+        <strong>快捷键：</strong><br>
+        <kbd>1</kbd>-<kbd>9</kbd> 快速切换 Panel<br>
+        <kbd>R</kbd> 刷新 Panel 列表<br>
+        <kbd>F</kbd> 全屏当前 Panel
+      </div>
+    </div>
+  </div>
+  <script>
+    const itermWindow = document.getElementById('itermWindow');
+    const panelList = document.getElementById('panelList');
+    let selectedPanel = 2;
+    function switchPanel(panelNum) {
+      selectedPanel = panelNum;
+      document.querySelectorAll('.panel').forEach(p => {
+        p.classList.remove('active');
+        const badge = p.querySelector('.panel-badge');
+        if (badge) badge.remove();
+      });
+      const targetPanel = itermWindow.querySelector(`[data-panel="${panelNum}"]`);
+      if (targetPanel) {
+        targetPanel.classList.add('active');
+        const badge = document.createElement('div');
+        badge.className = 'panel-badge';
+        badge.textContent = '串流中';
+        targetPanel.appendChild(badge);
+      }
+      document.querySelectorAll('.panel-item').forEach(item => {
+        item.classList.remove('selected');
+      });
+      const selectedItem = panelList.querySelector(`[data-panel="${panelNum}"]`);
+      if (selectedItem) {
+        selectedItem.classList.add('selected');
+      }
+      const statusText = document.querySelector('.status-text div');
+      const panelName = selectedItem?.querySelector('.panel-name')?.textContent || `Panel ${panelNum}`;
+      statusText.innerHTML = `<div style="font-weight:500">${panelName} 串流中</div><div style="font-size:11px; color:var(--muted); margin-top:2px">1920x1080 @ 60fps</div>`;
+    }
+    panelList.addEventListener('click', (e) => {
+      const item = e.target.closest('.panel-item');
+      if (item) {
+        const panelNum = parseInt(item.dataset.panel);
+        switchPanel(panelNum);
+      }
+    });
+    itermWindow.addEventListener('click', (e) => {
+      const panel = e.target.closest('.panel');
+      if (panel) {
+        const panelNum = parseInt(panel.dataset.panel);
+        switchPanel(panelNum);
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      const num = parseInt(e.key);
+      if (num >= 1 && num <= 9) {
+        switchPanel(num);
+      } else if (e.key === 'r' || e.key === 'R') {
+        alert('刷新 Panel 列表（模拟）');
+      } else if (e.key === 'f' || e.key === 'F') {
+        alert('全屏模式（模拟）');
+      }
+    });
+    document.querySelectorAll('.btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        if (e.target.textContent === '刷新列表') {
+          alert('刷新 Panel 列表（模拟）');
+        } else if (e.target.textContent === '切换 Panel') {
+          const nextPanel = (selectedPanel % 4) + 1;
+          switchPanel(nextPanel);
+        }
+      });
+    });
+  </script>
+</body>
+</html>

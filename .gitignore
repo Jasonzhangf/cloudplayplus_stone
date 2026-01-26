@@ -63,3 +63,11 @@ windows/flutter/generated_plugins.cmake
 # These are add the webrtc source code reference to the xcode project.
 Package.resolved
 *.xcworkspacedata
+
+# Temporary files
+*.tmp
+*.bak
+*.bak2
+
+# Build artifacts
+android/build/

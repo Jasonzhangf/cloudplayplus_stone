@@ -284,11 +284,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                     ),
                   ),
                 ),
-                if (!AppPlatform.isAndroidTV) FloatingMenuPanel(
-                  panelIcon: AppIcons.mainIcon,
-                  backgroundColor: Color(0xff00b0cb).withValues(alpha: 0.4),
-                  contentColor: Colors.white.withValues(alpha: 0.6),
-                  onPressed: (index) async {
+                if (!AppPlatform.isAndroidTV)
+                  FloatingMenuPanel(
+                    panelIcon: AppIcons.mainIcon,
+                    backgroundColor: Color(0xff00b0cb).withValues(alpha: 0.4),
+                    contentColor: Colors.white.withValues(alpha: 0.8),
+                    onPressed: (index) async {
                     if (index == 0) {
                       await ScreenController.setIsFullScreen(
                           !ScreenController.isFullScreen);
@@ -319,15 +320,15 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                       StreamingManager.stopStreaming(widget.device);
                     }
                   },
-                  buttons: const [
-                    Icons.crop_free,
-                    Icons.open_in_full,
-                    Icons.keyboard,
-                    Icons.mouse,
-                    Icons.gamepad,
-                    Icons.close,
-                  ],
-                ),
+                    buttons: const [
+                      Icons.crop_free,
+                      Icons.open_in_full,
+                      Icons.keyboard,
+                      Icons.mouse,
+                      Icons.gamepad,
+                      Icons.close,
+                    ],
+                  ),
               ],
             );
           }

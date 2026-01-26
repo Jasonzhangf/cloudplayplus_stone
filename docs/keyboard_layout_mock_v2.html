@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CloudPlayPlus - 键盘布局示意 v2</title>
+  <style>
+    :root{
+      --bg:#0b0f17;
+      --panel:#121a27;
+      --panel2:#0f1622;
+      --stroke:rgba(255,255,255,.12);
+      --stroke2:rgba(255,255,255,.18);
+      --text:rgba(255,255,255,.88);
+      --muted:rgba(255,255,255,.6);
+      --accent:#00b0cb;
+      --danger:#ff5a5a;
+      --kbd:#1b2535;
+      --kbdKey:#243148;
+      --shadow:0 18px 45px rgba(0,0,0,.45);
+      --r:16px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
+    }
+
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      background: radial-gradient(1200px 500px at 50% -10%, rgba(0,176,203,.25), transparent 60%),
+                  radial-gradient(900px 600px at 110% 30%, rgba(255,90,90,.14), transparent 55%),
+                  var(--bg);
+      color:var(--text);
+      font-family:var(--sans);
+    }
+
+    header{
+      padding:18px 18px 10px;
+      display:flex;
+      align-items:flex-end;
+      justify-content:space-between;
+      gap:12px;
+    }
+    .title{
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .title h1{
+      margin:0;
+      font-size:16px;
+      letter-spacing:.2px;
+    }
+    .title p{
+      margin:0;
+      font-size:12px;
+      color:var(--muted);
+      max-width:68ch;
+      line-height:1.35;
+    }
+
+    .toggle{
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .seg{
+      display:inline-flex;
+      border:1px solid var(--stroke);
+      background:rgba(255,255,255,.04);
+      border-radius:999px;
+      overflow:hidden;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+    }
+    .seg button{
+      appearance:none;
+      border:0;
+      background:transparent;
+      color:var(--muted);
+      padding:8px 10px;
+      font-size:12px;
+      cursor:pointer;
+      min-width:110px;
+    }
+    .seg button.active{
+      background:linear-gradient(180deg, rgba(0,176,203,.22), rgba(0,176,203,.10));
+      color:var(--text);
+    }
+
+    .wrap{
+      padding:0 18px 18px;
+      display:grid;
+      gap:14px;
+      grid-template-columns:1fr;
+      max-width:980px;
+      margin:0 auto;
+    }
+
+    .frame{
+      border:1px solid var(--stroke);
+      border-radius:24px;
+      background:linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+      box-shadow: var(--shadow);
+      overflow:hidden;
+    }
+
+    .screen{
+      position:relative;
+      width:100%;
+      aspect-ratio: 9 / 19.5;
+      background:
+        linear-gradient(180deg, rgba(255,255,255,.02), transparent 30%),
+        radial-gradient(700px 350px at 50% 70%, rgba(255,255,255,.04), transparent 55%),
+        #070b12;
+    }
+
+    /* top status row */
+    .status{
+      position:absolute;
+      top:14px;
+      left:14px;
+      right:14px;
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      pointer-events:none;
+      font-size:11px;
+      color:rgba(255,255,255,.65);
+    }
+    .status .dots{display:flex; gap:8px; align-items:center;}
+    .pill{
+      padding:6px 9px;
+      border-radius:999px;
+      border:1px solid var(--stroke);
+      background:rgba(255,255,255,.04);
+    }
+    .pill.danger{border-color:rgba(255,90,90,.35); background:rgba(255,90,90,.12); color:rgba(255,255,255,.86)}
+
+    /* remote canvas placeholder */
+    .remote{
+      position:absolute;
+      inset:62px 12px 62px 12px;
+      border-radius:18px;
+      border:1px dashed rgba(255,255,255,.12);
+      background:
+        linear-gradient(180deg, rgba(0,176,203,.06), transparent 45%),
+        radial-gradient(900px 420px at 50% 90%, rgba(255,255,255,.05), transparent 55%);
+    }
+
+    /* bottom overlay launcher (collapsed) */
+    .launcher{
+      position:absolute;
+      right:16px;
+      bottom:18px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .fab{
+      width:44px;
+      height:44px;
+      border-radius:14px;
+      border:1px solid var(--stroke2);
+      background:rgba(18,26,39,.86);
+      color:var(--text);
+      display:grid;
+      place-items:center;
+      box-shadow: 0 10px 20px rgba(0,0,0,.35);
+      cursor: pointer;
+    }
+    .fab.small{width:44px;height:44px;border-radius:14px}
+    .icon{
+      width:20px;height:20px;
+      border-radius:5px;
+      border:1px solid rgba(255,255,255,.22);
+      position:relative;
+    }
+    .icon.kbd:before{
+      content:"";
+      position:absolute;
+      left:2px; right:2px; top:7px; height:1px;
+      background:rgba(255,255,255,.55);
+      box-shadow: 0 -4px 0 rgba(255,255,255,.55), 0 4px 0 rgba(255,255,255,.55);
+    }
+    .icon.chev:before{
+      content:"";
+      position:absolute;
+      left:6px; top:5px;
+      width:6px; height:6px;
+      border-right:2px solid rgba(255,255,255,.7);
+      border-bottom:2px solid rgba(255,255,255,.7);
+      transform:rotate(45deg);
+    }
+
+    /* expanded bottom bar */
+    .bottomBar{
+      position:absolute;
+      left:0; right:0; bottom:0;
+      padding:10px 10px 12px;
+      background:linear-gradient(180deg, rgba(10,14,22,.0), rgba(10,14,22,.92) 30%, rgba(10,14,22,.95));
+      border-top:1px solid rgba(255,255,255,.10);
+      display:none;
+    }
+    .bottomBar .row{
+      display:flex;
+      justify-content:space-between;
+      gap:8px;
+    }
+    .tab{
+      flex:1;
+      padding:10px 10px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.78);
+      font-size:12px;
+      text-align:center;
+    }
+    .tab.active{
+      border-color:rgba(0,176,203,.40);
+      background:rgba(0,176,203,.16);
+      color:rgba(255,255,255,.92);
+    }
+
+    /* keyboard panel */
+    .kbdPanel{
+      position:absolute;
+      left:0; right:0;
+      bottom:0;
+      background:rgba(7,11,18,.94);
+      border-top:1px solid rgba(255,255,255,.10);
+      padding:10px 10px 8px;
+      display:none;
+    }
+    .kbdPanel .switch{
+      display:flex;
+      gap:8px;
+      padding-bottom:10px;
+      border-bottom:1px solid rgba(255,255,255,.08);
+      margin-bottom:10px;
+    }
+    .kbdPanel .switch .pillBtn{
+      flex:1;
+      padding:10px 10px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.78);
+      font-size:12px;
+      text-align:center;
+    }
+    .kbdPanel .switch .pillBtn.active{
+      border-color:rgba(0,176,203,.40);
+      background:rgba(0,176,203,.16);
+      color:rgba(255,255,255,.92);
+    }
+
+    .systemIMEBar{
+      display:flex;
+      gap:8px;
+      align-items:center;
+      padding:10px 2px 10px;
+      color:rgba(255,255,255,.72);
+      font-size:12px;
+    }
+    .systemIMEBar .quickLane{
+      flex:1;
+      display:flex;
+      gap:8px;
+      overflow:hidden;
+    }
+    .chip{
+      padding:8px 10px;
+      border-radius:999px;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.10);
+      white-space:nowrap;
+      font-family:var(--mono);
+      font-size:11px;
+      color:rgba(255,255,255,.86);
+    }
+
+    .ime{
+      border-radius:18px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(18,26,39,.55);
+      padding:12px;
+      height:250px;
+      display:grid;
+      grid-template-columns:repeat(3, 1fr);
+      gap:10px;
+    }
+    .key{
+      background:rgba(255,255,255,.08);
+      border:1px solid rgba(255,255,255,.10);
+      border-radius:14px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      color:rgba(255,255,255,.86);
+      font-size:14px;
+      font-family:var(--mono);
+    }
+
+    /* shortcut editor modal */
+    .modal{
+      position:absolute;
+      left:10px; right:10px;
+      bottom:90px;
+      background:rgba(18,26,39,.92);
+      border:1px solid rgba(255,255,255,.12);
+      border-radius:18px;
+      box-shadow: var(--shadow);
+      padding:12px;
+      display:none;
+    }
+    .modal .hdr{display:flex; align-items:center; justify-content:space-between; gap:10px;}
+    .modal .hdr .h{font-size:14px;}
+    .modal .hdr .x{
+      width:34px;height:34px;border-radius:12px;
+      border:1px solid rgba(255,255,255,.12);
+      background:rgba(255,255,255,.06);
+      display:grid;place-items:center;
+      color:rgba(255,255,255,.8);
+      font-family:var(--mono);
+    }
+    .modal .tabs{margin-top:10px; display:flex; gap:8px;}
+    .modal .tabs .t{
+      flex:1;
+      padding:9px;
+      border-radius:999px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      color:rgba(255,255,255,.78);
+      text-align:center;
+      font-size:12px;
+    }
+    .modal .tabs .t.active{
+      border-color:rgba(0,176,203,.45);
+      background:rgba(0,176,203,.16);
+      color:rgba(255,255,255,.92);
+    }
+    .list{margin-top:10px; display:grid; gap:8px; max-height:250px; overflow:auto; padding-right:4px;}
+    .rowItem{
+      display:flex; align-items:center; justify-content:space-between; gap:10px;
+      padding:10px 10px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,.10);
+      background:rgba(255,255,255,.04);
+      font-family:var(--mono);
+      font-size:12px;
+      color:rgba(255,255,255,.85);
+    }
+    .grab{opacity:.75}
+    .add{
+      margin-top:10px;
+      display:flex; align-items:center; gap:8px;
+      color:rgba(0,176,203,.95);
+      font-size:12px;
+    }
+
+    .legend{
+      padding:12px 14px 16px;
+      font-size:12px;
+      color:var(--muted);
+      border-top:1px solid rgba(255,255,255,.08);
+      background:rgba(0,0,0,.12);
+      line-height:1.35;
+    }
+
+    @media (min-width: 860px){
+      .wrap{grid-template-columns:1fr 1fr}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <div class="title">
+    <h1>键盘/快捷键布局示意（静态原型）</h1>
+    <p>
+      目的：展示「未呼出键盘」与「呼出键盘」两种状态下，右下角最小化键盘图标、展开栏、三种键盘（电脑/手机/快捷）以及“系统输入法上浮 + 顶部快捷键条”与快捷键自定义弹窗的相对位置关系。
+      仅示意层级和占位，不代表最终视觉。
+    </p>
+  </div>
+  <div class="toggle">
+    <div class="seg" role="tablist" aria-label="layout states">
+      <button id="btnCollapsed" class="active" type="button">未呼出键盘</button>
+      <button id="btnExpanded" type="button">呼出键盘</button>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="frame">
+    <div class="screen" id="screenA">
+      <div class="status">
+        <div class="dots">
+          <span class="pill">信号</span>
+          <span class="pill">录屏</span>
+        </div>
+        <span class="pill">鼠标</span>
+      </div>
+      <div class="remote"></div>
+
+      <!-- right bottom launcher -->
+      <div class="launcher" id="launcherA">
+        <div class="fab small" title="最小化键盘">
+          <div class="icon kbd"></div>
+        </div>
+        <div class="fab small" title="展开面板">
+          <div class="icon chev"></div>
+        </div>
+      </div>
+
+      <!-- expanded bottom bar -->
+      <div class="bottomBar" id="bottomBarA">
+        <div class="row">
+          <div class="tab">操作</div>
+          <div class="tab active">键盘</div>
+          <div class="tab">互动</div>
+          <div class="tab">屏幕</div>
+          <div class="tab">键盘</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        状态A：默认未呼出键盘。
+        右下角仅显示：键盘图标（最小化） + 展开按钮。
+        远程画面占满可用区域。
+      </div>
+    </div>
+  </div>
+
+  <div class="frame">
+    <div class="screen" id="screenB">
+      <div class="status">
+        <div class="dots">
+          <span class="pill">信号</span>
+          <span class="pill">录屏</span>
+        </div>
+        <span class="pill danger">结束远控</span>
+      </div>
+      <div class="remote"></div>
+
+      <!-- keyboard panel -->
+      <div class="kbdPanel" id="kbdPanelB">
+        <div class="switch">
+          <div class="pillBtn">电脑键盘</div>
+          <div class="pillBtn active">手机键盘</div>
+          <div class="pillBtn">快捷键盘</div>
+        </div>
+
+        <div class="systemIMEBar">
+          <div class="quickLane" title="系统输入法上浮的快捷键">
+            <span class="chip">Command+C</span>
+            <span class="chip">Command+V</span>
+            <span class="chip">Ctrl+C</span>
+            <span class="chip">Win+R</span>
+            <span class="chip">Tab</span>
+          </div>
+          <span class="pill" style="border-color:rgba(255,255,255,.16)">…</span>
+        </div>
+
+        <div class="ime" aria-label="System IME placeholder">
+          <div class="key">@#</div>
+          <div class="key">ABC</div>
+          <div class="key">DEF</div>
+          <div class="key">GHI</div>
+          <div class="key">JKL</div>
+          <div class="key">MNO</div>
+          <div class="key">PQRS</div>
+          <div class="key">TUV</div>
+          <div class="key">WXYZ</div>
+        </div>
+      </div>
+
+      <!-- shortcut editor modal (opened by leftmost button in shortcut row) -->
+      <div class="modal" id="shortcutModalB">
+        <div class="hdr">
+          <div class="h">快捷键设置</div>
+          <div class="x" title="关闭">×</div>
+        </div>
+        <div class="tabs">
+          <div class="t active">Windows</div>
+          <div class="t">macOS</div>
+          <div class="t">Linux</div>
+        </div>
+        <div class="add">＋ 添加快捷键</div>
+        <div class="list" role="list">
+          <div class="rowItem"><span>Ctrl</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Alt</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Shift</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Win+R</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Ctrl+C</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Ctrl+V</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Tab</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Esc</span><span class="grab">≡</span></div>
+          <div class="rowItem"><span>Enter</span><span class="grab">≡</span></div>
+        </div>
+      </div>
+
+      <div class="launcher" id="launcherB">
+        <div class="fab small" title="最小化键盘">
+          <div class="icon kbd"></div>
+        </div>
+        <div class="fab small" title="展开面板">
+          <div class="icon chev"></div>
+        </div>
+      </div>
+
+      <div class="bottomBar" id="bottomBarB">
+        <div class="row">
+          <div class="tab">操作</div>
+          <div class="tab active">键盘</div>
+          <div class="tab">互动</div>
+          <div class="tab">屏幕</div>
+          <div class="tab">键盘</div>
+        </div>
+      </div>
+
+      <div class="legend">
+        状态B：键盘已呼出。
+        - 右下角：键盘面板叠加在远程画面之上。
+        - 手机键盘：展示系统输入法（此处用占位栅格表示），并在其上方叠加一行快捷键条。
+        - 快捷键条最左侧按钮：打开“快捷键设置”弹窗，可切换 Windows/macOS/Linux，支持添加与拖拽排序。
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  const btnCollapsed = document.getElementById('btnCollapsed');
+  const btnExpanded = document.getElementById('btnExpanded');
+
+  const bottomBarA = document.getElementById('bottomBarA');
+  const bottomBarB = document.getElementById('bottomBarB');
+  const kbdPanelB = document.getElementById('kbdPanelB');
+  const shortcutModalB = document.getElementById('shortcutModalB');
+
+  function setState(expanded){
+    btnCollapsed.classList.toggle('active', !expanded);
+    btnExpanded.classList.toggle('active', expanded);
+
+    bottomBarA.style.display = 'none'; // Always hide old bar
+    bottomBarB.style.display = expanded ? 'block' : 'none';
+    kbdPanelB.style.display = expanded ? 'block' : 'none';
+
+    // 默认展示“快捷键设置”弹窗为打开状态（方便评审）。
+    shortcutModalB.style.display = expanded ? 'block' : 'none';
+  }
+
+  btnCollapsed.addEventListener('click', () => setState(false));
+  btnExpanded.addEventListener('click', () => setState(true));
+
+  // default
+  setState(false);
+</script>
+</body>
+</html>

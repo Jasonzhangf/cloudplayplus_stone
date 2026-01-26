@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>键盘布局示意图</title>
+<style>
+  body { font-family: sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background-color: #f0f0f0; margin: 0; }
+  .phone { width: 375px; height: 812px; border: 16px solid black; border-radius: 36px; position: relative; background-color: #fff; overflow: hidden; }
+  .screen { width: 100%; height: 100%; display: flex; flex-direction: column; }
+  .remote-desktop { flex-grow: 1; background: url('https://i.imgur.com/O4wZ8vN.png') no-repeat center center; background-size: cover; }
+  .keyboard-toggle { position: absolute; bottom: 20px; right: 20px; width: 60px; height: 60px; background-color: #007aff; border-radius: 50%; display: flex; justify-content: center; align-items: center; box-shadow: 0 4px 8px rgba(0,0,0,0.2); cursor: pointer; }
+  .keyboard-icon { color: white; font-size: 28px; }
+  .keyboard-area { position: absolute; bottom: 0; left: 0; right: 0; background-color: rgba(200, 200, 200, 0.9); backdrop-filter: blur(10px); transform: translateY(100%); transition: transform 0.3s ease-in-out; }
+  .keyboard-area.visible { transform: translateY(0); }
+  .keyboard-header { display: flex; justify-content: space-around; padding: 10px; border-bottom: 1px solid #ccc; }
+  .keyboard-header button { padding: 10px; background: none; border: none; font-size: 16px; cursor: pointer; }
+  .keyboard-header button.active { font-weight: bold; border-bottom: 2px solid #007aff; }
+  .keyboard-content { padding: 10px; }
+  .shortcut-bar { display: flex; padding: 10px; background-color: rgba(220, 220, 220, 0.9); overflow-x: auto; }
+  .shortcut-button { background-color: #fff; border: 1px solid #ccc; border-radius: 8px; padding: 10px 15px; margin-right: 10px; white-space: nowrap; cursor: pointer; }
+  .add-shortcut { font-weight: bold; }
+</style>
+</head>
+<body>
+
+<div class="phone">
+  <div class="screen">
+    <div class="remote-desktop"></div>
+    <div class="keyboard-area" id="keyboardArea">
+      <div class="keyboard-header">
+        <button id="btnComputer" class="active">电脑键盘</button>
+        <button id="btnPhone">手机键盘</button>
+        <button id="btnShortcut">快捷键盘</button>
+      </div>
+      <div class="keyboard-content" id="keyboardContent">
+        <!-- 电脑键盘内容 -->
+        <div id="computerKeyboard" style="text-align: center; padding: 20px;">电脑全功能键盘...</div>
+        <!-- 手机键盘内容 -->
+        <div id="phoneKeyboard" style="display: none; text-align: center; padding: 20px;">系统输入法区域...</div>
+        <!-- 快捷键盘内容 -->
+        <div id="shortcutKeyboard" style="display: none;">
+          <div class="shortcut-bar">
+            <div class="shortcut-button add-shortcut" id="addShortcutBtn">⚙️</div>
+            <div class="shortcut-button">Ctrl+C</div>
+            <div class="shortcut-button">Ctrl+V</div>
+            <div class="shortcut-button">Win+R</div>
+            <div class="shortcut-button">Alt+F4</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="keyboard-toggle" id="keyboardToggle">
+    <span class="keyboard-icon">⌨️</span>
+  </div>
+</div>
+
+<script>
+  const keyboardToggle = document.getElementById('keyboardToggle');
+  const keyboardArea = document.getElementById('keyboardArea');
+  
+  const btnComputer = document.getElementById('btnComputer');
+  const btnPhone = document.getElementById('btnPhone');
+  const btnShortcut = document.getElementById('btnShortcut');
+  
+  const computerKeyboard = document.getElementById('computerKeyboard');
+  const phoneKeyboard = document.getElementById('phoneKeyboard');
+  const shortcutKeyboard = document.getElementById('shortcutKeyboard');
+
+  let isKeyboardVisible = false;
+
+  keyboardToggle.addEventListener('click', () => {
+    isKeyboardVisible = !isKeyboardVisible;
+    if (isKeyboardVisible) {
+      keyboardArea.classList.add('visible');
+    } else {
+      keyboardArea.classList.remove('visible');
+    }
+  });
+
+  function switchTab(activeBtn, activeContent) {
+    [btnComputer, btnPhone, btnShortcut].forEach(btn => btn.classList.remove('active'));
+    [computerKeyboard, phoneKeyboard, shortcutKeyboard].forEach(content => content.style.display = 'none');
+    
+    activeBtn.classList.add('active');
+    activeContent.style.display = 'block';
+  }
+
+  btnComputer.addEventListener('click', () => switchTab(btnComputer, computerKeyboard));
+  btnPhone.addEventListener('click', () => switchTab(btnPhone, phoneKeyboard));
+  btnShortcut.addEventListener('click', () => switchTab(btnShortcut, shortcutKeyboard));
+
+  document.getElementById('addShortcutBtn').addEventListener('click', () => {
+    alert('打开快捷键自定义/排序界面');
+  });
+
+</script>
+
+</body>
+</html>

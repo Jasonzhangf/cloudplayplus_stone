@@ -6,10 +6,11 @@ import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/utils/widgets/on_screen_gamepad.dart';
-import 'package:cloudplayplus/utils/widgets/on_screen_keyboard.dart';
+import 'package:cloudplayplus/widgets/keyboard/enhanced_keyboard_panel.dart';
 import 'package:cloudplayplus/utils/widgets/on_screen_mouse.dart';
 import 'package:cloudplayplus/utils/widgets/virtual_gamepad/control_manager.dart';
 import 'package:cloudplayplus/utils/widgets/virtual_gamepad/gamepad_keys.dart';
+import 'package:cloudplayplus/widgets/keyboard/floating_shortcut_button.dart';
 import 'package:cloudplayplus/widgets/video_info_widget.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
@@ -64,7 +65,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   double _lastPenTilt = 0.0;
 
   final Offset _virtualMousePosition = const Offset(100, 100);
-  
+
   Offset? _lastTouchpadPosition;
   Map<int, Offset> _touchpadPointers = {};
   Map<int, DateTime> _touchpadPointerDownTime = {}; // 记录每个手指按下的时间
@@ -75,15 +76,19 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   bool _isTwoFingerScrolling = false;
   bool _isDragging = false; // 是否处于拖拽模式
   int? _draggingPointerId; // 拖拽的手指ID
-  
+
   // 快速单击的阈值
-  static const Duration _quickTapDuration = Duration(milliseconds: 300); // 300ms内视为快速单击
+  static const Duration _quickTapDuration =
+      Duration(milliseconds: 300); // 300ms内视为快速单击
   static const double _quickTapMaxDistance = 10.0; // 移动距离小于10像素视为快速单击
-  
+
   // 长按拖拽的阈值
-  static const Duration _longPressDuration = Duration(milliseconds: 500); // 500ms长按进入拖拽模式
+  static const Duration _longPressDuration =
+      Duration(milliseconds: 3000); // 3000ms长按进入拖拽模式
   static const double _longPressMaxDistance = 5.0; // 长按期间移动距离小于5像素视为原地不动
-  
+
+  static const double _maxVideoScale = 10.0;
+
   double _videoScale = 1.0;
   Offset _videoOffset = Offset.zero;
   Offset? _pinchFocalPoint;
@@ -108,64 +113,65 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
             dx, dy, WebrtcService.currentRenderingSession!.screenId);
   }
 
-  ({double xPercent, double yPercent})? _calculatePositionPercent(Offset globalPosition) {
+  ({double xPercent, double yPercent})? _calculatePositionPercent(
+      Offset globalPosition) {
     if (renderBox == null) return null;
     Offset localPosition = renderBox!.globalToLocal(globalPosition);
-    
+
     if (_videoScale != 1.0 || _videoOffset != Offset.zero) {
       Offset viewCenter = Offset(widgetSize.width / 2, widgetSize.height / 2);
-      localPosition = viewCenter + (localPosition - viewCenter - _videoOffset) / _videoScale;
+      localPosition = viewCenter +
+          (localPosition - viewCenter - _videoOffset) / _videoScale;
     }
-    
-    final double xPercent = (localPosition.dx / widgetSize.width).clamp(0.0, 1.0);
-    final double yPercent = (localPosition.dy / widgetSize.height).clamp(0.0, 1.0);
+
+    final double xPercent =
+        (localPosition.dx / widgetSize.width).clamp(0.0, 1.0);
+    final double yPercent =
+        (localPosition.dy / widgetSize.height).clamp(0.0, 1.0);
     return (xPercent: xPercent, yPercent: yPercent);
   }
 
   TouchInputMode get _currentTouchInputMode {
-    if (WebrtcService.currentRenderingSession?.controlled.devicetype != 'Windows') {
+    if (WebrtcService.currentRenderingSession?.controlled.devicetype !=
+        'Windows') {
       return TouchInputMode.mouse;
     }
     return TouchInputMode.values[StreamingSettings.touchInputMode];
   }
 
   bool get _isUsingTouchMode => _currentTouchInputMode == TouchInputMode.touch;
-  bool get _isUsingTouchpadMode => _currentTouchInputMode == TouchInputMode.touchpad;
+  bool get _isUsingTouchpadMode =>
+      _currentTouchInputMode == TouchInputMode.touchpad;
 
   void _handleTouchDown(PointerDownEvent event) {
     final pos = _calculatePositionPercent(event.position);
     if (pos == null) return;
 
-    if (_isUsingTouchMode) {
-      _handleTouchModeDown(pos.xPercent, pos.yPercent, event.pointer % 9 + 1);
-    } else if (_isUsingTouchpadMode) {
+    if (_isUsingTouchMode || _isUsingTouchpadMode) {
+      // 触摸模式也支持缩放/滚动/拖拽等手势：统一走 touchpad 逻辑
       _handleTouchpadDown(event);
-    } else {
-      _handleMouseModeDown(pos.xPercent, pos.yPercent);
+      return;
     }
+    _handleMouseModeDown(pos.xPercent, pos.yPercent);
   }
 
   void _handleTouchUp(PointerUpEvent event) {
-    if (_isUsingTouchMode) {
-      _handleTouchModeUp(event.pointer % 9 + 1);
-    } else if (_isUsingTouchpadMode) {
+    if (_isUsingTouchMode || _isUsingTouchpadMode) {
       _handleTouchpadUp(event);
-    } else {
-      _handleMouseModeUp();
+      return;
     }
+    _handleMouseModeUp();
   }
 
   void _handleTouchMove(PointerMoveEvent event) {
     final pos = _calculatePositionPercent(event.position);
     if (pos == null) return;
 
-    if (_isUsingTouchMode) {
-      _handleTouchModeMove(pos.xPercent, pos.yPercent, event.pointer % 9 + 1);
-    } else if (_isUsingTouchpadMode) {
+    if (_isUsingTouchMode || _isUsingTouchpadMode) {
       _handleTouchpadMove(event);
-    } else {
-      _handleMousePositionUpdate(event.position);
+      return;
     }
+    _handleMousePositionUpdate(event.position);
   }
 
   void _handleTouchModeDown(double xPercent, double yPercent, int pointerId) {
@@ -193,7 +199,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     WebrtcService.currentRenderingSession?.inputController
         ?.requestMoveMouseAbsl(xPercent, yPercent,
             WebrtcService.currentRenderingSession!.screenId);
-    
+
     if (_mouseTouchMode == MouseMode.leftClick) {
       _leftButtonDown = true;
       WebrtcService.currentRenderingSession?.inputController
@@ -209,21 +215,23 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     _touchpadPointers[event.pointer] = event.position;
     _touchpadPointerDownTime[event.pointer] = DateTime.now();
     _touchpadPointerDownPosition[event.pointer] = event.position;
-    
+
     if (_touchpadPointers.length == 1) {
       _lastTouchpadPosition = event.position;
+      // 启动长按拖拽检测（3秒）
+      _startLongPressDragDetection(event.pointer);
       _isDragging = false; // 重置拖拽状态
       _draggingPointerId = null;
     } else if (_touchpadPointers.length == 2) {
       _lastTouchpadPosition = null;
       _lastPinchDistance = _calculatePinchDistance();
-      
+
       List<Offset> positions = _touchpadPointers.values.toList();
       Offset center = Offset(
         (positions[0].dx + positions[1].dx) / 2,
         (positions[0].dy + positions[1].dy) / 2,
       );
-      
+
       _initialTwoFingerCenter = center;
       _initialPinchDistance = _calculatePinchDistance();
       _lastPinchDistance = _initialPinchDistance;
@@ -231,7 +239,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _pinchFocalPoint = center;
       _lastPinchFocalPoint = null;
       _twoFingerGestureType = TwoFingerGestureType.undecided;
-      
+
       _scrollController.startScroll();
       _isTwoFingerScrolling = true;
     }
@@ -239,12 +247,55 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   void _handleTouchpadMove(PointerMoveEvent event) {
     _touchpadPointers[event.pointer] = event.position;
-    
+
     if (_touchpadPointers.length == 1) {
+      if (_isDragging && _draggingPointerId == event.pointer) {
+        _handleDraggingMove(event);
+        return;
+      }
       _handleSingleFingerMove(event);
     } else if (_touchpadPointers.length == 2) {
       _handleTwoFingerGesture(event);
     }
+  }
+
+  void _startLongPressDragDetection(int pointerId) {
+    Future.delayed(_longPressDuration, () {
+      if (!mounted) return;
+      // 只有还存在这一根手指，且仍然只有一指时才进入拖拽
+      if (!_touchpadPointers.containsKey(pointerId)) return;
+      if (_touchpadPointers.length != 1) return;
+
+      final downPosition = _touchpadPointerDownPosition[pointerId];
+      final currentPosition = _touchpadPointers[pointerId];
+      if (downPosition == null || currentPosition == null) return;
+
+      final distance = (currentPosition - downPosition).distance;
+      if (distance > _longPressMaxDistance) return;
+
+      final pos = _calculatePositionPercent(currentPosition);
+      if (pos == null) return;
+
+      setState(() {
+        _isDragging = true;
+        _draggingPointerId = pointerId;
+      });
+
+      WebrtcService.currentRenderingSession?.inputController
+          ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
+              WebrtcService.currentRenderingSession!.screenId);
+      WebrtcService.currentRenderingSession?.inputController
+          ?.requestMouseClick(1, true);
+      _leftButtonDown = true;
+    });
+  }
+
+  void _handleDraggingMove(PointerMoveEvent event) {
+    final pos = _calculatePositionPercent(event.position);
+    if (pos == null) return;
+    WebrtcService.currentRenderingSession?.inputController
+        ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
+            WebrtcService.currentRenderingSession!.screenId);
   }
 
   void _handleTouchpadUp(PointerEvent event) {
@@ -252,18 +303,25 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     final downTime = _touchpadPointerDownTime[event.pointer];
     final downPosition = _touchpadPointerDownPosition[event.pointer];
     bool isQuickTap = false;
-    
+
     if (downTime != null && downPosition != null) {
       final duration = DateTime.now().difference(downTime);
       final distance = (event.position - downPosition).distance;
-      
+
       // 判断是否是快速单击
-      isQuickTap = duration < _quickTapDuration && distance < _quickTapMaxDistance;
-      
+      isQuickTap =
+          duration < _quickTapDuration && distance < _quickTapMaxDistance;
+
       if (isQuickTap) {
         // 根据当前手指数量决定是左键还是右键
         if (_touchpadPointers.length == 1) {
           // 单指快速单击 -> 左键点击
+          final pos = _calculatePositionPercent(event.position);
+          if (pos != null) {
+            WebrtcService.currentRenderingSession?.inputController
+                ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
+                    WebrtcService.currentRenderingSession!.screenId);
+          }
           WebrtcService.currentRenderingSession?.inputController
               ?.requestMouseClick(1, true); // 按下左键
           // 延迟一小段时间后松开，模拟单击
@@ -288,7 +346,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         }
       }
     }
-    
+
     // 处理拖拽模式结束
     if (_isDragging && _draggingPointerId == event.pointer) {
       // 如果这是拖拽的手指，且是最后一根手指，发送鼠标松开事件
@@ -304,7 +362,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     _touchpadPointerDownTime.remove(event.pointer);
     _touchpadPointerDownPosition.remove(event.pointer);
     _touchpadPointers.remove(event.pointer);
-    
+
     // 如果不是快速单击，才处理滚动逻辑
     if (!isQuickTap) {
       if (_isTwoFingerScrolling && _touchpadPointers.length < 2) {
@@ -312,7 +370,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         _isTwoFingerScrolling = false;
       }
     }
-    
+
     if (_touchpadPointers.isEmpty) {
       _lastTouchpadPosition = null;
       _lastPinchDistance = null;
@@ -345,79 +403,60 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _lastTouchpadPosition = event.position;
       return;
     }
-    
-    // 检查是否应该进入拖拽模式
-    if (!_isDragging && _touchpadPointers.length == 1) {
-      final downTime = _touchpadPointerDownTime[event.pointer];
-      final downPosition = _touchpadPointerDownPosition[event.pointer];
-      
-      if (downTime != null && downPosition != null) {
-        final duration = DateTime.now().difference(downTime);
-        final distanceFromStart = (event.position - downPosition).distance;
-        
-        // 如果长按且原地不动，进入拖拽模式
-        if (duration >= _longPressDuration && distanceFromStart < _longPressMaxDistance) {
-          _isDragging = true;
-          _draggingPointerId = event.pointer;
-          
-          // 发送鼠标按下事件
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestMouseClick(1, true);
-          _leftButtonDown = true;
-        }
-      }
-    }
-    
-    double deltaX = (event.position.dx - _lastTouchpadPosition!.dx) * StreamingSettings.touchpadSensitivity;
-    double deltaY = (event.position.dy - _lastTouchpadPosition!.dy) * StreamingSettings.touchpadSensitivity;
+
+    double deltaX = (event.position.dx - _lastTouchpadPosition!.dx) *
+        StreamingSettings.touchpadSensitivity;
+    double deltaY = (event.position.dy - _lastTouchpadPosition!.dy) *
+        StreamingSettings.touchpadSensitivity;
     _lastTouchpadPosition = event.position;
-    
-    // 如果在拖拽模式下，发送相对鼠标移动
-    if (_isDragging && _draggingPointerId == event.pointer) {
-      if (InputController.isCursorLocked) {
-        WebrtcService.currentRenderingSession?.inputController
-            ?.requestMoveMouseRelative(deltaX * StreamingSettings.touchpadSensitivityLocked, deltaY * StreamingSettings.touchpadSensitivityLocked, 0);
-      } else {
-        InputController.mouseController.moveDelta(deltaX, deltaY);
-      }
-    } else if (!_isDragging) {
-      // 非拖拽模式下的正常鼠标移动
-      if (InputController.isCursorLocked) {
-        WebrtcService.currentRenderingSession?.inputController
-            ?.requestMoveMouseRelative(deltaX * StreamingSettings.touchpadSensitivityLocked, deltaY * StreamingSettings.touchpadSensitivityLocked, 0);
-      } else {
-        InputController.mouseController.moveDelta(deltaX, deltaY);
-      }
+
+    // 拖拽模式下不移动画面
+    if (_isDragging) {
+      return;
+    }
+
+    // 触摸模式/触摸板模式：
+    // - 单指移动仅用于平移本地放大画面（不发送远程鼠标移动）
+    // - 不进行远程点按拖拽
+    if (_videoScale > 1.0) {
+      setState(() {
+        _videoOffset += Offset(deltaX, deltaY);
+      });
+      return;
     }
   }
 
   void _handleTwoFingerGesture(PointerMoveEvent event) {
     if (_touchpadPointers.length != 2) return;
-    
+
     List<Offset> positions = _touchpadPointers.values.toList();
     Offset center = Offset(
       (positions[0].dx + positions[1].dx) / 2,
       (positions[0].dy + positions[1].dy) / 2,
     );
     _pinchFocalPoint = center;
-    
+
     double currentDistance = _calculatePinchDistance();
-    
-    if (_lastTouchpadPosition != null && _lastPinchDistance != null && 
-        _initialPinchDistance != null && _initialTwoFingerCenter != null) {
-      
+
+    if (_lastTouchpadPosition != null &&
+        _lastPinchDistance != null &&
+        _initialPinchDistance != null &&
+        _initialTwoFingerCenter != null) {
       if (_twoFingerGestureType == TwoFingerGestureType.undecided) {
-        double cumulativeDistanceChangeRatio = 
-          (currentDistance - _initialPinchDistance!).abs() / _initialPinchDistance!;
-        double cumulativeCenterMovement = (center - _initialTwoFingerCenter!).distance;
-        
-        if (cumulativeDistanceChangeRatio > 0.2 || cumulativeDistanceChangeRatio < -0.1) {
+        double cumulativeDistanceChangeRatio =
+            (currentDistance - _initialPinchDistance!).abs() /
+                _initialPinchDistance!;
+        double cumulativeCenterMovement =
+            (center - _initialTwoFingerCenter!).distance;
+
+        if (cumulativeDistanceChangeRatio > 0.2 ||
+            cumulativeDistanceChangeRatio < -0.1) {
           _twoFingerGestureType = TwoFingerGestureType.zoom;
         } else if (cumulativeCenterMovement > 15) {
           _twoFingerGestureType = TwoFingerGestureType.scroll;
         }
       }
-      
+
       if (_twoFingerGestureType == TwoFingerGestureType.zoom) {
         _handlePinchZoom(currentDistance - _lastPinchDistance!);
       } else if (_twoFingerGestureType == TwoFingerGestureType.scroll) {
@@ -426,7 +465,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         _handleTwoFingerScroll(scrollDeltaX, scrollDeltaY);
       }
     }
-    
+
     _lastTouchpadPosition = center;
     _lastPinchDistance = currentDistance;
   }
@@ -439,41 +478,46 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   void _handleTwoFingerScroll(double deltaX, double deltaY) {
     if (!StreamingSettings.touchpadTwoFingerScroll) return;
-    _scrollController.doScroll(-deltaX, deltaY);
+    // 仅允许垂直滚动
+    _scrollController.doScroll(0, deltaY);
   }
 
   void _handlePinchZoom(double distanceDelta) {
     if (!StreamingSettings.touchpadTwoFingerZoom) return;
     if (_lastPinchDistance == null || _lastPinchDistance == 0) return;
-    
+
     double currentDistance = _calculatePinchDistance();
     double scaleChange = currentDistance / _lastPinchDistance!;
-    
+
     setState(() {
-      double newScale = (_videoScale * scaleChange).clamp(1.0, 5.0);
-      
+      double newScale = (_videoScale * scaleChange).clamp(1.0, _maxVideoScale);
+
       if (newScale == 1.0) {
         _videoScale = 1.0;
         _videoOffset = Offset.zero;
       } else if (_pinchFocalPoint != null && renderBox != null) {
         Offset localFocal = renderBox!.globalToLocal(_pinchFocalPoint!);
-        Offset viewCenter = Offset(renderBox!.size.width / 2, renderBox!.size.height / 2);
-        
-        Offset videoPoint = viewCenter + (localFocal - viewCenter - _videoOffset) / _videoScale;
-        Offset newOffset = localFocal - viewCenter - (videoPoint - viewCenter) * newScale;
-        
+        Offset viewCenter =
+            Offset(renderBox!.size.width / 2, renderBox!.size.height / 2);
+
+        Offset videoPoint =
+            viewCenter + (localFocal - viewCenter - _videoOffset) / _videoScale;
+        Offset newOffset =
+            localFocal - viewCenter - (videoPoint - viewCenter) * newScale;
+
         if (_lastPinchFocalPoint != null) {
-          Offset lastLocalFocal = renderBox!.globalToLocal(_lastPinchFocalPoint!);
+          Offset lastLocalFocal =
+              renderBox!.globalToLocal(_lastPinchFocalPoint!);
           Offset focalDelta = localFocal - lastLocalFocal;
           newOffset += focalDelta;
         }
-        
+
         _videoOffset = newOffset;
         _videoScale = newScale;
       } else {
         _videoScale = newScale;
       }
-      
+
       _lastPinchFocalPoint = _pinchFocalPoint;
     });
   }
@@ -497,6 +541,62 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     WebrtcService.currentRenderingSession?.inputController
         ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
             WebrtcService.currentRenderingSession!.screenId);
+  }
+
+  // 小地图：显示当前视窗在全画面中的位置
+  Widget _buildMiniMap() {
+    if (_videoScale <= 1.0) return const SizedBox.shrink();
+    if (renderBox == null) return const SizedBox.shrink();
+
+    // 视窗对应内容的比例（内容坐标系下的可视范围 / 全内容）
+    final viewFrac = (1.0 / _videoScale).clamp(0.0, 1.0);
+
+    // 将当前 offset 映射到视窗左上角在内容坐标系中的位置比例。
+    // 这里使用当前实现的中心缩放模型：
+    // 屏幕点 = viewCenter + contentPoint*scale + offset -> contentPoint = (screen - viewCenter - offset)/scale
+    final size = renderBox!.size;
+    final viewCenter = Offset(size.width / 2, size.height / 2);
+    final topLeftContent =
+        (Offset.zero - viewCenter - _videoOffset) / _videoScale;
+    // content 坐标范围约为 [-w/2, w/2]，所以转换到[0,1]
+    final contentW = size.width;
+    final contentH = size.height;
+    final x = ((topLeftContent.dx + contentW / 2) / contentW).clamp(0.0, 1.0);
+    final y = ((topLeftContent.dy + contentH / 2) / contentH).clamp(0.0, 1.0);
+
+    return Positioned(
+      right: 12,
+      bottom: 140,
+      child: IgnorePointer(
+        ignoring: true,
+        child: Container(
+          width: 110,
+          height: 70,
+          decoration: BoxDecoration(
+            color: Colors.black.withOpacity(0.35),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.white.withOpacity(0.25)),
+          ),
+          child: Stack(
+            children: [
+              Positioned(
+                left: 6 + (110 - 12) * x,
+                top: 6 + (70 - 12) * y,
+                child: Container(
+                  width: (110 - 12) * viewFrac,
+                  height: (70 - 12) * viewFrac,
+                  decoration: BoxDecoration(
+                    border: Border.all(
+                        color: Colors.white.withOpacity(0.85), width: 2),
+                    color: Colors.white.withOpacity(0.05),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   void _handleStylusDown(PointerDownEvent event) {
@@ -525,7 +625,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     if (pos == null) return;
 
     _penDown = false;
-    
+
     bool hasButton = (event.buttons & kSecondaryMouseButton) != 0;
 
     WebrtcService.currentRenderingSession?.inputController?.requestPenEvent(
@@ -741,7 +841,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       if (event.data is MouseButtonEvent) {
         final mouseButtonEvent = event.data as MouseButtonEvent;
         WebrtcService.currentRenderingSession?.inputController
-            ?.requestMouseClick(mouseButtonEvent.buttonId, mouseButtonEvent.isDown);
+            ?.requestMouseClick(
+                mouseButtonEvent.buttonId, mouseButtonEvent.isDown);
       }
     } else if (event.eventType == ControlEventType.mouseMove) {
       if (event.data is MouseMoveEvent) {
@@ -749,12 +850,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         if (mouseMoveEvent.isAbsolute) {
           // 绝对位置跳转
           WebrtcService.currentRenderingSession?.inputController
-              ?.requestMoveMouseAbsl(mouseMoveEvent.deltaX, mouseMoveEvent.deltaY, WebrtcService.currentRenderingSession!.screenId);
+              ?.requestMoveMouseAbsl(
+                  mouseMoveEvent.deltaX,
+                  mouseMoveEvent.deltaY,
+                  WebrtcService.currentRenderingSession!.screenId);
         } else {
           // 相对移动
           double sensitivity = StreamingSettings.touchpadSensitivity * 10;
           WebrtcService.currentRenderingSession?.inputController
-              ?.requestMoveMouseRelative(mouseMoveEvent.deltaX * sensitivity, mouseMoveEvent.deltaY * sensitivity, WebrtcService.currentRenderingSession!.screenId);
+              ?.requestMoveMouseRelative(
+                  mouseMoveEvent.deltaX * sensitivity,
+                  mouseMoveEvent.deltaY * sensitivity,
+                  WebrtcService.currentRenderingSession!.screenId);
         }
       }
     }
@@ -778,7 +885,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     };
     ControlManager().addEventListener(_handleControlEvent);
     if (AppPlatform.isMobile) {
-       HardwareSimulator.lockCursor();
+      HardwareSimulator.lockCursor();
     }
     WakelockPlus.enable();
     if (AppPlatform.isWindows) {
@@ -800,13 +907,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     try {
       final screenSize = MediaQuery.of(context).size;
 
-      final Offset globalPosition = renderBox!.localToGlobal(Offset(renderBox!.size.width * x, renderBox!.size.height * y));
-      final double targetXInWindow = (globalPosition.dx / screenSize.width).clamp(0.0, 1.0);
-      final double targetYInWindow = (globalPosition.dy / screenSize.height).clamp(0.0, 1.0);
+      final Offset globalPosition = renderBox!.localToGlobal(
+          Offset(renderBox!.size.width * x, renderBox!.size.height * y));
+      final double targetXInWindow =
+          (globalPosition.dx / screenSize.width).clamp(0.0, 1.0);
+      final double targetYInWindow =
+          (globalPosition.dy / screenSize.height).clamp(0.0, 1.0);
 
-      HardwareSimulator.mouse.performMouseMoveToWindowPosition(targetXInWindow, targetYInWindow);
-      
-      VLOG0("Hardware cursor position updated: renderBox(${x.toStringAsFixed(3)}, ${y.toStringAsFixed(3)}) -> window(${targetXInWindow.toStringAsFixed(3)}, ${targetYInWindow.toStringAsFixed(3)})");
+      HardwareSimulator.mouse
+          .performMouseMoveToWindowPosition(targetXInWindow, targetYInWindow);
+
+      VLOG0(
+          "Hardware cursor position updated: renderBox(${x.toStringAsFixed(3)}, ${y.toStringAsFixed(3)}) -> window(${targetXInWindow.toStringAsFixed(3)}, ${targetYInWindow.toStringAsFixed(3)})");
     } catch (e) {
       VLOG0("Error updating hardware cursor position: $e");
     }
@@ -817,7 +929,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     // set the default focus to remote desktop.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (AppPlatform.isDeskTop) {
-        InputController.cursorPositionCallback = onHardwareCursorPositionUpdateRequested;
+        InputController.cursorPositionCallback =
+            onHardwareCursorPositionUpdateRequested;
       }
       focusNode.requestFocus();
     });
@@ -860,7 +973,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   onPointerDown: (PointerDownEvent event) {
                     focusNode.requestFocus();
                     if (WebrtcService.currentRenderingSession == null) return;
-                    
+
                     if (event.kind == PointerDeviceKind.touch) {
                       _handleTouchDown(event);
                     } else if (event.kind == PointerDeviceKind.stylus) {
@@ -873,7 +986,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   },
                   onPointerUp: (PointerUpEvent event) {
                     if (WebrtcService.currentRenderingSession == null) return;
-                    
+
                     if (event.kind == PointerDeviceKind.touch) {
                       _handleTouchUp(event);
                     } else if (event.kind == PointerDeviceKind.stylus) {
@@ -889,7 +1002,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   },
                   onPointerCancel: (PointerCancelEvent event) {
                     if (WebrtcService.currentRenderingSession == null) return;
-                    
+
                     // 根据不同的输入设备类型，调用相应的 up 处理
                     if (event.kind == PointerDeviceKind.touch) {
                       if (_isUsingTouchMode) {
@@ -904,7 +1017,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                       final pos = _calculatePositionPercent(event.position);
                       if (pos != null) {
                         _penDown = false;
-                        WebrtcService.currentRenderingSession?.inputController?.requestPenEvent(
+                        WebrtcService.currentRenderingSession?.inputController
+                            ?.requestPenEvent(
                           pos.xPercent,
                           pos.yPercent,
                           false, // isDown
@@ -942,7 +1056,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                             ?.requestMouseClick(5, false);
                       }
                     }
-                    
+
                     // 清理触控板状态
                     if (_isUsingTouchpadMode) {
                       _lastTouchpadPosition = null;
@@ -950,13 +1064,15 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   },
                   onPointerMove: (PointerMoveEvent event) {
                     if (WebrtcService.currentRenderingSession == null) return;
-                    
-                    if (_mouseTouchMode == MouseMode.leftClick && event.kind == PointerDeviceKind.mouse) {
+
+                    if (_mouseTouchMode == MouseMode.leftClick &&
+                        event.kind == PointerDeviceKind.mouse) {
                       _syncMouseButtonState(event);
                     }
-                    
+
                     // When cursor is locked, we don't need to handle mouse move events here.
-                    if (InputController.isCursorLocked && event.kind == PointerDeviceKind.mouse) return;
+                    if (InputController.isCursorLocked &&
+                        event.kind == PointerDeviceKind.mouse) return;
 
                     if (event.kind == PointerDeviceKind.touch) {
                       _handleTouchMove(event);
@@ -969,9 +1085,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   },
                   onPointerHover: (PointerHoverEvent event) {
                     if (AppPlatform.isMobile) return;
-                    if (InputController.isCursorLocked || 
+                    if (InputController.isCursorLocked ||
                         WebrtcService.currentRenderingSession == null) return;
-                    
+
                     _handleMousePositionUpdate(event.position);
                   },
                   child: FocusScope(
@@ -1059,20 +1175,22 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                           })));
                                 });
                               })
-                          : RTCVideoView(WebrtcService.globalVideoRenderer!,
+                          : RTCVideoView(
+                              WebrtcService.globalVideoRenderer!,
                               scale: _videoScale,
                               offset: _videoOffset,
                               onRenderBoxUpdated: (newRenderBox) {
-                              parentBox =
-                                  context.findRenderObject() as RenderBox;
-                              renderBox = newRenderBox;
-                              widgetSize = newRenderBox.size;
-                            },
-                            setAspectRatio: (newAspectRatio) {
-                              if (AppPlatform.isMobile) {
-                                InputController.mouseController.setAspectRatio(newAspectRatio);
-                              }
-                            },
+                                parentBox =
+                                    context.findRenderObject() as RenderBox;
+                                renderBox = newRenderBox;
+                                widgetSize = newRenderBox.size;
+                              },
+                              setAspectRatio: (newAspectRatio) {
+                                if (AppPlatform.isMobile) {
+                                  InputController.mouseController
+                                      .setAspectRatio(newAspectRatio);
+                                }
+                              },
                             ),
                     ),
                   ),
@@ -1081,34 +1199,38 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   'You pressed: $_pressedKey',
                   style: TextStyle(fontSize: 24, color: Colors.red),
                 ),*/
-                if ((AppPlatform.isAndroidTV) || (AppPlatform.isMobile /*&& AppStateService.isMouseConnected*/))
+                if ((AppPlatform.isAndroidTV) ||
+                    (AppPlatform
+                        .isMobile /*&& AppStateService.isMouseConnected*/))
                   OnScreenRemoteMouse(
-                  controller: InputController.mouseController,
-                  onPositionChanged: (percentage) {
-                    double xPercent = percentage.dx;
-                    double yPercent = percentage.dy;
-                    
-                    if (_videoScale != 1.0 || _videoOffset != Offset.zero) {
-                      Offset screenPosition = Offset(
-                        percentage.dx * widgetSize.width,
-                        percentage.dy * widgetSize.height,
-                      );
-                      
-                      Offset viewCenter = Offset(widgetSize.width / 2, widgetSize.height / 2);
-                      Offset videoPosition = viewCenter + (screenPosition - viewCenter - _videoOffset) / _videoScale;
-                      
-                      xPercent = (videoPosition.dx / widgetSize.width).clamp(0.0, 1.0);
-                      yPercent = (videoPosition.dy / widgetSize.height).clamp(0.0, 1.0);
-                    }
-                    
-                    WebrtcService.currentRenderingSession?.inputController
-                      ?.requestMoveMouseAbsl(
-                          xPercent,
-                          yPercent,
-                          WebrtcService
-                              .currentRenderingSession!.screenId);
-                  },
-                ),
+                    controller: InputController.mouseController,
+                    onPositionChanged: (percentage) {
+                      double xPercent = percentage.dx;
+                      double yPercent = percentage.dy;
+
+                      if (_videoScale != 1.0 || _videoOffset != Offset.zero) {
+                        Offset screenPosition = Offset(
+                          percentage.dx * widgetSize.width,
+                          percentage.dy * widgetSize.height,
+                        );
+
+                        Offset viewCenter =
+                            Offset(widgetSize.width / 2, widgetSize.height / 2);
+                        Offset videoPosition = viewCenter +
+                            (screenPosition - viewCenter - _videoOffset) /
+                                _videoScale;
+
+                        xPercent = (videoPosition.dx / widgetSize.width)
+                            .clamp(0.0, 1.0);
+                        yPercent = (videoPosition.dy / widgetSize.height)
+                            .clamp(0.0, 1.0);
+                      }
+
+                      WebrtcService.currentRenderingSession?.inputController
+                          ?.requestMoveMouseAbsl(xPercent, yPercent,
+                              WebrtcService.currentRenderingSession!.screenId);
+                    },
+                  ),
                 BlocProvider(
                   create: (context) => MouseStyleBloc(),
                   child: const MouseStyleRegion(),
@@ -1117,7 +1239,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                     ? RTCVideoView(WebrtcService.globalAudioRenderer!)
                     : Container(),*/
                 const OnScreenVirtualGamepad(),
-                const OnScreenVirtualKeyboard(), // 放置在Stack中，独立于Listener和RawKeyboardListener,
+                const EnhancedKeyboardPanel(), // 放置在Stack中，独立于Listener和RawKeyboardListener,
+                const FloatingShortcutButton(),
+                _buildMiniMap(),
                 const Positioned(
                   top: 20,
                   left: 0,
@@ -1215,7 +1339,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                         });
                       }),
                       // We put keyboard here to aviod calculate the videoHeight again.
-                      const OnScreenVirtualKeyboard(),
+                      const EnhancedKeyboardPanel(),
                     ]),
                   );
                 },
@@ -1237,7 +1361,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     aspectRatioNotifier.dispose(); // 销毁时清理 ValueNotifier
     ControlManager().removeEventListener(_handleControlEvent);
 
-    initcount --;
+    initcount--;
     //The globalRemoteScreenRenderer is inited twice in a session and the dispose
     //of the first one is after the init of second one.
     //So for singleton scenarios only do it when initcount == 0.
