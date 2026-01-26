@@ -132,10 +132,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   }
 
   TouchInputMode get _currentTouchInputMode {
-    if (WebrtcService.currentRenderingSession?.controlled.devicetype !=
-        'Windows') {
-      return TouchInputMode.mouse;
-    }
+    // Touch/touchpad gestures should work for any remote OS (Android portrait is a
+    // major target). Mouse-only is still supported via TouchInputMode.mouse.
     return TouchInputMode.values[StreamingSettings.touchInputMode];
   }
 
@@ -478,7 +476,17 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   void _handleTwoFingerScroll(double deltaX, double deltaY) {
     if (!StreamingSettings.touchpadTwoFingerScroll) return;
-    // 仅允许垂直滚动
+    // 仅允许垂直滚动。
+    // 需求：双指上下滚动要模拟鼠标上下滚动，并且发送到“双指当前触摸的坐标处”。
+    // 做法：先把鼠标绝对位置移动到双指中心点（_pinchFocalPoint），再发送滚轮。
+    if (_pinchFocalPoint != null) {
+      final pos = _calculatePositionPercent(_pinchFocalPoint!);
+      if (pos != null) {
+        WebrtcService.currentRenderingSession?.inputController
+            ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
+                WebrtcService.currentRenderingSession!.screenId);
+      }
+    }
     _scrollController.doScroll(0, deltaY);
   }
 
