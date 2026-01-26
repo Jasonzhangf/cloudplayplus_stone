@@ -9,14 +9,171 @@
 #endif
 
 #if TARGET_OS_OSX
+// ScreenCaptureKit is used as a workaround for macOS 15 window-capture issues.
+// Guard availability at runtime to keep compatibility.
+#import <ScreenCaptureKit/ScreenCaptureKit.h>
+#import <CoreVideo/CoreVideo.h>
+#import <QuartzCore/QuartzCore.h>
+
+@interface FlutterSCKInlineCapturer : NSObject <SCStreamOutput, SCStreamDelegate>
+@property(nonatomic, weak) id<RTCVideoCapturerDelegate> captureDelegate;
+@property(nonatomic, strong) RTCVideoCapturer *rtcCapturer;
+@property(nonatomic, strong) SCStream *stream;
+@property(nonatomic, strong) dispatch_queue_t sampleQueue;
+@property(nonatomic, assign) int64_t startTimeNs;
+@property(nonatomic, assign) BOOL sentFirstFrame;
+@end
+
+@implementation FlutterSCKInlineCapturer
+
+- (instancetype)initWithCaptureDelegate:(id<RTCVideoCapturerDelegate>)captureDelegate {
+  self = [super init];
+  if (self) {
+    _captureDelegate = captureDelegate;
+    _rtcCapturer = [[RTCVideoCapturer alloc] initWithDelegate:captureDelegate];
+    _sampleQueue = dispatch_queue_create("FlutterSCKInlineCapturer.sample", DISPATCH_QUEUE_SERIAL);
+    _startTimeNs = 0;
+    _sentFirstFrame = NO;
+  }
+  return self;
+}
+
+- (void)startWithWindowName:(NSString *)windowName fps:(NSInteger)fps {
+  __weak __typeof(self) weakSelf = self;
+  [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content,
+                                                                NSError * _Nullable error) {
+    __strong __typeof(weakSelf) self = weakSelf;
+    if (!self) return;
+    if (error || !content) {
+      NSLog(@"[SCK] getShareableContent failed: %@", error);
+      return;
+    }
+
+    SCWindow *target = nil;
+    NSString *needle = windowName.lowercaseString;
+    for (SCWindow *w in content.windows) {
+      if (w.title && [w.title.lowercaseString isEqualToString:needle]) {
+        target = w;
+        break;
+      }
+    }
+    if (!target) {
+      for (SCWindow *w in content.windows) {
+        if (w.title && [w.title.lowercaseString containsString:needle]) {
+          target = w;
+          break;
+        }
+      }
+    }
+    if (!target) {
+      for (SCWindow *w in content.windows) {
+        if (w.title.length > 0) { target = w; break; }
+      }
+    }
+    if (!target && content.windows.count > 0) {
+      target = content.windows.firstObject;
+    }
+    if (!target) {
+      NSLog(@"[SCK] No window matched for name=%@", windowName);
+      return;
+    }
+
+    NSLog(@"[SCK] Selected window: title=%@ id=%llu", target.title, target.windowID);
+
+    SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
+    config.width = (int)MAX(1, target.frame.size.width);
+    config.height = (int)MAX(1, target.frame.size.height);
+    // Prefer NV12; it is the most commonly supported format for RTC pipelines.
+    config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
+    config.showsCursor = NO;
+    config.scalesToFit = YES;
+    if (fps > 0) {
+      config.minimumFrameInterval = CMTimeMake(1, (int32_t)fps);
+    }
+
+    SCContentFilter *filter = [[SCContentFilter alloc] initWithDesktopIndependentWindow:target];
+    self.stream = [[SCStream alloc] initWithFilter:filter configuration:config delegate:self];
+    self.sentFirstFrame = NO;
+    self.startTimeNs = 0;
+
+    NSError *addErr = nil;
+    [self.stream addStreamOutput:self type:SCStreamOutputTypeScreen sampleHandlerQueue:self.sampleQueue error:&addErr];
+    if (addErr) {
+      NSLog(@"[SCK] addStreamOutput failed: %@", addErr);
+      self.stream = nil;
+      return;
+    }
+
+    [self.stream startCaptureWithCompletionHandler:^(NSError * _Nullable startErr) {
+      if (startErr) {
+        NSLog(@"[SCK] startCapture failed: %@", startErr);
+        self.stream = nil;
+      } else {
+        NSLog(@"[SCK] startCapture ok (fps=%ld)", (long)fps);
+      }
+    }];
+  }];
+}
+
+- (void)stop {
+  SCStream *stream = self.stream;
+  if (!stream) return;
+  self.stream = nil;
+  [stream stopCaptureWithCompletionHandler:^(NSError * _Nullable error) {
+    if (error) {
+      NSLog(@"[SCK] stopCapture error: %@", error);
+    } else {
+      NSLog(@"[SCK] stopCapture ok");
+    }
+  }];
+}
+
+- (void)stream:(SCStream *)stream
+didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
+        ofType:(SCStreamOutputType)type {
+  if (type != SCStreamOutputTypeScreen) return;
+  CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
+  if (!pixelBuffer) return;
+
+  // Debug: keep the first-frame logging, but avoid spam.
+  OSType fmt = CVPixelBufferGetPixelFormatType(pixelBuffer);
+
+  if (self.startTimeNs == 0) {
+    self.startTimeNs = (int64_t)(CACurrentMediaTime() * 1000000000.0);
+  }
+  int64_t nowNs = (int64_t)(CACurrentMediaTime() * 1000000000.0);
+  int64_t tsNs = nowNs - self.startTimeNs;
+
+  RTCCVPixelBuffer *buffer = [[RTCCVPixelBuffer alloc] initWithPixelBuffer:pixelBuffer];
+  RTCVideoFrame *frame = [[RTCVideoFrame alloc] initWithBuffer:buffer
+                                                     rotation:RTCVideoRotation_0
+                                                  timeStampNs:tsNs];
+  // Pass a real RTCVideoCapturer instance; some implementations treat nil capturer specially.
+  [self.captureDelegate capturer:self.rtcCapturer didCaptureVideoFrame:frame];
+
+  if (!self.sentFirstFrame) {
+    self.sentFirstFrame = YES;
+    NSLog(@"[SCK] first frame fmt=%u %dx%d", (unsigned)fmt, frame.width, frame.height);
+  }
+}
+
+- (void)stream:(SCStream *)stream didStopWithError:(NSError *)error {
+  NSLog(@"[SCK] stream stopped: %@", error);
+}
+
+@end
+
 RTCDesktopMediaList* _screen = nil;
 RTCDesktopMediaList* _window = nil;
 NSArray<RTCDesktopSource*>* _captureSources;
+FlutterSCKInlineCapturer* _sckCapturer = nil;
 #endif
 
 @implementation FlutterWebRTCPlugin (DesktopCapturer)
 
 - (void)getDisplayMedia:(NSDictionary*)constraints result:(FlutterResult)result {
+  // Note: window capture on macOS 15 can produce garbled frames with legacy capturer.
+  // We conditionally use ScreenCaptureKit for window sources.
   NSString* mediaStreamId = [[NSUUID UUID] UUIDString];
   RTCMediaStream* mediaStream = [self.peerConnectionFactory mediaStreamWithStreamId:mediaStreamId];
   RTCVideoSource* videoSource = [self.peerConnectionFactory videoSourceForScreenCast:YES];
@@ -117,20 +274,42 @@ NSArray<RTCDesktopSource*>* _captureSources;
       result(@{@"error" : [NSString stringWithFormat:@"No source found for id: %@", sourceId]});
       return;
     }
-    desktopCapturer = [[RTCDesktopCapturer alloc] initWithSource:source
-                                                        delegate:self
-                                                 captureDelegate:videoSource];
-  }
-  [desktopCapturer startCaptureWithFPS:fps];
-  NSLog(@"start desktop capture: sourceId: %@, type: %@, fps: %lu", sourceId,
-        source.sourceType == RTCDesktopSourceTypeScreen ? @"screen" : @"window", fps);
 
-  self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
-    NSLog(@"stop desktop capture: sourceId: %@, type: %@, trackID %@", sourceId,
-          source.sourceType == RTCDesktopSourceTypeScreen ? @"screen" : @"window", trackUUID);
-    [desktopCapturer stopCapture];
-    handler();
-  };
+    if (source.sourceType == RTCDesktopSourceTypeWindow) {
+      if (@available(macOS 12.3, *)) {
+        _sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
+        [_sckCapturer startWithWindowName:source.name fps:fps];
+        NSLog(@"start desktop capture (SCK): sourceId: %@, type: window, fps: %lu", sourceId, fps);
+        self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
+          NSLog(@"stop desktop capture (SCK): sourceId: %@, type: window, trackID %@", sourceId, trackUUID);
+          [_sckCapturer stop];
+          _sckCapturer = nil;
+          handler();
+        };
+        desktopCapturer = nil;
+      } else {
+        desktopCapturer = [[RTCDesktopCapturer alloc] initWithSource:source
+                                                            delegate:self
+                                                     captureDelegate:videoSource];
+      }
+    } else {
+      desktopCapturer = [[RTCDesktopCapturer alloc] initWithSource:source
+                                                          delegate:self
+                                                   captureDelegate:videoSource];
+    }
+  }
+  if (desktopCapturer != nil) {
+    [desktopCapturer startCaptureWithFPS:fps];
+    NSLog(@"start desktop capture: sourceId: %@, type: %@, fps: %lu", sourceId,
+          source.sourceType == RTCDesktopSourceTypeScreen ? @"screen" : @"window", fps);
+
+    self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
+      NSLog(@"stop desktop capture: sourceId: %@, type: %@, trackID %@", sourceId,
+            source.sourceType == RTCDesktopSourceTypeScreen ? @"screen" : @"window", trackUUID);
+      [desktopCapturer stopCapture];
+      handler();
+    };
+  }
 #endif
 
   RTCVideoTrack* videoTrack = [self.peerConnectionFactory videoTrackWithSource:videoSource

@@ -1,7 +1,10 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'dart:ui' as ui;
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 void main() {
@@ -33,15 +36,48 @@ class _VerifyWebRTCWindowCapturePageState
     extends State<VerifyWebRTCWindowCapturePage> {
   final RTCVideoRenderer _renderer = RTCVideoRenderer();
   final List<String> _logs = [];
+  final GlobalKey _previewKey = GlobalKey();
 
   MediaStream? _stream;
   List<DesktopCapturerSource> _sources = [];
   DesktopCapturerSource? _selected;
+  Uint8List? _thumbnail;
+
+  Future<void> _screenshotPreview() async {
+    try {
+      final boundary =
+          _previewKey.currentContext?.findRenderObject() as RenderRepaintBoundary?;
+      if (boundary == null) {
+        _log('Screenshot failed: no preview boundary');
+        return;
+      }
+      final image = await boundary.toImage(pixelRatio: 1.0);
+      final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+      if (bytes == null) {
+        _log('Screenshot failed: toByteData null');
+        return;
+      }
+      final outDir = Directory('build/verify');
+      if (!outDir.existsSync()) {
+        outDir.createSync(recursive: true);
+      }
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
+      final name = (_selected?.name ?? 'unknown')
+          .replaceAll(RegExp(r'[^a-zA-Z0-9_\-\.]+'), '_');
+      final path = '${outDir.path}/webrtc_window_capture_${name}_$ts.png';
+      await File(path).writeAsBytes(bytes.buffer.asUint8List());
+      _log('Saved screenshot: $path');
+    } catch (e) {
+      _log('ERROR screenshot: $e');
+    }
+  }
 
   @override
   void initState() {
     super.initState();
     unawaited(_renderer.initialize());
+    // Auto load sources on startup to ensure the native path is exercised.
+    unawaited(_loadSources());
   }
 
   @override
@@ -76,33 +112,38 @@ class _VerifyWebRTCWindowCapturePageState
       }
 
       DesktopCapturerSource? iterm;
-      if (itermWindowHint != null) {
-        // Best-effort: match by exact name first, then contains.
-        iterm = windows.firstWhere(
-          (s) => s.name == itermWindowHint,
-          orElse: () => windows.firstWhere(
-            (s) => s.name.toLowerCase().contains(itermWindowHint.toLowerCase()),
-            orElse: () => windows.firstWhere(
-              (s) => s.name.toLowerCase().contains('iterm'),
-              orElse: () => windows.isNotEmpty ? windows.first : throw StateError('no windows'),
-            ),
-          ),
-        );
-      } else {
-        iterm = windows.firstWhere(
+      if (windows.isNotEmpty) {
+        final hint = itermWindowHint?.toLowerCase();
+        if (hint != null && hint.isNotEmpty) {
+          for (final s in windows) {
+            if (s.name.toLowerCase() == hint) {
+              iterm = s;
+              break;
+            }
+          }
+          iterm ??= windows.firstWhere(
+            (s) => s.name.toLowerCase().contains(hint),
+            orElse: () => windows.first,
+          );
+        }
+        iterm ??= windows.firstWhere(
           (s) => s.name.toLowerCase().contains('iterm'),
-          orElse: () => windows.isNotEmpty
-              ? windows.first
-              : (throw StateError('no windows')),
+          orElse: () => windows.first,
         );
       }
 
+      final initial = iterm ?? (windows.isNotEmpty ? windows.first : null);
       setState(() {
         _sources = windows;
-        _selected = iterm ?? (windows.isNotEmpty ? windows.first : null);
+        _selected = initial;
+        _thumbnail = null;
       });
 
-      _log('Auto-selected window: name="${iterm.name}"');
+      if (initial != null) {
+        _log('Auto-selected window: name="${initial.name}" id=${initial.id}');
+      } else {
+        _log('No window sources available to auto-select');
+      }
     } catch (e) {
       _log('ERROR loadSources: $e');
     }
@@ -142,13 +183,11 @@ class _VerifyWebRTCWindowCapturePageState
 
     _log('Starting capture: name="${target.name}" id=${target.id}');
     try {
+      // Try the most minimal constraint set first to avoid triggering
+      // legacy/unsupported mandatory constraints on some platforms.
       final constraints = <String, dynamic>{
         'video': {
           'deviceId': {'exact': target.id},
-          'mandatory': {
-            'frameRate': 30,
-            'hasCursor': false,
-          },
         },
         'audio': false,
       };
@@ -182,6 +221,30 @@ class _VerifyWebRTCWindowCapturePageState
       _stream = null;
       _renderer.srcObject = null;
     });
+  }
+
+  Future<void> _loadSelectedThumbnail() async {
+    final target = _selected;
+    if (target == null) {
+      _log('No selected window source');
+      return;
+    }
+    _log('Loading thumbnail: name="${target.name}" id=${target.id} ...');
+    try {
+      // The plugin exposes thumbnail via DesktopCapturerSource.thumbnail and events;
+      // there is no public API to request a thumbnail on-demand.
+      final bytes = target.thumbnail;
+      if (bytes == null || bytes.isEmpty) {
+        _log('Thumbnail is empty (note: plugin may not provide thumbnails on macOS)');
+        setState(() => _thumbnail = null);
+        return;
+      }
+      _log('Thumbnail ok: bytes=${bytes.length}');
+      setState(() => _thumbnail = bytes);
+    } catch (e) {
+      _log('ERROR getThumbnail: $e');
+      setState(() => _thumbnail = null);
+    }
   }
 
   @override
@@ -235,9 +298,45 @@ class _VerifyWebRTCWindowCapturePageState
                   onPressed: _stop,
                   child: const Text('Stop'),
                 ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _loadSelectedThumbnail,
+                  child: const Text('Thumbnail'),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton(
+                  onPressed: _screenshotPreview,
+                  child: const Text('Shot'),
+                ),
               ],
             ),
           ),
+          if (_thumbnail != null)
+            SizedBox(
+              height: 110,
+              child: Container(
+                margin: const EdgeInsets.symmetric(horizontal: 12),
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  border: Border.all(color: Colors.white24),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Row(
+                  children: [
+                    const Text('Thumbnail:', style: TextStyle(fontSize: 12)),
+                    const SizedBox(width: 12),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(8),
+                      child: Image.memory(
+                        _thumbnail!,
+                        gaplessPlayback: true,
+                        fit: BoxFit.contain,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Expanded(
             flex: 3,
             child: Container(
@@ -247,9 +346,12 @@ class _VerifyWebRTCWindowCapturePageState
                 borderRadius: BorderRadius.circular(12),
               ),
               clipBehavior: Clip.antiAlias,
-              child: RTCVideoView(
-                _renderer,
-                mirror: false,
+              child: RepaintBoundary(
+                key: _previewKey,
+                child: RTCVideoView(
+                  _renderer,
+                  mirror: false,
+                ),
               ),
             ),
           ),

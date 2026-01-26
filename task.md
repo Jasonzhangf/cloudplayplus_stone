@@ -422,3 +422,65 @@ scripts/verify/verify_iterm2_panel_screenshot.sh
 - [ ] 实现 Flutter 静态组件（mock 数据）：Panel 列表、选中态、刷新按钮、快捷键提示
 - [ ] 接入 iTerm2 Python API 的“panel 列表 + 激活切换”能力
 - [ ] 评估“只串流某个 panel”的实现路线：窗口捕获 + 裁剪
+
+## 五、macOS 15 窗口捕获（WebRTC）绿屏问题定位与修复
+
+背景（2026-01-26）：
+
+- macOS 15.2（内核 26.2）上：
+  - `SourceType.Screen`（整屏捕获）正常
+  - `SourceType.Window`（窗口捕获）出现绿屏/内容错位（微信/iTerm2 等多个窗口均复现）
+  - 同时 `source.thumbnail` 正常（说明窗口列表/静态缩略图链路可用）
+
+结论：legacy window capture 的实时帧链路在 macOS 15 上不可靠，需要改用 ScreenCaptureKit。
+
+修复（最小可行，2026-01-26 已验证通过）：
+
+- 在 macOS `getDisplayMedia` 的 window 分支，改为使用 ScreenCaptureKit 捕获并把 `CVPixelBuffer` 注入 WebRTC：
+  - `SCShareableContent` → 匹配 `SCWindow`
+  - `SCStreamConfiguration.pixelFormat` 使用 **NV12**：`kCVPixelFormatType_420YpCbCr8BiPlanarFullRange`
+  - `CVPixelBuffer` → `RTCCVPixelBuffer` → `RTCVideoFrame`
+  - 使用真实 `RTCVideoCapturer` 通过 `RTCVideoCapturerDelegate` 投递帧
+
+验证日志（节选）：
+
+- `[SCK] startCapture ok` 且 `[SCK] first frame ...` 后画面恢复正常
+
+代码位置：
+
+- `plugins/flutter-webrtc/common/darwin/Classes/FlutterRTCDesktopCapturer.m`
+
+后续待办：
+
+- [ ] 用更稳定的标识做窗口映射（避免仅用窗口标题匹配）
+- [ ] 清理/降级调试日志（保留必要的 error 日志）
+- [ ] 处理多窗口切换与资源释放（多 stream 并发/重复 start/stop）
+
+### 5.1 Monkey 测试（窗口切换 + 截图留档）
+
+目的：快速做“切换窗口源 / Start/Stop / 截图留档”的回归测试，确保不再出现绿屏。
+
+操作：
+
+1) 启动 verify app：
+
+```bash
+scripts/verify/verify_webrtc_window_capture.sh
+```
+
+2) 在 app 内对多个窗口重复：
+
+- 选 window source
+- 点 `Start`（确认画面正常）
+- 点 `Shot`（保存到 `build/verify/`）
+- 点 `Stop`
+
+输出：
+
+- `build/verify/webrtc_window_capture_*.png`
+
+辅助脚本（提示步骤）：
+
+```bash
+scripts/verify/monkey_webrtc_window_capture_macos.sh
+```
