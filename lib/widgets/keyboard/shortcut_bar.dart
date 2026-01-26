@@ -364,6 +364,13 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
     _settings = widget.settings;
   }
 
+  void _enterReorderMode() {
+    setState(() {
+      _reorderMode = true;
+    });
+    HapticFeedback.mediumImpact();
+  }
+
   void _updateSettings(ShortcutSettings newSettings) {
     setState(() => _settings = newSettings);
     widget.onSettingsChanged(newSettings);
@@ -378,12 +385,9 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
   }
 
   void _toggleShortcut(String id) {
-    final newShortcuts = _settings.shortcuts.map((s) {
-      if (s.id == id) {
-        return s.copyWith(enabled: !s.enabled);
-      }
-      return s;
-    }).toList();
+    // Deprecated: toggling enabled/disabled is no longer the primary interaction.
+    // Keep the method for now to avoid touching wider call sites.
+    final newShortcuts = _settings.shortcuts;
     _updateSettings(_settings.copyWith(shortcuts: newShortcuts));
   }
 
@@ -572,6 +576,17 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                   onPressed: _showAddShortcutSheet,
                   icon: const Icon(Icons.add_circle_outline),
                 ),
+                IconButton(
+                  tooltip: '排序',
+                  onPressed: () {
+                    setState(() {
+                      _reorderMode = !_reorderMode;
+                    });
+                  },
+                  icon: Icon(
+                    _reorderMode ? Icons.check_circle_outline : Icons.sort,
+                  ),
+                ),
               ],
             ),
           ),
@@ -591,7 +606,7 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                   child: _ShortcutTile(
                     shortcut: shortcut,
                     reorderMode: _reorderMode,
-                    onToggle: () => _toggleShortcut(shortcut.id),
+                    onToggle: () {},
                     onDragHandle: () {
                       setState(() {
                         _reorderMode = true;
@@ -626,7 +641,9 @@ class _ShortcutTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    return GestureDetector(
+      onLongPress: onDragHandle,
+      child: Container(
       decoration: BoxDecoration(
         color: Colors.grey.shade50,
         borderRadius: BorderRadius.circular(12),
@@ -660,21 +677,19 @@ class _ShortcutTile extends StatelessWidget {
             ),
           ),
           // 右侧：默认是开关；长按/进入编辑后显示排序把手
-          if (!reorderMode)
-            Switch(
-              value: shortcut.enabled,
-              onChanged: (_) => onToggle(),
-              activeColor: Colors.black87,
-            )
-          else
-            ReorderableDragStartListener(
-              index: shortcut.order - 1,
-              child: const Padding(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                child: Icon(Icons.drag_handle, color: Colors.black54),
+          ReorderableDragStartListener(
+            index: shortcut.order - 1,
+            enabled: reorderMode,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              child: Icon(
+                Icons.drag_handle,
+                color: reorderMode ? Colors.black54 : Colors.transparent,
               ),
             ),
+          ),
         ],
+      ),
       ),
     );
   }
