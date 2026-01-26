@@ -88,7 +88,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       Duration(milliseconds: 3000); // 3000ms长按进入拖拽模式
   static const double _longPressMaxDistance = 5.0; // 长按期间移动距离小于5像素视为原地不动
 
-  static const double _maxVideoScale = 10.0;
+  static const double _maxVideoScale = 16.0;
 
   double _videoScale = 1.0;
   Offset _videoOffset = Offset.zero;

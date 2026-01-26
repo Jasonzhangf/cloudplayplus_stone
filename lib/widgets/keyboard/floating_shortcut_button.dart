@@ -20,12 +20,22 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   late ShortcutSettings _settings;
   bool _isPanelVisible = false;
   bool _useSystemKeyboard = true;
+  final FocusNode _systemKeyboardFocusNode = FocusNode();
+  final TextEditingController _systemKeyboardController =
+      TextEditingController();
 
   @override
   void initState() {
     super.initState();
     _settings = ShortcutSettings();
     _initShortcuts();
+  }
+
+  @override
+  void dispose() {
+    _systemKeyboardFocusNode.dispose();
+    _systemKeyboardController.dispose();
+    super.dispose();
   }
 
   Future<void> _initShortcuts() async {
@@ -104,6 +114,53 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     return keyCodeMap[keyCodeStr] ?? 0;
   }
 
+  int? _vkFromRune(int rune) {
+    // Minimal ASCII -> Windows VK mapping.
+    // Letters
+    if (rune >= 0x61 && rune <= 0x7A) return rune - 0x20; // a-z -> A-Z
+    if (rune >= 0x41 && rune <= 0x5A) return rune; // A-Z
+
+    // Digits
+    if (rune >= 0x30 && rune <= 0x39) return rune;
+
+    // Common punctuation / whitespace
+    switch (rune) {
+      case 0x20:
+        return 0x20; // Space
+      case 0x0A:
+      case 0x0D:
+        return 0x0D; // Enter
+      case 0x08:
+        return 0x08; // Backspace
+      case 0x09:
+        return 0x09; // Tab
+      case 0x2D:
+        return 0xBD; // -
+      case 0x3D:
+        return 0xBB; // =
+      case 0x5B:
+        return 0xDB; // [
+      case 0x5D:
+        return 0xDD; // ]
+      case 0x5C:
+        return 0xDC; // \
+      case 0x3B:
+        return 0xBA; // ;
+      case 0x27:
+        return 0xDE; // '
+      case 0x2C:
+        return 0xBC; // ,
+      case 0x2E:
+        return 0xBE; // .
+      case 0x2F:
+        return 0xBF; // /
+      case 0x60:
+        return 0xC0; // `
+      default:
+        return null;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Stack(
@@ -124,6 +181,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   // Default: show system soft keyboard.
                   if (_useSystemKeyboard) {
                     ScreenController.setShowVirtualKeyboard(false);
+                    FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
                     SystemChannels.textInput.invokeMethod('TextInput.show');
                   } else {
                     SystemChannels.textInput.invokeMethod('TextInput.hide');
@@ -131,6 +189,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   }
                 } else {
                   ScreenController.setShowVirtualKeyboard(false);
+                  FocusScope.of(context).unfocus();
                   SystemChannels.textInput.invokeMethod('TextInput.hide');
                 }
               },
@@ -197,6 +256,40 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Hidden field to capture system keyboard input and forward to remote.
+            // Keep it 1x1 and offscreen for layout, but focusable.
+            SizedBox(
+              width: 1,
+              height: 1,
+              child: EditableText(
+                controller: _systemKeyboardController,
+                focusNode: _systemKeyboardFocusNode,
+                style: const TextStyle(fontSize: 1, color: Colors.transparent),
+                cursorColor: Colors.transparent,
+                backgroundCursorColor: Colors.transparent,
+                keyboardType: TextInputType.text,
+                onChanged: (value) {
+                  if (!_useSystemKeyboard || value.isEmpty) return;
+                  final inputController =
+                      WebrtcService.currentRenderingSession?.inputController;
+                  if (inputController == null) return;
+
+                  // Send typed characters as key events.
+                  // NOTE: This is a minimal implementation; we map common ASCII to VK.
+                  for (final rune in value.runes) {
+                    final keyCode = _vkFromRune(rune);
+                    if (keyCode == null) continue;
+                    inputController.requestKeyEvent(keyCode, true);
+                    inputController.requestKeyEvent(keyCode, false);
+                  }
+
+                  // Clear the buffer so we don't re-send accumulated text.
+                  _systemKeyboardController.value = TextEditingValue.empty;
+                },
+                // Prevent showing anything; selection isn't used.
+                selectionControls: null,
+              ),
+            ),
             // 标题栏
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -209,7 +302,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ),
               ),
               child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text(
                     '快捷键',
@@ -218,48 +310,63 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  Row(
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          setState(() {
-                            _useSystemKeyboard = !_useSystemKeyboard;
-                          });
-                          if (!_isPanelVisible) return;
-                          if (_useSystemKeyboard) {
-                            ScreenController.setShowVirtualKeyboard(false);
-                            SystemChannels.textInput.invokeMethod('TextInput.show');
-                          } else {
-                            SystemChannels.textInput.invokeMethod('TextInput.hide');
-                            ScreenController.setShowVirtualKeyboard(true);
-                          }
-                        },
-                        style: TextButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 2),
-                          minimumSize: const Size(0, 28),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                        ),
-                        child: Text(
-                          _useSystemKeyboard ? '系统键盘' : 'PC 键盘',
-                          style: const TextStyle(fontSize: 12),
-                        ),
+                  const Spacer(),
+                  SegmentedButton<bool>(
+                    segments: const [
+                      ButtonSegment<bool>(
+                        value: false,
+                        label: Text('电脑键盘'),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          setState(() {
-                            _isPanelVisible = false;
-                          });
-                          ScreenController.setShowVirtualKeyboard(false);
-                          SystemChannels.textInput.invokeMethod('TextInput.hide');
-                        },
-                        iconSize: 18,
-                        padding: const EdgeInsets.all(4),
-                        constraints:
-                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                      ButtonSegment<bool>(
+                        value: true,
+                        label: Text('手机键盘'),
                       ),
                     ],
+                    selected: {_useSystemKeyboard},
+                    showSelectedIcon: false,
+                    style: ButtonStyle(
+                      visualDensity: VisualDensity.compact,
+                      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      textStyle: WidgetStateProperty.all(
+                        const TextStyle(fontSize: 12),
+                      ),
+                      padding: WidgetStateProperty.all(
+                        const EdgeInsets.symmetric(horizontal: 6, vertical: 0),
+                      ),
+                    ),
+                    onSelectionChanged: (value) {
+                      final next = value.first;
+                      setState(() {
+                        _useSystemKeyboard = next;
+                      });
+                      if (!_isPanelVisible) return;
+                      if (_useSystemKeyboard) {
+                        ScreenController.setShowVirtualKeyboard(false);
+                        FocusScope.of(context)
+                            .requestFocus(_systemKeyboardFocusNode);
+                        SystemChannels.textInput.invokeMethod('TextInput.show');
+                      } else {
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        FocusScope.of(context).unfocus();
+                        ScreenController.setShowVirtualKeyboard(true);
+                      }
+                    },
+                  ),
+                  const SizedBox(width: 6),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      setState(() {
+                        _isPanelVisible = false;
+                      });
+                      ScreenController.setShowVirtualKeyboard(false);
+                      FocusScope.of(context).unfocus();
+                      SystemChannels.textInput.invokeMethod('TextInput.hide');
+                    },
+                    iconSize: 18,
+                    padding: const EdgeInsets.all(4),
+                    constraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 32),
                   ),
                 ],
               ),
