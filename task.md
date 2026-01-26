@@ -484,3 +484,74 @@ scripts/verify/verify_webrtc_window_capture.sh
 ```bash
 scripts/verify/monkey_webrtc_window_capture_macos.sh
 ```
+
+## 六、下一阶段规划：窗口列表缩略图 + 切换 + 比例匹配
+
+目标：形成“窗口列表 + 缩略图 + 一键切换 + 比例/裁剪”的稳定能力，为 iTerm2 pane 级串流打基础。
+
+### 6.1 API 设计（P0）
+
+WindowSource 结构（由 `getDesktopSources` 返回）：
+
+- `id`: 现有 sourceId（与 WebRTC 内部对应）
+- `windowId`: 原生窗口 ID（SCWindow.windowID / CGWindowID）
+- `title`: 窗口标题
+- `appId`: bundleId
+- `appName`: 应用名
+- `thumbnail`: bytes（PNG/JPEG）
+- `thumbnailMime`: `image/png` / `image/jpeg`
+- `w` / `h`: 缩略图尺寸
+
+新增 MethodChannel：
+
+- `getDesktopSourcesV2`：返回带缩略图的窗口列表（含缓存/节流策略）
+- `setCaptureTarget`：`windowId` + 可选 `cropRect` + `targetAspect` / `targetSize`
+
+### 6.2 缩略图生成（P0）
+
+策略：macOS 端生成，Dart 只做展示。
+
+- 来源：优先 `ScreenCaptureKit` / 备用 `CGWindowListCreateImage`
+- 缓存：按 `windowId` 缓存最后缩略图（TTL 1–2s）
+- 节流：同一窗口 500–1000ms 内不重复生成
+- 格式：PNG（清晰）或 JPEG（小体积）
+
+### 6.3 UI 列表与切换（P0）
+
+- Grid/List 展示：thumbnail + title + app icon
+- 切换策略：Stop → Start（稳定优先）
+- 选中态：高亮 + 右侧预览
+
+### 6.4 比例匹配与裁剪（P1）
+
+参数来源：远端分辨率/比例由 app 传入宿主端（`setCaptureTarget`）。
+
+捕获输出流程：
+
+- window capture 仍为全窗口
+- native 侧在推送 `RTCVideoFrame` 前做 `crop + scale + letterbox`
+- iTerm2：用 Python API 得到 pane frame → 转为 window 像素坐标 → crop
+
+裁剪/信箱：
+
+- `cropRect`（x,y,w,h）以窗口像素为基准
+- `targetAspect` / `targetSize` 决定 letterbox 逻辑
+
+### 6.5 里程碑
+
+P0（先行落地）：
+
+- [ ] `getDesktopSourcesV2` 返回缩略图
+- [ ] UI 列表展示缩略图
+- [ ] 窗口切换（Stop → Start）
+
+P1（比例与 pane）：
+
+- [ ] `setCaptureTarget` 支持 `cropRect` / `targetAspect`
+- [ ] iTerm2 pane 级裁剪 + letterbox
+
+风险与验证：
+
+- macOS 权限/前台：确认不再弹系统选择 UI
+- 缩略图性能：窗口多时保持流畅（节流）
+- 切换稳定性：多次切换无绿屏/崩溃
