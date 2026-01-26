@@ -194,27 +194,27 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 }
               },
               borderRadius: BorderRadius.circular(28),
-              child: Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF6366F1), Color(0xFF8B5CF6)],
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                  ),
-                  borderRadius: BorderRadius.circular(28),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
+                child: Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.75),
+                    borderRadius: BorderRadius.circular(28),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.18),
+                      width: 1,
                     ),
-                  ],
-                ),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.35),
+                        blurRadius: 8,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
                 child: Icon(
                   _isPanelVisible ? Icons.close : Icons.keyboard,
-                  color: Colors.white,
+                  color: Colors.white.withValues(alpha: 0.9),
                   size: 28,
                 ),
               ),
@@ -243,7 +243,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
           maxHeight: 200,
         ),
         decoration: BoxDecoration(
-          color: Colors.white,
+          color: Colors.black.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(16),
           boxShadow: [
             BoxShadow(
@@ -295,7 +295,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               height: 36,
               decoration: BoxDecoration(
-                color: Colors.grey[50],
+                color: Colors.black.withValues(alpha: 0.55),
                 borderRadius: const BorderRadius.only(
                   topLeft: Radius.circular(16),
                   topRight: Radius.circular(16),
@@ -308,6 +308,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     style: TextStyle(
                       fontSize: 14,
                       fontWeight: FontWeight.w600,
+                      color: Colors.white,
                     ),
                   ),
                   const Spacer(),

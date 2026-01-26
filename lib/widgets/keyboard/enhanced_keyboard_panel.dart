@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:vk/vk.dart';
 import '../../controller/screen_controller.dart';
 import '../../models/shortcut.dart';
@@ -120,6 +121,12 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
       builder: (context, showKeyboard, child) {
         if (!showKeyboard) return const SizedBox();
 
+        // When the built-in PC keyboard is shown, ensure system soft keyboard is hidden
+        // to prevent layout overlap.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          SystemChannels.textInput.invokeMethod('TextInput.hide');
+        });
+
         return LayoutBuilder(
           builder: (context, constraints) {
             // 键盘的原始尺寸
@@ -153,7 +160,7 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
                     height: scaledHeight,
                     color: Colors.transparent,
                     child: VirtualKeyboard(
-                      keyBackgroundColor: Colors.grey.withValues(alpha: 0.5),
+                      keyBackgroundColor: Colors.black.withValues(alpha: 0.72),
                       height: scaledHeight,
                       type: VirtualKeyboardType.Hardware,
                       keyPressedCallback: (keyCode, isDown) {

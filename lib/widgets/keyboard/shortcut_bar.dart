@@ -52,9 +52,9 @@ class _ShortcutBarState extends State<ShortcutBar> {
 
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.98),
+        color: Colors.black.withValues(alpha: 0.75),
         border: Border(
-          top: BorderSide(color: Colors.grey.shade300, width: 1),
+          top: BorderSide(color: Colors.white.withValues(alpha: 0.12), width: 1),
         ),
         boxShadow: [
           BoxShadow(
@@ -150,16 +150,11 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
           ..scaleByDouble(_isPressed ? 0.95 : 1.0, _isPressed ? 0.95 : 1.0,
               _isPressed ? 0.95 : 1.0, 1.0),
         decoration: BoxDecoration(
-          gradient: widget.isSettings
-              ? const LinearGradient(
-                  colors: [Color(0xFF667EEA), Color(0xFF764BA2)],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                )
-              : null,
-          color: widget.isSettings ? null : Colors.white,
+          color: Colors.black.withValues(alpha: widget.isSettings ? 0.9 : 0.65),
           border: Border.all(
-            color: _isPressed ? const Color(0xFF667EEA) : Colors.grey.shade300,
+            color: _isPressed
+                ? Colors.white.withValues(alpha: 0.35)
+                : Colors.white.withValues(alpha: 0.18),
             width: 1.5,
           ),
           borderRadius: BorderRadius.circular(10),
@@ -183,7 +178,7 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
                 widget.label!,
                 style: TextStyle(
                   fontSize: 9,
-                  color: widget.isSettings ? Colors.white70 : Colors.black54,
+                  color: Colors.white.withValues(alpha: widget.isSettings ? 0.9 : 0.75),
                 ),
               ),
             ],
@@ -195,7 +190,7 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
                   fontSize: 9,
                   fontWeight: FontWeight.w600,
                   fontFamily: 'monospace',
-                  color: widget.isSettings ? Colors.white : Colors.black87,
+                  color: Colors.white.withValues(alpha: 0.92),
                 ),
               ),
             ],
