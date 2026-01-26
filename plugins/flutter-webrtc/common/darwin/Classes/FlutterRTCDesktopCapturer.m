@@ -356,18 +356,22 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
   NSEnumerator* enumerator = [_captureSources objectEnumerator];
   RTCDesktopSource* object;
   while ((object = enumerator.nextObject) != nil) {
-    /*NSData *data = nil;
-    if([object thumbnail]) {
-        data = [[NSData alloc] init];
-        NSImage *resizedImg = [self resizeImage:[object thumbnail] forSize:NSMakeSize(320, 180)];
-        data = [resizedImg TIFFRepresentation];
-    }*/
+    NSData* data = nil;
+    NSImage* thumbImage = [object UpdateThumbnail];
+    if (thumbImage) {
+      NSImage* resizedImg = [self resizeImage:thumbImage forSize:NSMakeSize(320, 180)];
+      data = [resizedImg TIFFRepresentation];
+      if (data) {
+        NSBitmapImageRep* imageRep = [NSBitmapImageRep imageRepWithData:data];
+        data = [imageRep representationUsingType:NSBitmapImageFileTypePNG properties:@{}];
+      }
+    }
     [sources addObject:@{
       @"id" : object.sourceId,
       @"name" : object.name,
-      @"thumbnailSize" : @{@"width" : @0, @"height" : @0},
+      @"thumbnailSize" : data ? @{@"width" : @320, @"height" : @180} : @{@"width" : @0, @"height" : @0},
       @"type" : object.sourceType == RTCDesktopSourceTypeScreen ? @"screen" : @"window",
-      //@"thumbnail": data,
+      @"thumbnail" : data ?: [NSNull null],
     }];
   }
   result(@{@"sources" : sources});

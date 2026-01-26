@@ -100,9 +100,16 @@ class _VerifyWebRTCWindowCapturePageState
         types: [SourceType.Window, SourceType.Screen],
         thumbnailSize: ThumbnailSize(240, 135),
       );
-      final windows = sources.where((s) => s.type == SourceType.Window).toList();
-      final screens = sources.where((s) => s.type == SourceType.Screen).toList();
-      _log('Sources loaded: total=${sources.length} windows=${windows.length} screens=${screens.length}');
+     final windows = sources.where((s) => s.type == SourceType.Window).toList();
+     final screens = sources.where((s) => s.type == SourceType.Screen).toList();
+     _log('Sources loaded: total=${sources.length} windows=${windows.length} screens=${screens.length}');
+     int withThumb = 0;
+     for (final s in sources) {
+       if (s.thumbnail != null && s.thumbnail!.isNotEmpty) {
+         withThumb++;
+       }
+     }
+     _log('Sources with embedded thumbnail: $withThumb/${sources.length}');
 
       final itermWindowHint = await _getITerm2FrontWindowNameHint();
       if (itermWindowHint != null) {
