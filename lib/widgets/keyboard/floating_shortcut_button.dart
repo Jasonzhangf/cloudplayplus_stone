@@ -19,6 +19,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   final ShortcutService _shortcutService = ShortcutService();
   late ShortcutSettings _settings;
   bool _isPanelVisible = false;
+  bool _useSystemKeyboard = true;
 
   @override
   void initState() {
@@ -120,9 +121,14 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   _isPanelVisible = !_isPanelVisible;
                 });
                 if (_isPanelVisible) {
-                  // Show system soft keyboard and keep shortcut bar above it.
-                  ScreenController.setShowVirtualKeyboard(true);
-                  SystemChannels.textInput.invokeMethod('TextInput.show');
+                  // Default: show system soft keyboard.
+                  if (_useSystemKeyboard) {
+                    ScreenController.setShowVirtualKeyboard(false);
+                    SystemChannels.textInput.invokeMethod('TextInput.show');
+                  } else {
+                    SystemChannels.textInput.invokeMethod('TextInput.hide');
+                    ScreenController.setShowVirtualKeyboard(true);
+                  }
                 } else {
                   ScreenController.setShowVirtualKeyboard(false);
                   SystemChannels.textInput.invokeMethod('TextInput.hide');
@@ -168,6 +174,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 
   Widget _buildShortcutPanel(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
     return Material(
       elevation: 8,
       borderRadius: BorderRadius.circular(16),
@@ -211,27 +218,54 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       fontWeight: FontWeight.w600,
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.settings),
-                    onPressed: () {
-                      // 显示设置面板
-                      showModalBottomSheet(
-                        context: context,
-                        isScrollControlled: true,
-                        backgroundColor: Colors.transparent,
-                        builder: (context) => _ShortcutSettingsSheet(
-                          settings: _settings,
-                          onSettingsChanged: _handleSettingsChanged,
+                  Row(
+                    children: [
+                      TextButton(
+                        onPressed: () {
+                          setState(() {
+                            _useSystemKeyboard = !_useSystemKeyboard;
+                          });
+                          if (!_isPanelVisible) return;
+                          if (_useSystemKeyboard) {
+                            ScreenController.setShowVirtualKeyboard(false);
+                            SystemChannels.textInput.invokeMethod('TextInput.show');
+                          } else {
+                            SystemChannels.textInput.invokeMethod('TextInput.hide');
+                            ScreenController.setShowVirtualKeyboard(true);
+                          }
+                        },
+                        style: TextButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 2),
+                          minimumSize: const Size(0, 28),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                         ),
-                      );
-                    },
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(4),
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                        child: Text(
+                          _useSystemKeyboard ? '系统键盘' : 'PC 键盘',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () {
+                          setState(() {
+                            _isPanelVisible = false;
+                          });
+                          ScreenController.setShowVirtualKeyboard(false);
+                          SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        },
+                        iconSize: 18,
+                        padding: const EdgeInsets.all(4),
+                        constraints:
+                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                      ),
+                    ],
                   ),
                 ],
               ),
             ),
+            if (_useSystemKeyboard && bottomInset > 0)
+              SizedBox(height: (bottomInset * 0.05).clamp(0.0, 12.0)),
             // 快捷键条
             Flexible(
               child: SingleChildScrollView(

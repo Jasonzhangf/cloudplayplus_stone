@@ -76,6 +76,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   bool _isTwoFingerScrolling = false;
   bool _isDragging = false; // 是否处于拖拽模式
   int? _draggingPointerId; // 拖拽的手指ID
+  bool _lockSingleFingerAfterTwoFinger = false;
 
   // 快速单击的阈值
   static const Duration _quickTapDuration =
@@ -220,7 +221,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _startLongPressDragDetection(event.pointer);
       _isDragging = false; // 重置拖拽状态
       _draggingPointerId = null;
+      _lockSingleFingerAfterTwoFinger = false;
     } else if (_touchpadPointers.length == 2) {
+      _lockSingleFingerAfterTwoFinger = true;
       _lastTouchpadPosition = null;
       _lastPinchDistance = _calculatePinchDistance();
 
@@ -247,6 +250,10 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     _touchpadPointers[event.pointer] = event.position;
 
     if (_touchpadPointers.length == 1) {
+      if (_lockSingleFingerAfterTwoFinger) {
+        _lastTouchpadPosition = event.position;
+        return;
+      }
       if (_isDragging && _draggingPointerId == event.pointer) {
         _handleDraggingMove(event);
         return;
@@ -370,6 +377,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     }
 
     if (_touchpadPointers.isEmpty) {
+      _lockSingleFingerAfterTwoFinger = false;
       _lastTouchpadPosition = null;
       _lastPinchDistance = null;
       _initialPinchDistance = null;
@@ -393,6 +401,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _pinchFocalPoint = null;
       _lastPinchFocalPoint = null;
       _twoFingerGestureType = TwoFingerGestureType.undecided;
+      // When dropping from 2 fingers to 1, avoid interpreting the remaining finger
+      // as a continuation pan. Require lifting and re-touching to start panning.
+      _lockSingleFingerAfterTwoFinger = true;
     }
   }
 
@@ -441,6 +452,12 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
     double currentDistance = _calculatePinchDistance();
 
+    // Ensure pinch distance is always updated (even when gesture type is undecided)
+    // so that zoom-out after zoom-in keeps working.
+    if (_lastPinchDistance == null || _lastPinchDistance == 0) {
+      _lastPinchDistance = currentDistance;
+    }
+
     if (_lastTouchpadPosition != null &&
         _lastPinchDistance != null &&
         _initialPinchDistance != null &&
@@ -452,8 +469,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         double cumulativeCenterMovement =
             (center - _initialTwoFingerCenter!).distance;
 
-        if (cumulativeDistanceChangeRatio > 0.2 ||
-            cumulativeDistanceChangeRatio < -0.1) {
+        if (cumulativeDistanceChangeRatio > 0.02) {
           _twoFingerGestureType = TwoFingerGestureType.zoom;
         } else if (cumulativeCenterMovement > 15) {
           _twoFingerGestureType = TwoFingerGestureType.scroll;
@@ -461,7 +477,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       }
 
       if (_twoFingerGestureType == TwoFingerGestureType.zoom) {
-        _handlePinchZoom(currentDistance - _lastPinchDistance!);
+        _handlePinchZoom(currentDistance / _lastPinchDistance!);
       } else if (_twoFingerGestureType == TwoFingerGestureType.scroll) {
         double scrollDeltaX = center.dx - _lastTouchpadPosition!.dx;
         double scrollDeltaY = center.dy - _lastTouchpadPosition!.dy;
@@ -495,16 +511,11 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     _scrollController.doScroll(0, deltaY);
   }
 
-  void _handlePinchZoom(double distanceDelta) {
+  void _handlePinchZoom(double scaleChange) {
     if (!StreamingSettings.touchpadTwoFingerZoom) return;
-    if (_lastPinchDistance == null || _lastPinchDistance == 0) return;
-
-    double currentDistance = _calculatePinchDistance();
-    double scaleChange = currentDistance / _lastPinchDistance!;
-    // Prevent tiny jitter from causing the scale to get "stuck".
     if (scaleChange.isNaN || scaleChange.isInfinite) return;
+    // Prevent tiny jitter from causing the scale to get "stuck".
     if ((scaleChange - 1.0).abs() < 0.005) {
-      _lastPinchDistance = currentDistance;
       return;
     }
 
@@ -539,8 +550,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       }
 
       _lastPinchFocalPoint = _pinchFocalPoint;
-      // Always update last pinch distance so zoom-in/out continues to work.
-      _lastPinchDistance = currentDistance;
     });
   }
 
