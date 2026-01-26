@@ -402,10 +402,15 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       return;
     }
 
+    // Pan speed should scale with zoom: higher zoom => move more per gesture.
+    // This keeps the content navigation usable when zoomed in (especially portrait).
+    final zoomFactor = _videoScale.clamp(1.0, _maxVideoScale);
     double deltaX = (event.position.dx - _lastTouchpadPosition!.dx) *
-        StreamingSettings.touchpadSensitivity;
+        StreamingSettings.touchpadSensitivity *
+        zoomFactor;
     double deltaY = (event.position.dy - _lastTouchpadPosition!.dy) *
-        StreamingSettings.touchpadSensitivity;
+        StreamingSettings.touchpadSensitivity *
+        zoomFactor;
     _lastTouchpadPosition = event.position;
 
     // 拖拽模式下不移动画面
@@ -496,11 +501,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
     double currentDistance = _calculatePinchDistance();
     double scaleChange = currentDistance / _lastPinchDistance!;
+    // Prevent tiny jitter from causing the scale to get "stuck".
+    if (scaleChange.isNaN || scaleChange.isInfinite) return;
+    if ((scaleChange - 1.0).abs() < 0.005) {
+      _lastPinchDistance = currentDistance;
+      return;
+    }
 
     setState(() {
       double newScale = (_videoScale * scaleChange).clamp(1.0, _maxVideoScale);
 
-      if (newScale == 1.0) {
+      // Allow zooming back to 1.0 reliably.
+      if (newScale <= 1.001) {
         _videoScale = 1.0;
         _videoOffset = Offset.zero;
       } else if (_pinchFocalPoint != null && renderBox != null) {
