@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../../models/shortcut.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
+import '../../controller/screen_controller.dart';
 import 'shortcut_bar.dart';
 
 /// 悬浮快捷键按钮 - 固定在右下角
@@ -117,6 +119,14 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 setState(() {
                   _isPanelVisible = !_isPanelVisible;
                 });
+                if (_isPanelVisible) {
+                  // Show system soft keyboard and keep shortcut bar above it.
+                  ScreenController.setShowVirtualKeyboard(true);
+                  SystemChannels.textInput.invokeMethod('TextInput.show');
+                } else {
+                  ScreenController.setShowVirtualKeyboard(false);
+                  SystemChannels.textInput.invokeMethod('TextInput.hide');
+                }
               },
               borderRadius: BorderRadius.circular(28),
               child: Container(

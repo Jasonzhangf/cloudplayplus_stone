@@ -84,7 +84,6 @@ class _ShortcutBarState extends State<ShortcutBar> {
   /// 构建设置按钮
   Widget _buildSettingsButton() {
     return _ShortcutButton(
-      icon: '⚙️',
       label: '设置',
       isSettings: true,
       onPressed: _openSettings,
@@ -96,7 +95,6 @@ class _ShortcutBarState extends State<ShortcutBar> {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: _ShortcutButton(
-        icon: shortcut.icon,
         keysText: formatShortcutKeys(shortcut.keys),
         onPressed: () => widget.onShortcutPressed(shortcut),
       ),
@@ -106,14 +104,12 @@ class _ShortcutBarState extends State<ShortcutBar> {
 
 /// 快捷键按钮
 class _ShortcutButton extends StatefulWidget {
-  final String icon;
   final String? label;
   final String? keysText;
   final bool isSettings;
   final VoidCallback onPressed;
 
   const _ShortcutButton({
-    required this.icon,
     this.label,
     this.keysText,
     this.isSettings = false,
@@ -175,33 +171,28 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
             ),
           ],
         ),
-        constraints: const BoxConstraints(
-          minWidth: 44,
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        // Smaller buttons for mobile: ~1/2 width, ~1/3 height versus previous feel.
+        constraints: const BoxConstraints(minWidth: 28),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              widget.icon,
-              style: const TextStyle(fontSize: 14),
-            ),
             if (widget.label != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Text(
                 widget.label!,
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 9,
                   color: widget.isSettings ? Colors.white70 : Colors.black54,
                 ),
               ),
             ],
             if (widget.keysText != null) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 2),
               Text(
                 widget.keysText!,
                 style: TextStyle(
-                  fontSize: 10,
+                  fontSize: 9,
                   fontWeight: FontWeight.w600,
                   fontFamily: 'monospace',
                   color: widget.isSettings ? Colors.white : Colors.black87,

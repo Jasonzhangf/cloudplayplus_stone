@@ -539,6 +539,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       }
 
       _lastPinchFocalPoint = _pinchFocalPoint;
+      // Always update last pinch distance so zoom-in/out continues to work.
+      _lastPinchDistance = currentDistance;
     });
   }
 
