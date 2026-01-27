@@ -4,11 +4,12 @@ import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/pages/display_manager_page.dart';
 import 'package:cloudplayplus/pages/login_screen.dart';
+import 'package:cloudplayplus/pages/window_select_page.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
 import 'package:cloudplayplus/services/login_service.dart';
 import 'package:cloudplayplus/services/secure_storage_manager.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
-import 'package:cloudplayplus/utils/widgets/text_field_wrapper.dart';
+// import 'package:cloudplayplus/utils/widgets/text_field_wrapper.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -102,36 +103,37 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
               ),
-              if (AppPlatform.isWindows)SettingsTile.navigation(
-                leading: const Icon(Icons.monitor),
-                title: const Text('虚拟显示器设置'),
-                onPressed: (context) {
-                  Navigation.navigateTo(
-                    context: context,
-                    screen: DisplayManagerPage(),
-                    style: NavigationRouteStyle.cupertino,
-                  );
-                },
-              ),
+              if (AppPlatform.isWindows)
+                SettingsTile.navigation(
+                  leading: const Icon(Icons.monitor),
+                  title: const Text('虚拟显示器设置'),
+                  onPressed: (context) {
+                    Navigation.navigateTo(
+                      context: context,
+                      screen: DisplayManagerPage(),
+                      style: NavigationRouteStyle.cupertino,
+                    );
+                  },
+                ),
             ],
           ),
           if (!AppPlatform.isDeskTop)
-          SettingsSection(
-            title: const Text('显示设置'),
-            tiles: [
-              SettingsTile.navigation(
-                leading: const Icon(Icons.display_settings),
-                title: const Text('屏幕朝向设置'),
-                onPressed: (context) {
-                  Navigation.navigateTo(
-                    context: context,
-                    screen: const DisplaySettingsScreen(),
-                    style: NavigationRouteStyle.cupertino,
-                  );
-                },
-              ),
-            ],
-          ),
+            SettingsSection(
+              title: const Text('显示设置'),
+              tiles: [
+                SettingsTile.navigation(
+                  leading: const Icon(Icons.display_settings),
+                  title: const Text('屏幕朝向设置'),
+                  onPressed: (context) {
+                    Navigation.navigateTo(
+                      context: context,
+                      screen: const DisplaySettingsScreen(),
+                      style: NavigationRouteStyle.cupertino,
+                    );
+                  },
+                ),
+              ],
+            ),
           SettingsSection(
             title: const Text('主题模式'),
             tiles: [
@@ -346,6 +348,27 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SettingsSection(
             title: const Text('官方网站'),
             tiles: <SettingsTile>[
+              SettingsTile.navigation(
+                leading: const Icon(Icons.window),
+                title: const Text('窗口串流设置'),
+                onPressed: (context) {
+                  Navigation.navigateTo(
+                    context: context,
+                    screen: const WindowSelectPage(),
+                    style: NavigationRouteStyle.cupertino,
+                  );
+                },
+              ),
+              SettingsTile(
+                title: const Text('当前窗口'),
+                leading: const Icon(Icons.info_outline),
+                trailing: Material(
+                  child: Text(
+                    StreamingSettings.desktopSourceId?.split(':').last ?? '无',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                ),
+              ),
               SettingsTile(
                 title: const Text('https://www.cloudplayplus.com'),
                 leading: const Icon(Icons.link),
@@ -394,7 +417,20 @@ class _StreamingSettingsScreen extends State<StreamingSettingsScreen> {
   int _frameRate = 60;
   String _codec = 'default';
   double _cursorScale = 100.0;
-  final List<double> _scaleValues = [12.5, 25, 50, 75, 100, 125, 150, 200, 250, 300, 400, 500];
+  final List<double> _scaleValues = [
+    12.5,
+    25,
+    50,
+    75,
+    100,
+    125,
+    150,
+    200,
+    250,
+    300,
+    400,
+    500
+  ];
 
   final Map<int, String> bitrates = {
     2500: '2500',
@@ -457,10 +493,11 @@ class _StreamingSettingsScreen extends State<StreamingSettingsScreen> {
       _useClipBoard = SharedPreferencesManager.getBool('useClipBoard') ?? false;
     }
     // 加载保存的缩放值，默认值为50
-    double savedValue = SharedPreferencesManager.getDouble('cursorScale') ?? 50.0;
+    double savedValue =
+        SharedPreferencesManager.getDouble('cursorScale') ?? 50.0;
     // 找到最接近的预设值
-    _cursorScale = _scaleValues.reduce((a, b) => 
-      (a - savedValue).abs() < (b - savedValue).abs() ? a : b);
+    _cursorScale = _scaleValues.reduce(
+        (a, b) => (a - savedValue).abs() < (b - savedValue).abs() ? a : b);
     setState(() {});
   }
 
@@ -624,7 +661,8 @@ class _StreamingSettingsScreen extends State<StreamingSettingsScreen> {
                 SettingsTile.switchTile(
                   title: const Text('显示串流统计信息'),
                   leading: const Icon(Icons.speed),
-                  initialValue: StreamingSettings.isStreamingStateEnabled??false,
+                  initialValue:
+                      StreamingSettings.isStreamingStateEnabled ?? false,
                   onToggle: (bool value) {
                     setState(() {
                       ScreenController.setShowVideoInfo(value);
@@ -652,7 +690,8 @@ class _StreamingSettingsScreen extends State<StreamingSettingsScreen> {
                 ),
                 SettingsTile(
                   title: const Text('音频码率 (kbps)'),
-                  trailing: Material(child: Text('当前: ${audioBitrates[_audioBitrate]} kbps')),
+                  trailing: Material(
+                      child: Text('当前: ${audioBitrates[_audioBitrate]} kbps')),
                   leading: const Icon(Icons.audiotrack),
                   onPressed: (BuildContext context) async {
                     final audioBitrate = await Navigation.navigateTo(
@@ -682,7 +721,8 @@ class _StreamingSettingsScreen extends State<StreamingSettingsScreen> {
                       setState(() {
                         _audioBitrate = audioBitrate;
                       });
-                      await SharedPreferencesManager.setInt('audioBitRate', _audioBitrate);
+                      await SharedPreferencesManager.setInt(
+                          'audioBitRate', _audioBitrate);
                       StreamingSettings.audioBitrate = _audioBitrate;
                     }
                   },
@@ -752,13 +792,18 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
   void initState() {
     super.initState();
     if (AppPlatform.isAndroidTV) {
-      _addressController = NativeTextFieldController(text: customTurnServerAddress);
-      _usernameController = NativeTextFieldController(text: customTurnServerUsername);
-      _passwordController = NativeTextFieldController(text: customTurnServerPassword);
+      _addressController =
+          NativeTextFieldController(text: customTurnServerAddress);
+      _usernameController =
+          NativeTextFieldController(text: customTurnServerUsername);
+      _passwordController =
+          NativeTextFieldController(text: customTurnServerPassword);
     } else {
       _addressController = TextEditingController(text: customTurnServerAddress);
-      _usernameController = TextEditingController(text: customTurnServerUsername);
-      _passwordController = TextEditingController(text: customTurnServerPassword);
+      _usernameController =
+          TextEditingController(text: customTurnServerUsername);
+      _passwordController =
+          TextEditingController(text: customTurnServerPassword);
     }
     _loadSettings();
   }
@@ -789,30 +834,21 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
     _passwordController.text = customTurnServerPassword;
   }
 
-  Future<void> _saveTurnConfig(BuildContext context) async{
+  Future<void> _saveTurnConfig(BuildContext context) async {
     // Update the values when the user presses the save button
     setState(() {
-      customTurnServerAddress =
-          _addressController.text.trim();
-      customTurnServerUsername =
-          _usernameController.text.trim();
-      customTurnServerPassword =
-          _passwordController.text.trim();
-      StreamingSettings.customTurnServerAddress =
-          customTurnServerAddress;
-      StreamingSettings.customTurnServerUsername =
-          customTurnServerUsername;
-      StreamingSettings.customTurnServerPassword =
-          customTurnServerPassword;
+      customTurnServerAddress = _addressController.text.trim();
+      customTurnServerUsername = _usernameController.text.trim();
+      customTurnServerPassword = _passwordController.text.trim();
+      StreamingSettings.customTurnServerAddress = customTurnServerAddress;
+      StreamingSettings.customTurnServerUsername = customTurnServerUsername;
+      StreamingSettings.customTurnServerPassword = customTurnServerPassword;
       SharedPreferencesManager.setString(
-          'customTurnServerAddress',
-          customTurnServerAddress);
+          'customTurnServerAddress', customTurnServerAddress);
       SharedPreferencesManager.setString(
-          'customTurnServerUsername',
-          customTurnServerUsername);
+          'customTurnServerUsername', customTurnServerUsername);
       SharedPreferencesManager.setString(
-          'customTurnServerPassword',
-          customTurnServerPassword);
+          'customTurnServerPassword', customTurnServerPassword);
       showDialog(
         context: context,
         builder: (BuildContext context) {
@@ -925,57 +961,62 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                             'TURN 服务器地址',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          AppPlatform.isAndroidTV?
-                          DpadNativeTextField(
-                            focusNode: _addressfocusNode, 
-                            controller: _addressController as NativeTextFieldController,
-                          ):
-                          TextField(
-                            decoration: const InputDecoration(
-                              hintText: '请输入自定义 TURN 服务器地址',
-                            ),
-                            focusNode: _addressfocusNode,
-                            controller: _addressController,
-                            onSubmitted: (_) => _usernamefocusNode.requestFocus(),
-                          ),
+                          AppPlatform.isAndroidTV
+                              ? DpadNativeTextField(
+                                  focusNode: _addressfocusNode,
+                                  controller: _addressController
+                                      as NativeTextFieldController,
+                                )
+                              : TextField(
+                                  decoration: const InputDecoration(
+                                    hintText: '请输入自定义 TURN 服务器地址',
+                                  ),
+                                  focusNode: _addressfocusNode,
+                                  controller: _addressController,
+                                  onSubmitted: (_) =>
+                                      _usernamefocusNode.requestFocus(),
+                                ),
                           const SizedBox(height: 16.0),
                           const Text(
                             'TURN 服务器用户名',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          AppPlatform.isAndroidTV?
-                          DpadNativeTextField(
-                            focusNode: _usernamefocusNode, 
-                            controller: _usernameController as NativeTextFieldController,
-                          ):
-                          TextField(
-                            decoration: const InputDecoration(
-                              hintText: '请输入自定义用户名',
-                            ),
-                            focusNode: _usernamefocusNode,
-                            onSubmitted: (_) => _passwordfocusNode.requestFocus(),
-                            controller: _usernameController,
-                          ),
+                          AppPlatform.isAndroidTV
+                              ? DpadNativeTextField(
+                                  focusNode: _usernamefocusNode,
+                                  controller: _usernameController
+                                      as NativeTextFieldController,
+                                )
+                              : TextField(
+                                  decoration: const InputDecoration(
+                                    hintText: '请输入自定义用户名',
+                                  ),
+                                  focusNode: _usernamefocusNode,
+                                  onSubmitted: (_) =>
+                                      _passwordfocusNode.requestFocus(),
+                                  controller: _usernameController,
+                                ),
                           const SizedBox(height: 16.0),
                           const Text(
                             'TURN 服务器密码',
                             style: TextStyle(fontWeight: FontWeight.bold),
                           ),
-                          AppPlatform.isAndroidTV?
-                          DpadNativeTextField(
-                            focusNode: _passwordfocusNode, 
-                            controller: _passwordController as NativeTextFieldController,
-                            obscureText: true,
-                          ):
-                          TextField(
-                            decoration: const InputDecoration(
-                              hintText: '请输入自定义密码',
-                            ),
-                            focusNode: _passwordfocusNode,
-                            controller: _passwordController,
-                            onSubmitted: (_) => _saveTurnConfig(context),
-                            obscureText: true,
-                          ),
+                          AppPlatform.isAndroidTV
+                              ? DpadNativeTextField(
+                                  focusNode: _passwordfocusNode,
+                                  controller: _passwordController
+                                      as NativeTextFieldController,
+                                  obscureText: true,
+                                )
+                              : TextField(
+                                  decoration: const InputDecoration(
+                                    hintText: '请输入自定义密码',
+                                  ),
+                                  focusNode: _passwordfocusNode,
+                                  controller: _passwordController,
+                                  onSubmitted: (_) => _saveTurnConfig(context),
+                                  obscureText: true,
+                                ),
                           const SizedBox(height: 16.0),
                           Center(
                             child: ElevatedButton(
@@ -1011,15 +1052,53 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
   bool autoHideLocalCursor = true;
   bool _renderRemoteCursor = false;
   bool _switchCmdCtrl = false;
-  int _touchInputMode = TouchInputMode.touch.index;  // 触控模式：0=触摸(默认), 1=触控板, 2=鼠标
-  double _touchpadSensitivity = 1.0;  // 触控板灵敏度
-  double _touchpadSensitivityLocked = 10.0;  // 鼠标锁定状态下的移动灵敏度
-  bool _touchpadTwoFingerScroll = true;  // 双指滚动
-  bool _touchpadTwoFingerZoom = true;    // 双指缩放
+  int _touchInputMode =
+      TouchInputMode.touch.index; // 触控模式：0=触摸(默认), 1=触控板, 2=鼠标
+  double _touchpadSensitivity = 1.0; // 触控板灵敏度
+  double _touchpadSensitivityLocked = 10.0; // 鼠标锁定状态下的移动灵敏度
+  bool _touchpadTwoFingerScroll = true; // 双指滚动
+  bool _touchpadTwoFingerZoom = true; // 双指缩放
   double _cursorScale = 50.0;
-  final List<double> _scaleValues = [12.5, 25, 50, 75, 100, 125, 150, 200, 250, 300, 400, 500];
-  final List<double> _sensitivityValues = [0.1, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 2.5, 3.0, 4.0, 5.0];
-  final List<double> _sensitivityLockedValues = [1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 15.0, 20.0, 30.0, 40.0];
+  final List<double> _scaleValues = [
+    12.5,
+    25,
+    50,
+    75,
+    100,
+    125,
+    150,
+    200,
+    250,
+    300,
+    400,
+    500
+  ];
+  final List<double> _sensitivityValues = [
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+    4.0,
+    5.0
+  ];
+  final List<double> _sensitivityLockedValues = [
+    1.0,
+    1.5,
+    2.0,
+    3.0,
+    5.0,
+    10.0,
+    15.0,
+    20.0,
+    30.0,
+    40.0
+  ];
 
   // 将实际值映射到滑块位置（0-1之间）
   double _mapValueToPosition(double value) {
@@ -1046,7 +1125,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
       // 如果值不在列表中，找到最接近的值
       index = _sensitivityValues.indexWhere((v) => v > value) - 1;
       if (index < 0) index = 0;
-      if (index >= _sensitivityValues.length - 1) index = _sensitivityValues.length - 2;
+      if (index >= _sensitivityValues.length - 1)
+        index = _sensitivityValues.length - 2;
     }
     return index / (_sensitivityValues.length - 1);
   }
@@ -1064,7 +1144,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
       // 如果值不在列表中，找到最接近的值
       index = _sensitivityLockedValues.indexWhere((v) => v > value) - 1;
       if (index < 0) index = 0;
-      if (index >= _sensitivityLockedValues.length - 1) index = _sensitivityLockedValues.length - 2;
+      if (index >= _sensitivityLockedValues.length - 1)
+        index = _sensitivityLockedValues.length - 2;
     }
     return index / (_sensitivityLockedValues.length - 1);
   }
@@ -1091,16 +1172,18 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
     // 加载保存的缩放值，默认值为100
     double savedValue = StreamingSettings.cursorScale;
     // 找到最接近的预设值
-    _cursorScale = _scaleValues.reduce((a, b) => 
-      (a - savedValue).abs() < (b - savedValue).abs() ? a : b);
+    _cursorScale = _scaleValues.reduce(
+        (a, b) => (a - savedValue).abs() < (b - savedValue).abs() ? a : b);
     // 加载触控板灵敏度
     double savedSensitivity = StreamingSettings.touchpadSensitivity;
-    _touchpadSensitivity = _sensitivityValues.reduce((a, b) => 
-      (a - savedSensitivity).abs() < (b - savedSensitivity).abs() ? a : b);
+    _touchpadSensitivity = _sensitivityValues.reduce((a, b) =>
+        (a - savedSensitivity).abs() < (b - savedSensitivity).abs() ? a : b);
     // 加载鼠标锁定状态下的移动灵敏度
     double savedSensitivityLocked = StreamingSettings.touchpadSensitivityLocked;
-    _touchpadSensitivityLocked = _sensitivityLockedValues.reduce((a, b) => 
-      (a - savedSensitivityLocked).abs() < (b - savedSensitivityLocked).abs() ? a : b);
+    _touchpadSensitivityLocked = _sensitivityLockedValues.reduce((a, b) =>
+        (a - savedSensitivityLocked).abs() < (b - savedSensitivityLocked).abs()
+            ? a
+            : b);
     // 加载触控板手势开关
     _touchpadTwoFingerScroll = StreamingSettings.touchpadTwoFingerScroll;
     _touchpadTwoFingerZoom = StreamingSettings.touchpadTwoFingerZoom;
@@ -1203,7 +1286,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                             child: ToggleButtons(
                               isSelected: [
                                 _touchInputMode == TouchInputMode.touch.index,
-                                _touchInputMode == TouchInputMode.touchpad.index,
+                                _touchInputMode ==
+                                    TouchInputMode.touchpad.index,
                                 _touchInputMode == TouchInputMode.mouse.index,
                               ],
                               onPressed: (int index) {
@@ -1217,13 +1301,15 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                                 }
                                 setState(() {
                                   _touchInputMode = newMode;
-                                  SharedPreferencesManager.setInt('touchInputMode', newMode);
+                                  SharedPreferencesManager.setInt(
+                                      'touchInputMode', newMode);
                                   StreamingSettings.touchInputMode = newMode;
                                 });
                               },
                               children: const <Widget>[
                                 Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 16),
                                   child: Column(
                                     children: [
                                       Text('触摸'),
@@ -1231,7 +1317,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                                   ),
                                 ),
                                 Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 16),
                                   child: Column(
                                     children: [
                                       Text('触控板'),
@@ -1239,7 +1326,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                                   ),
                                 ),
                                 Padding(
-                                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+                                  padding: EdgeInsets.symmetric(
+                                      horizontal: 16, vertical: 16),
                                   child: Column(
                                     children: [
                                       Text('鼠标'),
@@ -1254,7 +1342,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                             child: Text(
                               _touchInputMode == TouchInputMode.touch.index
                                   ? '模拟触摸事件'
-                                  : _touchInputMode == TouchInputMode.touchpad.index
+                                  : _touchInputMode ==
+                                          TouchInputMode.touchpad.index
                                       ? '相对移动光标（类似笔记本触控板）'
                                       : '绝对定位（触摸位置映射到屏幕坐标）',
                               style: TextStyle(
@@ -1273,214 +1362,221 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
             ),
             // 触控板灵敏度设置（只在触控板模式下显示）
             if (_touchInputMode == TouchInputMode.touchpad.index)
-            SettingsSection(
-              title: const Text('触控板灵敏度'),
-              tiles: [
-                CustomSettingsTile(
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                '移动灵敏度',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                '${_touchpadSensitivity.toStringAsFixed(2)}x',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
+              SettingsSection(
+                title: const Text('触控板灵敏度'),
+                tiles: [
+                  CustomSettingsTile(
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '移动灵敏度',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8.0),
-                          CupertinoSlider(
-                            value: _mapSensitivityValueToPosition(_touchpadSensitivity),
-                            min: 0.0,
-                            max: 1.0,
-                            divisions: _sensitivityValues.length - 1,
-                            onChanged: (position) {
-                              double newValue = _mapSensitivityPositionToValue(position);
-                              setState(() {
-                                _touchpadSensitivity = newValue;
-                                SharedPreferencesManager.setDouble(
-                                    'touchpadSensitivity', newValue);
-                                StreamingSettings.touchpadSensitivity = newValue;
-                              });
-                            },
-                          ),
-                          const Text(
-                            '较低的灵敏度适合精细操作，较高的灵敏度适合快速移动',
-                            style: TextStyle(
-                              color: Colors.grey,
-                              fontSize: 12,
+                                Text(
+                                  '${_touchpadSensitivity.toStringAsFixed(2)}x',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8.0),
+                            CupertinoSlider(
+                              value: _mapSensitivityValueToPosition(
+                                  _touchpadSensitivity),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: _sensitivityValues.length - 1,
+                              onChanged: (position) {
+                                double newValue =
+                                    _mapSensitivityPositionToValue(position);
+                                setState(() {
+                                  _touchpadSensitivity = newValue;
+                                  SharedPreferencesManager.setDouble(
+                                      'touchpadSensitivity', newValue);
+                                  StreamingSettings.touchpadSensitivity =
+                                      newValue;
+                                });
+                              },
+                            ),
+                            const Text(
+                              '较低的灵敏度适合精细操作，较高的灵敏度适合快速移动',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
             // 鼠标锁定状态下的移动灵敏度设置（只在触控板模式下显示）
             if (_touchInputMode == TouchInputMode.touchpad.index)
-            SettingsSection(
-              title: const Text('鼠标灵敏度(鼠标锁定或自绘)'),
-              tiles: [
-                CustomSettingsTile(
-                  child: Material(
-                    color: Colors.transparent,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                '移动灵敏度（锁定）',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                '${_touchpadSensitivityLocked.toStringAsFixed(1)}x',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
+              SettingsSection(
+                title: const Text('鼠标灵敏度(鼠标锁定或自绘)'),
+                tiles: [
+                  CustomSettingsTile(
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '移动灵敏度（锁定）',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8.0),
-                          CupertinoSlider(
-                            value: _mapSensitivityLockedValueToPosition(_touchpadSensitivityLocked),
-                            min: 0.0,
-                            max: 1.0,
-                            divisions: _sensitivityLockedValues.length - 1,
-                            onChanged: (position) {
-                              double newValue = _mapSensitivityLockedPositionToValue(position);
-                              setState(() {
-                                _touchpadSensitivityLocked = newValue;
-                                SharedPreferencesManager.setDouble(
-                                    'touchpadSensitivityLocked', newValue);
-                                StreamingSettings.touchpadSensitivityLocked = newValue;
-                              });
-                            },
-                          ),
-                          const Text(
-                            '设置fps游戏(如CS)或自绘鼠标游戏(梦幻西游 魔兽争霸)的鼠标灵敏度',
-                            style: TextStyle(
-                              color: Colors.grey,
-                              fontSize: 12,
+                                Text(
+                                  '${_touchpadSensitivityLocked.toStringAsFixed(1)}x',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8.0),
+                            CupertinoSlider(
+                              value: _mapSensitivityLockedValueToPosition(
+                                  _touchpadSensitivityLocked),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: _sensitivityLockedValues.length - 1,
+                              onChanged: (position) {
+                                double newValue =
+                                    _mapSensitivityLockedPositionToValue(
+                                        position);
+                                setState(() {
+                                  _touchpadSensitivityLocked = newValue;
+                                  SharedPreferencesManager.setDouble(
+                                      'touchpadSensitivityLocked', newValue);
+                                  StreamingSettings.touchpadSensitivityLocked =
+                                      newValue;
+                                });
+                              },
+                            ),
+                            const Text(
+                              '设置fps游戏(如CS)或自绘鼠标游戏(梦幻西游 魔兽争霸)的鼠标灵敏度',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
             // 触控板手势设置（只在触控板模式下显示）
             if (_touchInputMode == TouchInputMode.touchpad.index)
-            SettingsSection(
-              title: const Text('触控板手势'),
-              tiles: [
-                SettingsTile.switchTile(
-                  title: const Text('双指滚动'),
-                  description: const Text('使用两根手指上下滑动时滚动页面'),
-                  leading: const Icon(Icons.swipe_vertical),
-                  initialValue: _touchpadTwoFingerScroll,
-                  onToggle: (bool value) {
-                    setState(() {
-                      _touchpadTwoFingerScroll = value;
-                      SharedPreferencesManager.setBool(
-                          'touchpadTwoFingerScroll', value);
-                      StreamingSettings.touchpadTwoFingerScroll = value;
-                    });
-                  },
-                ),
-                SettingsTile.switchTile(
-                  title: const Text('双指缩放'),
-                  description: const Text('使用两根手指捏合缩放视频画面'),
-                  leading: const Icon(Icons.pinch),
-                  initialValue: _touchpadTwoFingerZoom,
-                  onToggle: (bool value) {
-                    setState(() {
-                      _touchpadTwoFingerZoom = value;
-                      SharedPreferencesManager.setBool(
-                          'touchpadTwoFingerZoom', value);
-                      StreamingSettings.touchpadTwoFingerZoom = value;
-                    });
-                  },
-                ),
-              ],
-            ),
+              SettingsSection(
+                title: const Text('触控板手势'),
+                tiles: [
+                  SettingsTile.switchTile(
+                    title: const Text('双指滚动'),
+                    description: const Text('使用两根手指上下滑动时滚动页面'),
+                    leading: const Icon(Icons.swipe_vertical),
+                    initialValue: _touchpadTwoFingerScroll,
+                    onToggle: (bool value) {
+                      setState(() {
+                        _touchpadTwoFingerScroll = value;
+                        SharedPreferencesManager.setBool(
+                            'touchpadTwoFingerScroll', value);
+                        StreamingSettings.touchpadTwoFingerScroll = value;
+                      });
+                    },
+                  ),
+                  SettingsTile.switchTile(
+                    title: const Text('双指缩放'),
+                    description: const Text('使用两根手指捏合缩放视频画面'),
+                    leading: const Icon(Icons.pinch),
+                    initialValue: _touchpadTwoFingerZoom,
+                    onToggle: (bool value) {
+                      setState(() {
+                        _touchpadTwoFingerZoom = value;
+                        SharedPreferencesManager.setBool(
+                            'touchpadTwoFingerZoom', value);
+                        StreamingSettings.touchpadTwoFingerZoom = value;
+                      });
+                    },
+                  ),
+                ],
+              ),
             // 指针缩放设置
             if (AppPlatform.isMobile)
-            SettingsSection(
-              tiles: [
-                CustomSettingsTile(
-                  child: Material(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              const Text(
-                                '本地指针缩放倍率',
-                                style: TextStyle(fontWeight: FontWeight.bold),
-                              ),
-                              Text(
-                                '${_cursorScale.toStringAsFixed(1)}%',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.blue,
+              SettingsSection(
+                tiles: [
+                  CustomSettingsTile(
+                    child: Material(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '本地指针缩放倍率',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
                                 ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8.0),
-                          CupertinoSlider(
-                            value: _mapValueToPosition(_cursorScale),
-                            min: 0.0,
-                            max: 1.0,
-                            divisions: _scaleValues.length - 1,
-                            onChanged: (position) {
-                              double newValue = _mapPositionToValue(position);
-                              setState(() {
-                                _cursorScale = newValue;
-                                SharedPreferencesManager.setDouble(
-                                    'cursorScale', newValue);
-                                StreamingSettings.cursorScale = newValue;
-                              });
-                            },
-                          ),
-                          const Text(
-                            '拖动滑块调整缩放倍率',
-                            style: TextStyle(
-                              color: Colors.grey,
-                              fontSize: 12,
+                                Text(
+                                  '${_cursorScale.toStringAsFixed(1)}%',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
+                            const SizedBox(height: 8.0),
+                            CupertinoSlider(
+                              value: _mapValueToPosition(_cursorScale),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: _scaleValues.length - 1,
+                              onChanged: (position) {
+                                double newValue = _mapPositionToValue(position);
+                                setState(() {
+                                  _cursorScale = newValue;
+                                  SharedPreferencesManager.setDouble(
+                                      'cursorScale', newValue);
+                                  StreamingSettings.cursorScale = newValue;
+                                });
+                              },
+                            ),
+                            const Text(
+                              '拖动滑块调整缩放倍率',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
-                ),
-              ],
-            ),
+                ],
+              ),
           ],
         ),
       ),
@@ -1505,7 +1601,8 @@ class _DisplaySettingsScreenState extends State<DisplaySettingsScreen> {
   }
 
   Future<void> _loadSettings() async {
-    _screenOrientation = SharedPreferencesManager.getInt('screenOrientation') ?? 0;
+    _screenOrientation =
+        SharedPreferencesManager.getInt('screenOrientation') ?? 0;
     setState(() {});
   }
 
@@ -1525,11 +1622,14 @@ class _DisplaySettingsScreenState extends State<DisplaySettingsScreen> {
             leading: const Icon(Icons.screen_rotation),
             title: const Text('默认 - 跟随系统'),
             subtitle: const Text('使用系统默认的屏幕朝向设置'),
-            trailing: _screenOrientation == 0 ? const Icon(Icons.check, color: Colors.blue) : null,
+            trailing: _screenOrientation == 0
+                ? const Icon(Icons.check, color: Colors.blue)
+                : null,
             onTap: () {
               setState(() {
                 _screenOrientation = 0;
-                SharedPreferencesManager.setInt('screenOrientation', _screenOrientation);
+                SharedPreferencesManager.setInt(
+                    'screenOrientation', _screenOrientation);
                 SystemChrome.setPreferredOrientations([
                   DeviceOrientation.portraitUp,
                   DeviceOrientation.portraitDown,
@@ -1544,11 +1644,14 @@ class _DisplaySettingsScreenState extends State<DisplaySettingsScreen> {
             leading: const Icon(Icons.screen_lock_portrait),
             title: const Text('竖屏'),
             subtitle: const Text('强制应用保持竖屏模式'),
-            trailing: _screenOrientation == 1 ? const Icon(Icons.check, color: Colors.blue) : null,
+            trailing: _screenOrientation == 1
+                ? const Icon(Icons.check, color: Colors.blue)
+                : null,
             onTap: () {
               setState(() {
                 _screenOrientation = 1;
-                SharedPreferencesManager.setInt('screenOrientation', _screenOrientation);
+                SharedPreferencesManager.setInt(
+                    'screenOrientation', _screenOrientation);
                 SystemChrome.setPreferredOrientations([
                   DeviceOrientation.portraitUp,
                 ]);
@@ -1560,11 +1663,14 @@ class _DisplaySettingsScreenState extends State<DisplaySettingsScreen> {
             leading: const Icon(Icons.screen_lock_landscape),
             title: const Text('横屏'),
             subtitle: const Text('强制应用保持横屏模式'),
-            trailing: _screenOrientation == 2 ? const Icon(Icons.check, color: Colors.blue) : null,
+            trailing: _screenOrientation == 2
+                ? const Icon(Icons.check, color: Colors.blue)
+                : null,
             onTap: () {
               setState(() {
                 _screenOrientation = 2;
-                SharedPreferencesManager.setInt('screenOrientation', _screenOrientation);
+                SharedPreferencesManager.setInt(
+                    'screenOrientation', _screenOrientation);
                 SystemChrome.setPreferredOrientations([
                   DeviceOrientation.landscapeLeft,
                 ]);
@@ -1576,11 +1682,14 @@ class _DisplaySettingsScreenState extends State<DisplaySettingsScreen> {
             leading: const Icon(Icons.screen_lock_portrait),
             title: const Text('反向竖屏'),
             subtitle: const Text('强制应用保持反向竖屏模式'),
-            trailing: _screenOrientation == 3 ? const Icon(Icons.check, color: Colors.blue) : null,
+            trailing: _screenOrientation == 3
+                ? const Icon(Icons.check, color: Colors.blue)
+                : null,
             onTap: () {
               setState(() {
                 _screenOrientation = 3;
-                SharedPreferencesManager.setInt('screenOrientation', _screenOrientation);
+                SharedPreferencesManager.setInt(
+                    'screenOrientation', _screenOrientation);
                 SystemChrome.setPreferredOrientations([
                   DeviceOrientation.portraitDown,
                 ]);
@@ -1592,11 +1701,14 @@ class _DisplaySettingsScreenState extends State<DisplaySettingsScreen> {
             leading: const Icon(Icons.screen_lock_landscape),
             title: const Text('反向横屏'),
             subtitle: const Text('强制应用保持反向横屏模式'),
-            trailing: _screenOrientation == 4 ? const Icon(Icons.check, color: Colors.blue) : null,
+            trailing: _screenOrientation == 4
+                ? const Icon(Icons.check, color: Colors.blue)
+                : null,
             onTap: () {
               setState(() {
                 _screenOrientation = 4;
-                SharedPreferencesManager.setInt('screenOrientation', _screenOrientation);
+                SharedPreferencesManager.setInt(
+                    'screenOrientation', _screenOrientation);
                 SystemChrome.setPreferredOrientations([
                   DeviceOrientation.landscapeRight,
                 ]);
