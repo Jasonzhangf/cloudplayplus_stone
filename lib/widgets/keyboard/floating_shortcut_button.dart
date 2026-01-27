@@ -5,6 +5,7 @@ import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
 import '../../controller/screen_controller.dart';
 import 'shortcut_bar.dart';
+import '../../utils/input/system_keyboard_delta.dart';
 
 /// 悬浮快捷键按钮 - 固定在右下角
 /// 点击打开快捷键面板和快捷键条
@@ -23,6 +24,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   final FocusNode _systemKeyboardFocusNode = FocusNode();
   final TextEditingController _systemKeyboardController =
       TextEditingController();
+  String _lastSystemKeyboardValue = '';
 
   @override
   void initState() {
@@ -35,6 +37,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   void dispose() {
     _systemKeyboardFocusNode.dispose();
     _systemKeyboardController.dispose();
+    _lastSystemKeyboardValue = '';
     super.dispose();
   }
 
@@ -295,34 +298,46 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 backgroundCursorColor: Colors.transparent,
                 keyboardType: TextInputType.text,
                 onChanged: (value) {
-                  if (!_useSystemKeyboard || value.isEmpty) return;
+                  if (!_useSystemKeyboard) return;
+                  final composing = _systemKeyboardController.value.composing;
+                  if (composing.isValid && !composing.isCollapsed) {
+                    return;
+                  }
                   final inputController =
                       WebrtcService.currentRenderingSession?.inputController;
                   if (inputController == null) return;
 
-                  final hasNonAscii = value.runes.any((r) => r > 0x7F);
-                  if (hasNonAscii) {
-                    // For IME / non-ascii text (e.g. Chinese), send as text message.
-                    inputController.requestTextInput(value);
-                  } else {
-                    // ASCII: send as key events.
-                    for (final rune in value.runes) {
-                      final vkCode = _vkFromRune(rune);
-                      if (vkCode == null) continue;
-                      final needsShift = _needsShiftForRune(rune);
-                      if (needsShift) {
-                        inputController.requestKeyEvent(0xA0, true); // VK_LSHIFT
-                      }
-                      inputController.requestKeyEvent(vkCode, true);
-                      inputController.requestKeyEvent(vkCode, false);
-                      if (needsShift) {
-                        inputController.requestKeyEvent(0xA0, false);
-                      }
+                  final delta = computeSystemKeyboardDelta(
+                    lastValue: _lastSystemKeyboardValue,
+                    currentValue: value,
+                    preferTextForNonAscii: true,
+                  );
+                  for (final op in delta.ops) {
+                    switch (op.type) {
+                      case InputOpType.text:
+                        inputController.requestTextInput(op.text);
+                        break;
+                      case InputOpType.key:
+                        // Map ASCII rune to VK with shift handling if possible
+                        final rune = op.keyCode;
+                        if (rune == 0x08) {
+                          inputController.requestKeyEvent(0x08, op.isDown);
+                          break;
+                        }
+                        final vkCode = _vkFromRune(rune);
+                        if (vkCode == null) break;
+                        final needsShift = _needsShiftForRune(rune);
+                        if (needsShift && op.isDown) {
+                          inputController.requestKeyEvent(0xA0, true);
+                        }
+                        inputController.requestKeyEvent(vkCode, op.isDown);
+                        if (needsShift && !op.isDown) {
+                          inputController.requestKeyEvent(0xA0, false);
+                        }
+                        break;
                     }
                   }
-
-                  // Clear the buffer so we don't re-send accumulated text.
-                  _systemKeyboardController.value = TextEditingValue.empty;
+                  _lastSystemKeyboardValue = delta.nextLastValue;
                 },
                 // Prevent showing anything; selection isn't used.
                 selectionControls: null,
@@ -419,18 +434,19 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ],
               ),
             ),
-            // 快捷键条
-            Flexible(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-                child: ShortcutBar(
-                  settings: _settings,
-                  onSettingsChanged: _handleSettingsChanged,
-                  onShortcutPressed: _handleShortcutPressed,
+            // 快捷键条：当内置 PC 键盘展开时隐藏，避免与键盘层叠。
+            if (!ScreenController.showVirtualKeyboard.value)
+              Flexible(
+                child: SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+                  child: ShortcutBar(
+                    settings: _settings,
+                    onSettingsChanged: _handleSettingsChanged,
+                    onShortcutPressed: _handleShortcutPressed,
+                  ),
                 ),
               ),
-            ),
           ],
         ),
       ),

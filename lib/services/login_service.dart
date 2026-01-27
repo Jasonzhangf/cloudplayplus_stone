@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
+import '../base/logging.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
 import 'package:cloudplayplus/services/secure_storage_manager.dart';
 import 'package:cloudplayplus/services/shared_preferences_manager.dart';
@@ -245,6 +246,7 @@ class LoginService {
   static Future<bool> tryLoginWithCachedToken() async {
     String? accessToken;
     String? refreshToken;
+    VLOG0('[LoginService] tryLoginWithCachedToken: loading tokens.');
     if (DevelopSettings.useSecureStorage) {
       accessToken = await SecureStorageManager.getString('access_token');
       refreshToken = await SecureStorageManager.getString('refresh_token');
@@ -252,24 +254,32 @@ class LoginService {
       accessToken = SharedPreferencesManager.getString('access_token');
       refreshToken = SharedPreferencesManager.getString('refresh_token');
     }
+    VLOG0('[LoginService] cached accessToken=${accessToken != null ? accessToken.substring(0, 12) + '...' : 'null'}');
+    VLOG0('[LoginService] cached refreshToken=${refreshToken != null ? refreshToken.substring(0, 12) + '...' : 'null'}');
     if (accessToken == null ||
         refreshToken == null ||
         accessToken == "" ||
         refreshToken == "") {
+      VLOG0('[LoginService] tryLoginWithCachedToken: missing tokens.');
       return false;
     } else if (isTokenValid(accessToken)) {
+      VLOG0('[LoginService] tryLoginWithCachedToken: access token valid, logging in with token.');
       return await loginWithToken(accessToken);
     } else {
+      VLOG0('[LoginService] tryLoginWithCachedToken: access token invalid, refreshing.');
       final newAccessToken = await doRefreshToken(refreshToken);
       if (newAccessToken != null && isTokenValid(newAccessToken)) {
         if (DevelopSettings.useSecureStorage) {
+          VLOG0('[LoginService] tryLoginWithCachedToken: saving refreshed access token.');
           await SecureStorageManager.setString('access_token', newAccessToken);
         } else {
+          VLOG0('[LoginService] tryLoginWithCachedToken: saving refreshed access token.');
           await SharedPreferencesManager.setString(
               'access_token', newAccessToken);
         }
         return await loginWithToken(newAccessToken);
       } else {
+        VLOG0('[LoginService] tryLoginWithCachedToken: refresh failed or invalid token.');
         return false;
       }
     }
@@ -277,8 +287,10 @@ class LoginService {
 
   static bool isTokenValid(String token) {
     try {
+      VLOG0('[LoginService] isTokenValid: checking token.');
       final parts = token.split('.');
       if (parts.length != 3) {
+        VLOG0('[LoginService] isTokenValid: invalid format.');
         return false;
       }
 
@@ -287,6 +299,7 @@ class LoginService {
       final normalizedPayload = base64Url.normalize(payload);
       final resp = utf8.decode(base64Url.decode(normalizedPayload));
       final payloadMap = json.decode(resp) as Map<String, dynamic>;
+      VLOG0('[LoginService] isTokenValid: payload=$payloadMap');
 
       if (payloadMap.containsKey('exp')) {
         final now = DateTime.now().millisecondsSinceEpoch;
@@ -295,11 +308,14 @@ class LoginService {
 
         if (expiry > now) {
           // Token is still valid
+          VLOG0('[LoginService] isTokenValid: VALID exp=${payloadMap['exp']} now=$now');
           return true;
         }
       }
+      VLOG0('[LoginService] isTokenValid: EXPIRED or no exp.');
       return false;
     } catch (e) {
+      VLOG0('[LoginService] isTokenValid: exception $e');
       return false;
     }
   }

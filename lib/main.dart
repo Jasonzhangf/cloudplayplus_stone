@@ -16,6 +16,7 @@ import 'services/login_service.dart';
 import 'services/secure_storage_manager.dart';
 import 'services/shared_preferences_manager.dart';
 import 'theme/theme_provider.dart';
+import 'dev_settings.dart/develop_settings.dart';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 
@@ -25,6 +26,9 @@ void main() async {
   LoginService.init();
   WidgetsFlutterBinding.ensureInitialized();
   await AppPlatform.init();
+  if (AppPlatform.isMacos) {
+    DevelopSettings.useSecureStorage = false;
+  }
   await ScreenController.initialize();
   await SharedPreferencesManager.init();
   SecureStorageManager.init();

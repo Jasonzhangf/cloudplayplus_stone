@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/services/login_service.dart';
 import 'package:cloudplayplus/services/shared_preferences_manager.dart';
+import '../base/logging.dart';
 import 'package:cloudplayplus/services/streamed_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/utils/hash_util.dart';
@@ -47,9 +48,12 @@ class WebSocketService {
 
   static void init() async {
     should_be_connected = true;
+    VLOG0('[WebSocketService] init: called.');
     if (connectionState == WebSocketConnectionState.connecting) {
+      VLOG0('[WebSocketService] init: already connecting, returning.');
       return;
     }
+    String initialBaseUrl = _baseUrl;
     if (DevelopSettings.useLocalServer) {
       if (AppPlatform.isAndroid) {
         //_baseUrl = "ws://10.0.2.2:8000/ws/";
@@ -61,46 +65,63 @@ class WebSocketService {
     if (!kIsWeb && !DevelopSettings.useLocalServer && DevelopSettings.useUnsafeServer) {
       _baseUrl = 'ws://101.132.58.198:8001/ws/';
     }
+    if (_baseUrl != initialBaseUrl) {
+      VLOG0('[WebSocketService] init: _baseUrl changed from $initialBaseUrl to $_baseUrl');
+    } else {
+      VLOG0('[WebSocketService] init: _baseUrl is $_baseUrl');
+    }
     String? accessToken;
     String? refreshToken;
     // ignore: non_constant_identifier_names
     bool refreshToken_invalid_ = false;
     if (DevelopSettings.useSecureStorage) {
+      VLOG0('[WebSocketService] init: using SecureStorage.');
       accessToken = await SecureStorageManager.getString('access_token');
       refreshToken = await SecureStorageManager.getString('refresh_token');
     } else {
+      VLOG0('[WebSocketService] init: using SharedPreferences.');
       accessToken = SharedPreferencesManager.getString('access_token');
       refreshToken = SharedPreferencesManager.getString('refresh_token');
     }
+    VLOG0('[WebSocketService] init: accessToken=${accessToken != null ? accessToken.substring(0, 12) + '...' : 'null'}');
+    VLOG0('[WebSocketService] init: refreshToken=${refreshToken != null ? refreshToken.substring(0, 12) + '...' : 'null'}');
     if (accessToken == null || refreshToken == null) {
       //TODO(haichao): show error dialog.
       VLOG0("error: no access token");
       return;
     }
 
+    VLOG0('[WebSocketService] init: checking token validity.');
     if (!LoginService.isTokenValid(accessToken)) {
+      VLOG0('[WebSocketService] init: access token invalid, attempting to refresh.');
       final newAccessToken = await LoginService.doRefreshToken(refreshToken);
       if (newAccessToken != null && LoginService.isTokenValid(newAccessToken)) {
         if (DevelopSettings.useSecureStorage) {
+          VLOG0('[WebSocketService] init: refresh successful, saving new access token.');
           await SecureStorageManager.setString('access_token', newAccessToken);
         } else {
+          VLOG0('[WebSocketService] init: refresh successful, saving new access token.');
           await SharedPreferencesManager.setString(
               'access_token', newAccessToken);
         }
         refreshToken_invalid_ = false;
         accessToken = newAccessToken;
       } else if (newAccessToken == "invalid refresh token") {
+        VLOG0('[WebSocketService] init: refresh token invalid.');
         refreshToken_invalid_ = true;
         return;
       } else {
+        VLOG0('[WebSocketService] init: refresh failed, returning.');
         return;
       }
     }
 
     var url = '$_baseUrl?token=$accessToken';
+    VLOG0('[WebSocketService] init: connecting to $url');
     _socket = SimpleWebSocket(url);
     connectionState = WebSocketConnectionState.connecting;
     _socket?.onOpen = () {
+      VLOG0('[WebSocketService] onOpen: WebSocket connected.');
       onConnected();
     };
 
@@ -109,6 +130,7 @@ class WebSocketService {
     };
 
     _socket?.onClose = (code, message) async {
+      VLOG0('[WebSocketService] onClose: WebSocket closed (code: $code, message: $message).');
       onDeviceListchanged?.call([
         {
           'owner_id': ApplicationInfo.user.uid,

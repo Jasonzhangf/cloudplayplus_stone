@@ -6,9 +6,9 @@ import 'package:cloudplayplus/services/shared_preferences_manager.dart';
 // 触控模式枚举：用于Windows设备的触控输入
 // 顺序：触摸(默认) -> 触控板 -> 鼠标
 enum TouchInputMode {
-  touch,      // 0: 触摸模式 - 模拟触摸事件（默认）
-  touchpad,   // 1: 触控板模式 - 相对移动
-  mouse,      // 2: 鼠标模式 - 绝对定位
+  touch, // 0: 触摸模式 - 模拟触摸事件（默认）
+  touchpad, // 1: 触控板模式 - 相对移动
+  mouse, // 2: 鼠标模式 - 绝对定位
 }
 
 var officialStun1 = {
@@ -65,8 +65,8 @@ class StreamingSettings {
   static double touchpadSensitivityLocked = 10.0;
 
   // 触控板手势开关
-  static bool touchpadTwoFingerScroll = true;  // 双指滚动
-  static bool touchpadTwoFingerZoom = true;    // 双指缩放
+  static bool touchpadTwoFingerScroll = true; // 双指滚动
+  static bool touchpadTwoFingerZoom = true; // 双指缩放
 
   // 指针缩放倍率
   static double cursorScale = 50.0;
@@ -95,13 +95,14 @@ class StreamingSettings {
 
   static void init() {
     InputController.resendCount =
-        SharedPreferencesManager.getInt('ControlMsgResendCount') ?? (AppPlatform.isAndroidTV? 0:3);
+        SharedPreferencesManager.getInt('ControlMsgResendCount') ??
+            (AppPlatform.isAndroidTV ? 0 : 3);
     framerate =
-        SharedPreferencesManager.getInt('framerate') ?? 60; // Default to 60
+        SharedPreferencesManager.getInt('framerate') ?? 30; // Default to 30
     bitrate =
         SharedPreferencesManager.getInt('bitrate') ?? 80000; // Default to 80000
-    audioBitrate =
-        SharedPreferencesManager.getInt('audioBitRate') ?? 32; // Default to 128 kbps
+    audioBitrate = SharedPreferencesManager.getInt('audioBitRate') ??
+        32; // Default to 128 kbps
     showRemoteCursor = SharedPreferencesManager.getBool('renderRemoteCursor') ??
         false; // Default to false
     streamAudio = SharedPreferencesManager.getBool('haveAudio') ??
@@ -136,7 +137,8 @@ class StreamingSettings {
 
     codec = SharedPreferencesManager.getString('codec') ?? 'default';
 
-    hookCursorImage ??= (AppPlatform.isWeb || AppPlatform.isDeskTop || AppPlatform.isMobile);
+    hookCursorImage ??=
+        (AppPlatform.isWeb || AppPlatform.isDeskTop || AppPlatform.isMobile);
 
     connectPasswordHash =
         SharedPreferencesManager.getString('connectPasswordHash') ?? "";
@@ -146,21 +148,29 @@ class StreamingSettings {
 
     autoHideLocalCursor =
         SharedPreferencesManager.getBool('autoHideLocalCursor') ??
-            (AppPlatform.isDeskTop || AppPlatform.isWeb || AppPlatform.isMobile);
+            (AppPlatform.isDeskTop ||
+                AppPlatform.isWeb ||
+                AppPlatform.isMobile);
 
     switchCmdCtrl = SharedPreferencesManager.getBool('switchCmdCtrl') ??
         AppPlatform.isMacos;
 
-    touchInputMode = SharedPreferencesManager.getInt('touchInputMode') ?? TouchInputMode.touch.index;
+    touchInputMode = SharedPreferencesManager.getInt('touchInputMode') ??
+        TouchInputMode.touch.index;
 
-    cursorScale = SharedPreferencesManager.getDouble('cursorScale') ?? (AppPlatform.isAndroidTV? 100.0:50.0);
+    cursorScale = SharedPreferencesManager.getDouble('cursorScale') ??
+        (AppPlatform.isAndroidTV ? 100.0 : 50.0);
 
-    touchpadSensitivity = SharedPreferencesManager.getDouble('touchpadSensitivity') ?? 1.0;
-    
-    touchpadSensitivityLocked = SharedPreferencesManager.getDouble('touchpadSensitivityLocked') ?? 10.0;
-    
-    touchpadTwoFingerScroll = SharedPreferencesManager.getBool('touchpadTwoFingerScroll') ?? true;
-    touchpadTwoFingerZoom = SharedPreferencesManager.getBool('touchpadTwoFingerZoom') ?? true;
+    touchpadSensitivity =
+        SharedPreferencesManager.getDouble('touchpadSensitivity') ?? 1.0;
+
+    touchpadSensitivityLocked =
+        SharedPreferencesManager.getDouble('touchpadSensitivityLocked') ?? 10.0;
+
+    touchpadTwoFingerScroll =
+        SharedPreferencesManager.getBool('touchpadTwoFingerScroll') ?? true;
+    touchpadTwoFingerZoom =
+        SharedPreferencesManager.getBool('touchpadTwoFingerZoom') ?? true;
 
     if (AppPlatform.isDeskTop) {
       useClipBoard = SharedPreferencesManager.getBool('useClipBoard') ?? true;
@@ -168,7 +178,8 @@ class StreamingSettings {
       useClipBoard = SharedPreferencesManager.getBool('useClipBoard') ?? false;
     }
 
-    isStreamingStateEnabled = SharedPreferencesManager.getBool('streamingState') ?? false;
+    isStreamingStateEnabled =
+        SharedPreferencesManager.getBool('streamingState') ?? false;
     ScreenController.setShowVideoInfo(isStreamingStateEnabled!);
   }
 
@@ -233,6 +244,10 @@ class StreamedSettings {
   int? customScreenWidth;
   int? customScreenHeight;
 
+  // For window streaming.
+  int? windowId;
+  Map<String, double>? windowFrame;
+
   static StreamedSettings fromJson(Map<String, dynamic> settings) {
     return StreamedSettings()
       ..framerate = settings['framerate'] as int?
@@ -248,6 +263,11 @@ class StreamedSettings {
       ..syncMousePosition = settings['syncMousePosition'] as bool?
       ..streamMode = settings['streamMode'] as int?
       ..customScreenWidth = settings['customScreenWidth'] as int?
-      ..customScreenHeight = settings['customScreenHeight'] as int?;
+      ..customScreenHeight = settings['customScreenHeight'] as int?
+      ..windowId = settings['windowId'] as int?
+      ..windowFrame = (settings['windowFrame'] is Map)
+          ? (settings['windowFrame'] as Map).map((k, v) =>
+              MapEntry(k.toString(), (v is num) ? (v as num).toDouble() : 0.0))
+          : null;
   }
 }

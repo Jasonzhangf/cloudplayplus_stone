@@ -96,7 +96,7 @@ class StreamingSession {
 
   int cursorImageHookID = 0;
   int cursorPositionUpdatedHookID = 0;
-  
+
   // 标记哪些回调已经注册
   bool _cursorImageHookRegistered = false;
   bool _cursorPositionHookRegistered = false;
@@ -144,6 +144,8 @@ class StreamingSession {
       pc = await createRTCPeerConnection();
 
       pc!.onConnectionState = (state) {
+        VLOG0(
+            '[WebRTC] onConnectionState: ${controlled.websocketSessionid} state=$state');
         if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnecting) {
           controlled.connectionState.value =
               StreamingSessionConnectionState.connceting;
@@ -155,6 +157,7 @@ class StreamingSession {
           restartPingTimeoutTimer(40);
         } else if (state ==
             RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
+          VLOG0('[WebRTC] connection FAILED: ${controlled.websocketSessionid}');
           controlled.connectionState.value =
               StreamingSessionConnectionState.disconnected;
           MessageBoxManager()
@@ -162,12 +165,20 @@ class StreamingSession {
           close();
         } else if (state ==
             RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+          VLOG0('[WebRTC] connection CLOSED: ${controlled.websocketSessionid}');
           controlled.connectionState.value =
               StreamingSessionConnectionState.disconnected;
         }
       };
 
       pc!.onIceCandidate = (candidate) async {
+        if (candidate.candidate != null) {
+          VLOG0(
+              '[WebRTC] onIceCandidate: ${controlled.websocketSessionid} mid=${candidate.sdpMid} mline=${candidate.sdpMLineIndex} cand=${candidate.candidate}');
+        } else {
+          VLOG0(
+              '[WebRTC] onIceCandidate: ${controlled.websocketSessionid} (null candidate)');
+        }
         /*if (streamSettings!.turnServerSettings == 2) {
         if (!candidate.candidate!.contains("srflx")) {
           return;
@@ -202,6 +213,8 @@ class StreamingSession {
       };
 
       pc!.onTrack = (event) {
+        VLOG0(
+            '[WebRTC] onTrack: ${controlled.websocketSessionid} kind=${event.track.kind} streams=${event.streams.length}');
         connectionState = StreamingSessionConnectionState.connected;
         /*controlled.connectionState.value =
           StreamingSessionConnectionState.connected;*/
@@ -213,9 +226,12 @@ class StreamingSession {
         //onAddRemoteStream?.call(event.track.kind!, event.streams[0]);
       };
       pc!.onDataChannel = (newchannel) async {
+        VLOG0(
+            '[WebRTC] onDataChannel: ${controlled.websocketSessionid} label=${newchannel.label}');
         if (newchannel.label == "userInputUnsafe") {
           UDPChannel = newchannel;
           inputController = InputController(UDPChannel!, false, screenId);
+          inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame);
           //This channel is only used to send unsafe user input
           /*
         channel?.onMessage = (msg) {
@@ -224,19 +240,24 @@ class StreamingSession {
           channel = newchannel;
           if (!useUnsafeDatachannel) {
             inputController = InputController(channel!, true, screenId);
+            inputController
+                ?.setCaptureMapFromFrame(streamSettings?.windowFrame);
           }
           channel?.onMessage = (msg) {
             processDataChannelMessageFromHost(msg);
           };
 
           channel?.onDataChannelState = (state) async {
+            VLOG0(
+                '[WebRTC] dataChannelState: ${controlled.websocketSessionid} label=${channel?.label} state=$state');
             if (state == RTCDataChannelState.RTCDataChannelOpen) {
               await channel?.send(RTCDataChannelMessage.fromBinary(
                   Uint8List.fromList([LP_PING, RP_PING])));
               if (StreamingSettings.streamAudio!) {
                 StreamingSettings.audioBitrate ??= 32;
                 audioBitrate = StreamingSettings.audioBitrate!;
-                audioSession = AudioSession(channel!, controller, controlled, StreamingSettings.audioBitrate!);
+                audioSession = AudioSession(channel!, controller, controlled,
+                    StreamingSettings.audioBitrate!);
                 await audioSession!.requestAudio();
               }
             }
@@ -343,20 +364,22 @@ class StreamingSession {
       }
       //TODO:implement addCursorPositionUpdated for MacOS.
       if (settings.syncMousePosition == true && AppPlatform.isWindows) {
-          HardwareSimulator.addCursorPositionUpdated((message, screenId, xPercent, yPercent) {
-            if (message == HardwareSimulator.CURSOR_POSITION_CHANGED && image_hooked) {
-              //print("CURSOR_POSITION_CHANGED: $xPercent, $yPercent");
-              ByteData byteData = ByteData(17);
-              byteData.setUint8(0, LP_MOUSECURSOR_CHANGED);
-              byteData.setInt32(1, message);
-              byteData.setInt32(5, screenId);
-              byteData.setFloat32(9, xPercent, Endian.little);
-              byteData.setFloat32(13, yPercent, Endian.little);
-              Uint8List buffer = byteData.buffer.asUint8List();
-              channel?.send(RTCDataChannelMessage.fromBinary(buffer));
-            }
-          }, cursorPositionUpdatedHookID);
-          _cursorPositionHookRegistered = true;
+        HardwareSimulator.addCursorPositionUpdated(
+            (message, screenId, xPercent, yPercent) {
+          if (message == HardwareSimulator.CURSOR_POSITION_CHANGED &&
+              image_hooked) {
+            //print("CURSOR_POSITION_CHANGED: $xPercent, $yPercent");
+            ByteData byteData = ByteData(17);
+            byteData.setUint8(0, LP_MOUSECURSOR_CHANGED);
+            byteData.setInt32(1, message);
+            byteData.setInt32(5, screenId);
+            byteData.setFloat32(9, xPercent, Endian.little);
+            byteData.setFloat32(13, yPercent, Endian.little);
+            Uint8List buffer = byteData.buffer.asUint8List();
+            channel?.send(RTCDataChannelMessage.fromBinary(buffer));
+          }
+        }, cursorPositionUpdatedHookID);
+        _cursorPositionHookRegistered = true;
       }
       selfSessionType = SelfSessionType.controlled;
       restartPingTimeoutTimer(10);
@@ -467,7 +490,9 @@ class StreamingSession {
       channel?.onMessage = (RTCDataChannelMessage msg) {
         if (!image_hooked && !AppPlatform.isWeb) {
           bool hookall = false;
-          if (AppPlatform.isDeskTop && (controller.devicetype == 'IOS' || controller.devicetype == 'Android')) {
+          if (AppPlatform.isDeskTop &&
+              (controller.devicetype == 'IOS' ||
+                  controller.devicetype == 'Android')) {
             hookall = true;
           }
           HardwareSimulator.addCursorImageUpdated(
@@ -477,7 +502,7 @@ class StreamingSession {
         }
         processDataChannelMessageFromClient(msg);
       };
-  
+
       //onDataChannelState 触发很慢 原因未知
       /*channel?.onDataChannelState = (state) async {
         if (state == RTCDataChannelState.RTCDataChannelOpen) {
@@ -701,23 +726,28 @@ class StreamingSession {
           StreamingSessionConnectionState.disconnected;
       connectionState = StreamingSessionConnectionState.disconnected;
       //controlled.connectionState.value = StreamingSessionConnectionState.free;
-      if (_cursorImageHookRegistered && selfSessionType == SelfSessionType.controlled) {
+      if (_cursorImageHookRegistered &&
+          selfSessionType == SelfSessionType.controlled) {
         if (AppPlatform.isDeskTop) {
           HardwareSimulator.removeCursorImageUpdated(cursorImageHookID);
           _cursorImageHookRegistered = false;
         }
       }
-      if (_cursorPositionHookRegistered && selfSessionType == SelfSessionType.controlled) {
+      if (_cursorPositionHookRegistered &&
+          selfSessionType == SelfSessionType.controlled) {
         //TODO:implement for MacOS
         if (AppPlatform.isWindows) {
-            HardwareSimulator.removeCursorPositionUpdated(cursorPositionUpdatedHookID);
-            _cursorPositionHookRegistered = false;
+          HardwareSimulator.removeCursorPositionUpdated(
+              cursorPositionUpdatedHookID);
+          _cursorPositionHookRegistered = false;
         }
       }
-      if (selfSessionType == SelfSessionType.controlled && (AppPlatform.isWindows)) {
+      if (selfSessionType == SelfSessionType.controlled &&
+          (AppPlatform.isWindows)) {
         await HardwareSimulator.clearAllPressedEvents();
       }
-      if (selfSessionType == SelfSessionType.controller && (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
+      if (selfSessionType == SelfSessionType.controller &&
+          (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
         InputController.mouseController.setHasMoved(false);
       }
       if (WebrtcService.currentRenderingSession == this) {
@@ -786,7 +816,8 @@ class StreamingSession {
     }
   }
 
-  void processDataChannelMessageFromClient(RTCDataChannelMessage message) {
+  Future<void> processDataChannelMessageFromClient(
+      RTCDataChannelMessage message) async {
     if (message.isBinary) {
       VLOG0("message from Client:${message.binary[0]}");
       switch (message.binary[0]) {
@@ -834,7 +865,8 @@ class StreamingSession {
         case LP_EMPTY:
           break;
         case LP_AUDIO_CONNECT:
-          audioSession = AudioSession(channel!, controller, controlled, audioBitrate);
+          audioSession =
+              AudioSession(channel!, controller, controlled, audioBitrate);
           audioSession?.audioRequested();
           break;
         default:
@@ -864,9 +896,13 @@ class StreamingSession {
           _lastClipboardContent = data['clipboard'];
           break;
         case "textInput":
-          // Text input from controller (mobile).
-          // TODO: implement host-side unicode text injection (macOS first, then Windows).
-          // For now we accept the message to avoid "unhandled" logs.
+          // Text input from controller (mobile). Host injects unicode text.
+          if (!AppPlatform.isDeskTop) break;
+          final payload = data['textInput'];
+          final text =
+              (payload is Map) ? (payload['text']?.toString() ?? '') : '';
+          if (text.isEmpty) break;
+          await HardwareSimulator.keyboard.performTextInput(text);
           break;
         default:
           VLOG0("unhandled message from client.please debug");
@@ -977,7 +1013,8 @@ class _AppLifecycleObserver extends WidgetsBindingObserver {
     if (state == AppLifecycleState.resumed) {
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.immersive);
       onResume?.call();
-      if (AppPlatform.isAndroid && WebrtcService.currentRenderingSession != null) {
+      if (AppPlatform.isAndroid &&
+          WebrtcService.currentRenderingSession != null) {
         HardwareSimulator.unlockCursor().then((state) async {
           HardwareSimulator.lockCursor();
         });

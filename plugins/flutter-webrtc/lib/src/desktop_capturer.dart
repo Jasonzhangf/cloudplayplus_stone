@@ -42,6 +42,10 @@ abstract class DesktopCapturerSource {
   /// Owning application name (best-effort).
   String? get appName;
 
+  /// Window frame on host screen (best-effort). Only available for window sources.
+  /// Expected keys: x, y, width, height.
+  Map<String, double>? get frame;
+
   /// A screen source will be named either Entire Screen or Screen <index>,
   /// while the name of a window source will match the window title.
   String get name;

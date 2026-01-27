@@ -21,6 +21,7 @@ import 'dart:ui' as ui show Image, decodeImageFromPixels, PixelFormat;
 import '../entities/messages.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gamepads/gamepads.dart';
+import 'package:cloudplayplus/utils/input/coordinate_mapping.dart';
 
 typedef CursorUpdatedCallback = void Function(MouseCursor newcursor);
 
@@ -29,7 +30,33 @@ enum TVControllerMode {
   keyboard,
   gamepad,
 }
+
 class InputController {
+  /// Window capture metadata for host-side coordinate mapping.
+  ContentToWindowMap? _captureMap;
+
+  void setCaptureMapFromFrame(Map<String, double>? frame) {
+    if (frame != null &&
+        frame['x'] != null &&
+        frame['y'] != null &&
+        frame['width'] != null &&
+        frame['height'] != null) {
+      final windowRect = RectD(
+        left: frame['x']!,
+        top: frame['y']!,
+        width: frame['width']!,
+        height: frame['height']!,
+      );
+      // Host side uses full window as content rect.
+      _captureMap = ContentToWindowMap(
+        contentRect: windowRect,
+        windowRect: windowRect,
+      );
+    } else {
+      _captureMap = null;
+    }
+  }
+
   static StreamSubscription<GamepadEvent>? _subscription;
   static late final OnScreenRemoteMouseController mouseController;
   static SmoothMouseController? _smoothMouseController;
@@ -98,7 +125,6 @@ class InputController {
   // 远程鼠标位置被同步到本地时，由于鼠标被移动到指定位置会生成一个移动事件，阻止该事件。
   static int blockNextAbsl = 0;
   static int lastAbslMoveTime = 0;
-
 
   void requestMoveMouseAbsl(double x, double y, int tempScreenId) async {
     if (blockCursorMove) {
@@ -184,17 +210,6 @@ class InputController {
     }
   }
 
-  void handleMoveMouseAbsl(RTCDataChannelMessage message) {
-    if (!AppPlatform.isDeskTop) return;
-    Uint8List buffer = message.binary;
-    ByteData byteData = ByteData.sublistView(buffer);
-
-    int screenId = byteData.getUint8(1);
-    double x = byteData.getFloat32(2, Endian.little);
-    double y = byteData.getFloat32(6, Endian.little);
-    HardwareSimulator.mouse.performMouseMoveAbsl(x, y, screenId);
-  }
-
   // maybe we don't need screenId?
   void requestMoveMouseRelative(double x, double y, int screenId) async {
     if (blockCursorMove) {
@@ -214,7 +229,7 @@ class InputController {
 
     // 发送消息
     channel.send(RTCDataChannelMessage.fromBinary(buffer));
-  
+
     if (sendEmptyPacket) {
       for (int i = 0; i < resendCount / 2; i++) {
         WebrtcService.currentRenderingSession?.inputController?.channel
@@ -232,6 +247,54 @@ class InputController {
     double dy = byteData.getFloat32(6, Endian.little);
 
     HardwareSimulator.mouse.performMouseMoveRelative(dx, dy, screenId);
+  }
+
+  // --- Normalized (0..1) window-relative mouse protocol ---
+  // Controller sends LP_MOUSEMOVE_ABSL with x/y normalized to the captured content.
+  // Host maps to actual window/screen coordinates.
+
+  void requestMouseMoveAbsl(double x, double y, int screenId) async {
+    if (blockCursorMove) return;
+    final byteData = ByteData(10);
+    byteData.setUint8(0, LP_MOUSEMOVE_ABSL);
+    byteData.setUint8(1, screenId);
+    byteData.setFloat32(2, x, Endian.little);
+    byteData.setFloat32(6, y, Endian.little);
+    final buffer = byteData.buffer.asUint8List();
+    channel.send(RTCDataChannelMessage.fromBinary(buffer));
+    if (sendEmptyPacket) {
+      for (int i = 0; i < resendCount / 2; i++) {
+        channel.send(emptyMessage);
+      }
+    }
+  }
+
+  void handleMoveMouseAbsl(RTCDataChannelMessage message) {
+    if (!AppPlatform.isDeskTop) return;
+    final buffer = message.binary;
+    final byteData = ByteData.sublistView(buffer);
+    final screenId = byteData.getUint8(1);
+    final x = byteData.getFloat32(2, Endian.little);
+    final y = byteData.getFloat32(6, Endian.little);
+
+    // If window streaming metadata exists, map (u,v) to host window pixels.
+    if (_captureMap != null) {
+      final pixel =
+          mapContentNormalizedToWindowPixel(map: _captureMap!, u: x, v: y);
+      // TODO: Replace with an API that supports absolute pixels.
+      // For now, use screen-relative mode (0..1). We assume the window frame
+      // is relative to the active screen bounds.
+      final rx = ((pixel.x - _captureMap!.windowRect.left) /
+              _captureMap!.windowRect.width)
+          .clamp(0.0, 1.0);
+      final ry = ((pixel.y - _captureMap!.windowRect.top) /
+              _captureMap!.windowRect.height)
+          .clamp(0.0, 1.0);
+      HardwareSimulator.mouse.performMouseMoveAbsl(rx, ry, screenId);
+      return;
+    }
+
+    HardwareSimulator.mouse.performMouseMoveAbsl(x, y, screenId);
   }
 
   void requestMouseClick(int buttonId, bool isDown) async {
@@ -372,7 +435,8 @@ class InputController {
     HardwareSimulator.performTouchMove(x, y, id, screenId);
   }
 
-  void requestPenEvent(double x, double y, bool isDown, bool hasButton, double pressure, double rotation, double tilt) async {
+  void requestPenEvent(double x, double y, bool isDown, bool hasButton,
+      double pressure, double rotation, double tilt) async {
     ByteData byteData = ByteData(23);
     byteData.setUint8(0, LP_PEN_EVENT);
     byteData.setFloat32(1, x, Endian.little);
@@ -405,10 +469,12 @@ class InputController {
     double rotation = byteData.getFloat32(15, Endian.little);
     double tilt = byteData.getFloat32(19, Endian.little);
 
-    HardwareSimulator.performPenEvent(x, y, isDown, hasButton, pressure, rotation, tilt, screenId);
+    HardwareSimulator.performPenEvent(
+        x, y, isDown, hasButton, pressure, rotation, tilt, screenId);
   }
 
-  void requestPenMove(double x, double y, bool hasButton, double pressure, double rotation, double tilt) async {
+  void requestPenMove(double x, double y, bool hasButton, double pressure,
+      double rotation, double tilt) async {
     ByteData byteData = ByteData(22);
     byteData.setUint8(0, LP_PEN_MOVE);
     byteData.setFloat32(1, x, Endian.little);
@@ -439,7 +505,8 @@ class InputController {
     double rotation = byteData.getFloat32(14, Endian.little);
     double tilt = byteData.getFloat32(18, Endian.little);
 
-    HardwareSimulator.performPenMove(x, y, hasButton, pressure, rotation, tilt, screenId);
+    HardwareSimulator.performPenMove(
+        x, y, hasButton, pressure, rotation, tilt, screenId);
   }
 
   void requestKeyEvent(int? keyCode, bool isDown) async {
@@ -628,12 +695,13 @@ class InputController {
   static TVControllerMode controllerMode = TVControllerMode.mouse;
   //Android TV Dpad controll mouse speed
   static double speedx = 0, speedy = 0;
-  
+
   // OK键连续点击跟踪
   static int _okButtonClickCount = 0;
   static DateTime? _lastOkButtonClick;
-  static const Duration _okButtonTimeout = Duration(milliseconds: 1000); // 1秒内需要完成3次点击
-  
+  static const Duration _okButtonTimeout =
+      Duration(milliseconds: 1000); // 1秒内需要完成3次点击
+
   // 测试用的getter和setter
   static int get okButtonClickCount => _okButtonClickCount;
   static DateTime? get lastOkButtonClick => _lastOkButtonClick;
@@ -642,14 +710,17 @@ class InputController {
     _okButtonClickCount = 0;
     _lastOkButtonClick = null;
   }
+
   static void setOkButtonClickCount(int count) {
     _okButtonClickCount = count;
   }
+
   static void setLastOkButtonClick(DateTime? time) {
     _lastOkButtonClick = time;
   }
 
-  static KeyboardPressedCallback keyboardPressedCallbackAndroid = (keycode, isDown) {
+  static KeyboardPressedCallback keyboardPressedCallbackAndroid =
+      (keycode, isDown) {
     if (AppPlatform.isAndroidTV) {
       if (keycode == 4) {
         // Android TV go back. quit the streaming context.
@@ -663,29 +734,22 @@ class InputController {
         // Android TV Dpad Menu button.
         if (controllerMode == TVControllerMode.mouse) {
           // right button
-          WebrtcService.currentRenderingSession?.inputController?.requestMouseClick(3, isDown);
-        } else if (controllerMode == TVControllerMode.keyboard && isDown){
+          WebrtcService.currentRenderingSession?.inputController
+              ?.requestMouseClick(3, isDown);
+        } else if (controllerMode == TVControllerMode.keyboard && isDown) {
           // Show all apps
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.metaLeft],
-                  true);
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.metaLeft], true);
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.tab],
-                  true);
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.tab], true);
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.tab],
-                  false);
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.tab], false);
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.metaLeft],
-                  false);
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.metaLeft], false);
         }
         return;
       }
@@ -693,41 +757,23 @@ class InputController {
       if (keycode == 1024) {
         // Android TV Volume UP button.
         //if (controllerMode == TVControllerMode.mouse) {
-          // right button
+        // right button
         //  WebrtcService.currentRenderingSession?.inputController?.requestMouseClick(2, isDown);
         //} else if (controllerMode == TVControllerMode.keyboard){
-          // 打开屏幕软键盘
-          // TODO: 改为cloudplayplus自带软键盘
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.metaLeft],
-                  true);
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.controlLeft],
-                  true);
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.keyO],
-                  true);
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.keyO],
-                  false);
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.controlLeft],
-                  false);
-          WebrtcService.currentRenderingSession?.inputController
-              ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.metaLeft],
-                  false);
+        // 打开屏幕软键盘
+        // TODO: 改为cloudplayplus自带软键盘
+        WebrtcService.currentRenderingSession?.inputController?.requestKeyEvent(
+            physicalToWindowsKeyMap[PhysicalKeyboardKey.metaLeft], true);
+        WebrtcService.currentRenderingSession?.inputController?.requestKeyEvent(
+            physicalToWindowsKeyMap[PhysicalKeyboardKey.controlLeft], true);
+        WebrtcService.currentRenderingSession?.inputController?.requestKeyEvent(
+            physicalToWindowsKeyMap[PhysicalKeyboardKey.keyO], true);
+        WebrtcService.currentRenderingSession?.inputController?.requestKeyEvent(
+            physicalToWindowsKeyMap[PhysicalKeyboardKey.keyO], false);
+        WebrtcService.currentRenderingSession?.inputController?.requestKeyEvent(
+            physicalToWindowsKeyMap[PhysicalKeyboardKey.controlLeft], false);
+        WebrtcService.currentRenderingSession?.inputController?.requestKeyEvent(
+            physicalToWindowsKeyMap[PhysicalKeyboardKey.metaLeft], false);
         //}
         return;
       }
@@ -768,9 +814,7 @@ class InputController {
         } else {
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.arrowUp],
-                  isDown);
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.arrowUp], isDown);
         }
         return;
       }
@@ -785,8 +829,7 @@ class InputController {
         } else {
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.arrowDown],
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.arrowDown],
                   isDown);
         }
         return;
@@ -802,8 +845,7 @@ class InputController {
         } else {
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.arrowLeft],
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.arrowLeft],
                   isDown);
         }
         return;
@@ -819,8 +861,7 @@ class InputController {
         } else {
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.arrowRight],
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.arrowRight],
                   isDown);
         }
         return;
@@ -830,16 +871,16 @@ class InputController {
         if (isDown) {
           // 处理连续点击逻辑
           final now = DateTime.now();
-          
+
           // 如果距离上次点击超过超时时间，重置计数
-          if (_lastOkButtonClick == null || 
+          if (_lastOkButtonClick == null ||
               now.difference(_lastOkButtonClick!) > _okButtonTimeout) {
             _okButtonClickCount = 0;
           }
-          
+
           _okButtonClickCount++;
           _lastOkButtonClick = now;
-          
+
           // 如果连续点击了3次，切换模式
           if (_okButtonClickCount >= 3) {
             if (controllerMode == TVControllerMode.mouse) {
@@ -863,33 +904,29 @@ class InputController {
                 );
               }
             }
-            
+
             // 重置计数
             _okButtonClickCount = 0;
             _lastOkButtonClick = null;
             return;
           }
         }
-        
+
         // 正常的OK键功能
         if (controllerMode == TVControllerMode.mouse) {
           WebrtcService.currentRenderingSession?.inputController
-              ?.requestMouseClick(
-                  1,
-                  isDown);
+              ?.requestMouseClick(1, isDown);
         } else {
           WebrtcService.currentRenderingSession?.inputController
               ?.requestKeyEvent(
-                  physicalToWindowsKeyMap[
-                      PhysicalKeyboardKey.enter],
-                  isDown);
+                  physicalToWindowsKeyMap[PhysicalKeyboardKey.enter], isDown);
         }
         return;
       }
     }
     if (androidToWindowsKeyMap.containsKey(keycode)) {
       WebrtcService.currentRenderingSession?.inputController
-        ?.requestKeyEvent(androidToWindowsKeyMap[keycode], isDown);
+          ?.requestKeyEvent(androidToWindowsKeyMap[keycode], isDown);
     }
   };
 
@@ -907,47 +944,49 @@ class InputController {
       int message = byteData.getInt32(1);
       if (message == HardwareSimulator.CURSOR_INVISIBLE &&
           StreamingSettings.autoHideLocalCursor) {
-          mouseController.setShowCursor(false);
-          isCursorLocked = true;
+        mouseController.setShowCursor(false);
+        isCursorLocked = true;
       } else if (message == HardwareSimulator.CURSOR_VISIBLE &&
-          StreamingSettings.autoHideLocalCursor){
-          if (!isCursorLocked) {
-            return;
-          }
-          isCursorLocked = false;
-          // buffer.length > 10 used to be compatible with old version.
-          if (buffer.length > 10) {
-            blockCursorMove = true;
-            int msgscreenId = byteData.getInt32(5);
-            if (buffer.length > 10 && screenId == msgscreenId) {
-              double xPercent = byteData.getFloat32(9, Endian.little);
-              double yPercent = byteData.getFloat32(13, Endian.little);
-              mouseController.setAbsolutePosition(xPercent, yPercent);
-              mouseController.setShowCursor(true);
-            } else {
-              mouseController.setShowCursor(false);
-            }
-            Timer(const Duration(milliseconds: 200), () {
-              blockCursorMove = false;
-            });
-          } else {
-            mouseController.setShowCursor(true);
-          }
-      } else if (message == HardwareSimulator.CURSOR_POSITION_CHANGED) {
-          //TODO: 有些时候单点触屏收不到对应消息 不知道为什么
-          if (!isCursorLocked && DateTime.now().millisecondsSinceEpoch - lastAbslMoveTime > 1000) {
-            int msgscreenId = byteData.getInt32(5);
+          StreamingSettings.autoHideLocalCursor) {
+        if (!isCursorLocked) {
+          return;
+        }
+        isCursorLocked = false;
+        // buffer.length > 10 used to be compatible with old version.
+        if (buffer.length > 10) {
+          blockCursorMove = true;
+          int msgscreenId = byteData.getInt32(5);
+          if (buffer.length > 10 && screenId == msgscreenId) {
             double xPercent = byteData.getFloat32(9, Endian.little);
             double yPercent = byteData.getFloat32(13, Endian.little);
-            if (screenId == msgscreenId) {
-              mouseController.setShowCursor(true);
-              mouseController.moveAbsl(xPercent, yPercent);
-            } else {
-              if ((xPercent < 0.98 && xPercent > 0.02) && (yPercent < 0.98 && yPercent > 0.02)) {
-                mouseController.setShowCursor(false);
-              }
+            mouseController.setAbsolutePosition(xPercent, yPercent);
+            mouseController.setShowCursor(true);
+          } else {
+            mouseController.setShowCursor(false);
+          }
+          Timer(const Duration(milliseconds: 200), () {
+            blockCursorMove = false;
+          });
+        } else {
+          mouseController.setShowCursor(true);
+        }
+      } else if (message == HardwareSimulator.CURSOR_POSITION_CHANGED) {
+        //TODO: 有些时候单点触屏收不到对应消息 不知道为什么
+        if (!isCursorLocked &&
+            DateTime.now().millisecondsSinceEpoch - lastAbslMoveTime > 1000) {
+          int msgscreenId = byteData.getInt32(5);
+          double xPercent = byteData.getFloat32(9, Endian.little);
+          double yPercent = byteData.getFloat32(13, Endian.little);
+          if (screenId == msgscreenId) {
+            mouseController.setShowCursor(true);
+            mouseController.moveAbsl(xPercent, yPercent);
+          } else {
+            if ((xPercent < 0.98 && xPercent > 0.02) &&
+                (yPercent < 0.98 && yPercent > 0.02)) {
+              mouseController.setShowCursor(false);
             }
           }
+        }
       } else {
         //cursor image changed.
         mouseController.setCursorBuffer(buffer);
@@ -1160,38 +1199,44 @@ class InputController {
           }
         });
       } else if (message == HardwareSimulator.CURSOR_POSITION_CHANGED) {
-          int msgscreenId = byteData.getInt32(5);
-          double xPercent = byteData.getFloat32(9, Endian.little);
-          double yPercent = byteData.getFloat32(13, Endian.little);
-          if (screenId == msgscreenId) {
-            if (AppPlatform.isDeskTop && (!isCursorLocked || isCursorLockedbySyncMouse) && DateTime.now().millisecondsSinceEpoch - lastAbslMoveTime > 1000) {
-              //TODO: implement cursor move for Linux.
-              //This will generate a mousemoveabsl event. so we block the next
-              //由于精度问题 可能触发反复同步。block住这个同步。
-              //即使这次没有真正触发鼠标移动 也仅仅会多消耗掉下一次用户鼠标移动事件。
-              if (isCursorLocked) {
-                //鼠标从别的屏幕移入
-                HardwareSimulator.unlockCursor();
-                HardwareSimulator.removeCursorMoved(cursorMovedCallback);
-                isCursorLockedbySyncMouse = false;
-                isCursorLocked = false;
-              }
-              blockNextAbsl++;
-              cursorPositionCallback?.call(xPercent, yPercent);
+        int msgscreenId = byteData.getInt32(5);
+        double xPercent = byteData.getFloat32(9, Endian.little);
+        double yPercent = byteData.getFloat32(13, Endian.little);
+        if (screenId == msgscreenId) {
+          if (AppPlatform.isDeskTop &&
+              (!isCursorLocked || isCursorLockedbySyncMouse) &&
+              DateTime.now().millisecondsSinceEpoch - lastAbslMoveTime > 1000) {
+            //TODO: implement cursor move for Linux.
+            //This will generate a mousemoveabsl event. so we block the next
+            //由于精度问题 可能触发反复同步。block住这个同步。
+            //即使这次没有真正触发鼠标移动 也仅仅会多消耗掉下一次用户鼠标移动事件。
+            if (isCursorLocked) {
+              //鼠标从别的屏幕移入
+              HardwareSimulator.unlockCursor();
+              HardwareSimulator.removeCursorMoved(cursorMovedCallback);
+              isCursorLockedbySyncMouse = false;
+              isCursorLocked = false;
             }
-          } else {
-            if (canControlOtherMonitors && AppPlatform.isDeskTop && !isCursorLocked && !isCursorLockedbySyncMouse) {
-              //鼠标移动到别的屏幕(非边缘),锁住鼠标
-              if ((xPercent < 0.98 && xPercent > 0.02) && (yPercent < 0.98 && yPercent > 0.02)) {
-                blockNextAbsl++;
-                cursorPositionCallback?.call(0.5, 0.5);
-                HardwareSimulator.lockCursor();
-                HardwareSimulator.addCursorMoved(cursorMovedCallback);
-                isCursorLockedbySyncMouse = true;
-                isCursorLocked = true;
-              }
+            blockNextAbsl++;
+            cursorPositionCallback?.call(xPercent, yPercent);
+          }
+        } else {
+          if (canControlOtherMonitors &&
+              AppPlatform.isDeskTop &&
+              !isCursorLocked &&
+              !isCursorLockedbySyncMouse) {
+            //鼠标移动到别的屏幕(非边缘),锁住鼠标
+            if ((xPercent < 0.98 && xPercent > 0.02) &&
+                (yPercent < 0.98 && yPercent > 0.02)) {
+              blockNextAbsl++;
+              cursorPositionCallback?.call(0.5, 0.5);
+              HardwareSimulator.lockCursor();
+              HardwareSimulator.addCursorMoved(cursorMovedCallback);
+              isCursorLockedbySyncMouse = true;
+              isCursorLocked = true;
             }
           }
+        }
       }
     }
   }

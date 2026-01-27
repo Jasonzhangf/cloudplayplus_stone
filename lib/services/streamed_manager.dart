@@ -55,7 +55,7 @@ class StreamedManager {
       final customConfigs = await HardwareSimulator.getCustomDisplayConfigs();
 
       List<Map<String, dynamic>> newConfigs = List.from(customConfigs);
-      
+
       bool isresolutionExist = false;
 
       for (var config in newConfigs) {
@@ -75,7 +75,8 @@ class StreamedManager {
           'refreshRate': 60,
         });
 
-        bool success = await HardwareSimulator.setCustomDisplayConfigs(newConfigs);
+        bool success =
+            await HardwareSimulator.setCustomDisplayConfigs(newConfigs);
         if (success) {
           VLOG0('添加虚拟显示器分辨率成功: ${width}x${height}');
         } else {
@@ -96,7 +97,7 @@ class StreamedManager {
         const Duration retryInterval = Duration(milliseconds: 500);
         while (retry < 10) {
           success = await HardwareSimulator.changeDisplaySettings(
-            displayId, width, height, 60);
+              displayId, width, height, 60);
           if (success) {
             VLOG0('设置虚拟显示器分辨率成功: ${width}x${height}');
             break;
@@ -106,11 +107,11 @@ class StreamedManager {
           }
         }
 
-        if (!success){
+        if (!success) {
           await HardwareSimulator.removeDisplay(displayId);
           return null;
         }
-        
+
         return displayId;
       } else {
         VLOG0('创建虚拟显示器失败');
@@ -143,7 +144,7 @@ class StreamedManager {
     int retryCount = 0;
     const int maxRetries = 5;
     const Duration retryInterval = Duration(milliseconds: 500);
-    
+
     while (retryCount < maxRetries) {
       try {
         bool success = await HardwareSimulator.restoreDisplayConfiguration();
@@ -154,20 +155,22 @@ class StreamedManager {
       } catch (e) {
         VLOG0("恢复显示器配置异常: $e");
       }
-      
+
       retryCount++;
       if (retryCount < maxRetries) {
-        VLOG0("恢复显示器配置失败，${retryInterval.inMilliseconds}ms后重试 (${retryCount}/$maxRetries)");
+        VLOG0(
+            "恢复显示器配置失败，${retryInterval.inMilliseconds}ms后重试 (${retryCount}/$maxRetries)");
         await Future.delayed(retryInterval);
       }
     }
-    
+
     VLOG0("恢复显示器配置失败，已达到最大重试次数: $maxRetries");
   }
 
   Future<void> _loadCurrentMultiDisplayMode() async {
     try {
-      MultiDisplayMode mode = await HardwareSimulator.getCurrentMultiDisplayMode();
+      MultiDisplayMode mode =
+          await HardwareSimulator.getCurrentMultiDisplayMode();
       VLOG0('Current multi-display mode: $mode');
     } catch (e) {
       VLOG0('Failed to load current multi-display mode: $e');
@@ -175,27 +178,32 @@ class StreamedManager {
   }
 
   Future<void> _setMultiDisplayMode(MultiDisplayMode mode) async {
-      await HardwareSimulator.setMultiDisplayMode(mode);
-      await _loadCurrentMultiDisplayMode();
+    await HardwareSimulator.setMultiDisplayMode(mode);
+    await _loadCurrentMultiDisplayMode();
   }
 
   static void startStreaming(Device target, StreamedSettings settings) async {
     //var sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
     //print("cppdebug x ${sources.length} ${settings.screenId}");
     bool allowConnect = ApplicationInfo.connectable;
-    if (!allowConnect || settings.connectPassword == null || StreamingSettings.connectPasswordHash != HashUtil.hash(settings.connectPassword!)) {
+    if (!allowConnect ||
+        settings.connectPassword == null ||
+        StreamingSettings.connectPasswordHash !=
+            HashUtil.hash(settings.connectPassword!)) {
       return;
     }
 
     await _lock.synchronized(() async {
       if (sessions.containsKey(target.websocketSessionid)) {
-        VLOG0("Starting session which is already started: $target.websocketSessionid");
+        VLOG0(
+            "Starting session which is already started: $target.websocketSessionid");
         return;
       }
 
       Completer<void>? displayCallbackCompleter;
 
-      if (settings.streamMode == VDISPLAY_OCCUPY || settings.streamMode == VDSIPLAY_EXTEND) {
+      if (settings.streamMode == VDISPLAY_OCCUPY ||
+          settings.streamMode == VDSIPLAY_EXTEND) {
         //bool hasPending = await HardwareSimulator.hasPendingConfiguration();
         /*if (settings.streamMode == VDISPLAY_OCCUPY && isVdisplayOccupied) {
           VLOG0("其它连接正在修改显示器配置，无法连接");
@@ -204,7 +212,7 @@ class StreamedManager {
         // 独占模式或扩展屏模式，需要创建虚拟显示器
         int width = settings.customScreenWidth ?? 1920;
         int height = settings.customScreenHeight ?? 1080;
-        
+
         // 创建全局的Completer来等待显示器数量变化回调
         ApplicationInfo.displayCountChangedCompleter = Completer<void>();
         int? virtualDisplayId = await _createVirtualDisplay(width, height);
@@ -216,7 +224,8 @@ class StreamedManager {
           //目前只能等2秒来保证虚拟显示器加载完成
           //await ApplicationInfo.displayCountChangedCompleter!.future;
           await Future.delayed(const Duration(milliseconds: 2000));
-          if (settings.streamMode == VDISPLAY_OCCUPY || settings.streamMode == VDSIPLAY_EXTEND) {
+          if (settings.streamMode == VDISPLAY_OCCUPY ||
+              settings.streamMode == VDSIPLAY_EXTEND) {
             virtualDisplayIds[settings.screenId!] = virtualDisplayId;
           }
           VLOG0('使用虚拟显示器模式，显示器ID: $virtualDisplayId');
@@ -246,9 +255,11 @@ class StreamedManager {
           //理论上应该等待length符合期望 但是有可能windows缓存了设置导致部分显示器不使用 显示器数量没有变多 何解？
           while (sources.length <= settings.screenId!) {
             //有可能是因为没设置为扩展模式
-            MultiDisplayMode currentMode = await HardwareSimulator.getCurrentMultiDisplayMode();
+            MultiDisplayMode currentMode =
+                await HardwareSimulator.getCurrentMultiDisplayMode();
             if (currentMode != MultiDisplayMode.extend) {
-              await HardwareSimulator.setMultiDisplayMode(MultiDisplayMode.extend);
+              await HardwareSimulator.setMultiDisplayMode(
+                  MultiDisplayMode.extend);
             }
             retryCount++;
             if (retryCount > 10) {
@@ -260,15 +271,18 @@ class StreamedManager {
               }
               return;
             }
-            sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
+            sources =
+                await desktopCapturer.getSources(types: [SourceType.Screen]);
           }
           // 独占模式，需要重置新显示器为主显示器
           if (settings.streamMode == VDISPLAY_OCCUPY) {
             await Future.delayed(const Duration(milliseconds: 500));
-            sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
+            sources =
+                await desktopCapturer.getSources(types: [SourceType.Screen]);
             //await HardwareSimulator.setMultiDisplayMode(MultiDisplayMode.primaryOnly);
             if (sources.length != 1) {
-              await HardwareSimulator.setPrimaryDisplayOnly(virtualDisplayIds[0]!);
+              await HardwareSimulator.setPrimaryDisplayOnly(
+                  virtualDisplayIds[0]!);
               retryCount = 0;
               while (sources.length != 1) {
                 retryCount++;
@@ -278,19 +292,27 @@ class StreamedManager {
                   return;
                 }
                 await Future.delayed(const Duration(milliseconds: 500));
-                sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
+                sources = await desktopCapturer
+                    .getSources(types: [SourceType.Screen]);
               }
             }
             settings.screenId = 0;
           }
           final source = sources[settings.screenId!];
+          if (source.type == SourceType.Window) {
+            settings.windowId = source.windowId;
+            settings.windowFrame = source.frame;
+          } else {
+            settings.windowId = null;
+            settings.windowFrame = null;
+          }
           mediaConstraints = <String, dynamic>{
             'video': {
               'deviceId': {'exact': source.id},
               'mandatory': {
                 'frameRate': settings.framerate,
                 //Todo(haichao): currently disable this because it will cause crash on some devices.
-                'hasCursor': false//settings.showRemoteCursor
+                'hasCursor': false //settings.showRemoteCursor
               }
             },
             'audio': false
@@ -340,7 +362,7 @@ class StreamedManager {
             });
             localVideoStreams.remove(screenId);
           }
-          
+
           // 如果这个screenId对应的是虚拟显示器，则移除它
           if (virtualDisplayIds.containsKey(screenId)) {
             VLOG0("removing monitor");
