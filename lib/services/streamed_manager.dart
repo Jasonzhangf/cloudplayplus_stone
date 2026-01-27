@@ -39,6 +39,40 @@ class StreamedManager {
     currentlyStreamedCount.value = value;
   }
 
+  @visibleForTesting
+  static DesktopCapturerSource selectDesktopSourceForTesting(
+      List<DesktopCapturerSource> sources, StreamedSettings settings) {
+    if (settings.desktopSourceId != null) {
+      final byId = sources
+          .where((source) => source.id == settings.desktopSourceId)
+          .toList();
+      if (byId.isNotEmpty) {
+        return byId.first;
+      }
+    }
+
+    if (settings.sourceType == 'window') {
+      final windowSources =
+          sources.where((source) => source.type == SourceType.Window).toList();
+      if (windowSources.isNotEmpty) {
+        return windowSources.first;
+      }
+    }
+
+    if (settings.screenId != null &&
+        settings.screenId! >= 0 &&
+        settings.screenId! < sources.length) {
+      return sources[settings.screenId!];
+    }
+
+    final screenSources =
+        sources.where((source) => source.type == SourceType.Screen).toList();
+    if (screenSources.isNotEmpty) {
+      return screenSources.first;
+    }
+    return sources.first;
+  }
+
   // Map from real screen id to virtual display id
   static Map<int, int> virtualDisplayIds = {};
 
@@ -182,7 +216,7 @@ class StreamedManager {
     await _loadCurrentMultiDisplayMode();
   }
 
-  static void startStreaming(Device target, StreamedSettings settings) async {
+	  static void startStreaming(Device target, StreamedSettings settings) async {
     //var sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
     //print("cppdebug x ${sources.length} ${settings.screenId}");
     bool allowConnect = ApplicationInfo.connectable;
@@ -235,8 +269,8 @@ class StreamedManager {
           return;
         }
       }
-      if (!localVideoStreams.containsKey(settings.screenId!)) {
-        final Map<String, dynamic> mediaConstraints;
+	      if (!localVideoStreams.containsKey(settings.screenId!)) {
+	        final Map<String, dynamic> mediaConstraints;
         if (AppPlatform.isWeb) {
           mediaConstraints = {
             'audio': false,
@@ -247,9 +281,9 @@ class StreamedManager {
               }
             }
           };
-        } else {
-          var sources =
-              await desktopCapturer.getSources(types: [SourceType.Screen]);
+	        } else {
+	          var sources = await desktopCapturer
+	              .getSources(types: [SourceType.Screen, SourceType.Window]);
           //Todo(haichao): currently this should have no effect. we should change it to be right.
           int retryCount = 0;
           //理论上应该等待length符合期望 但是有可能windows缓存了设置导致部分显示器不使用 显示器数量没有变多 何解？
@@ -271,14 +305,14 @@ class StreamedManager {
               }
               return;
             }
-            sources =
-                await desktopCapturer.getSources(types: [SourceType.Screen]);
-          }
+	            sources = await desktopCapturer
+	                .getSources(types: [SourceType.Screen, SourceType.Window]);
+	          }
           // 独占模式，需要重置新显示器为主显示器
           if (settings.streamMode == VDISPLAY_OCCUPY) {
             await Future.delayed(const Duration(milliseconds: 500));
-            sources =
-                await desktopCapturer.getSources(types: [SourceType.Screen]);
+	            sources = await desktopCapturer
+	                .getSources(types: [SourceType.Screen, SourceType.Window]);
             //await HardwareSimulator.setMultiDisplayMode(MultiDisplayMode.primaryOnly);
             if (sources.length != 1) {
               await HardwareSimulator.setPrimaryDisplayOnly(
@@ -292,20 +326,25 @@ class StreamedManager {
                   return;
                 }
                 await Future.delayed(const Duration(milliseconds: 500));
-                sources = await desktopCapturer
-                    .getSources(types: [SourceType.Screen]);
-              }
-            }
+	                sources = await desktopCapturer
+	                    .getSources(types: [SourceType.Screen, SourceType.Window]);
+	              }
+	            }
             settings.screenId = 0;
           }
-          final source = sources[settings.screenId!];
-          if (source.type == SourceType.Window) {
-            settings.windowId = source.windowId;
-            settings.windowFrame = source.frame;
-          } else {
-            settings.windowId = null;
-            settings.windowFrame = null;
-          }
+	          final source =
+	              selectDesktopSourceForTesting(sources, settings);
+	          if (source.type == SourceType.Window) {
+	            settings.windowId = source.windowId;
+	            settings.windowFrame = source.frame;
+	            settings.desktopSourceId = source.id;
+	            settings.sourceType = 'window';
+	          } else {
+	            settings.windowId = null;
+	            settings.windowFrame = null;
+	            settings.desktopSourceId = source.id;
+	            settings.sourceType = 'screen';
+	          }
           mediaConstraints = <String, dynamic>{
             'video': {
               'deviceId': {'exact': source.id},

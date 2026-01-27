@@ -48,6 +48,10 @@ class StreamingSettings {
   static int? targetScreenId;
   static String? connectPassword;
 
+   // Desktop source selection
+   static String? desktopSourceId; // Source ID from getSources()
+   static String? sourceType; // 'screen' or 'window'
+
   static bool revertCursorWheel = false;
   static bool autoHideLocalCursor = true;
   static bool switchCmdCtrl = false;
@@ -201,6 +205,8 @@ class StreamingSettings {
       'turnServerUsername': turnServerUsername,
       'turnServerPassword': turnServerPassword,*/
       'targetScreenId': targetScreenId,
+      'desktopSourceId': desktopSourceId,
+      'sourceType': sourceType,
       'codec': codec,
       'hookCursorImage': hookCursorImage,
       'connectPassword': connectPassword,
@@ -245,6 +251,8 @@ class StreamedSettings {
   int? customScreenHeight;
 
   // For window streaming.
+  String? desktopSourceId;
+  String? sourceType; // 'screen' or 'window'
   int? windowId;
   Map<String, double>? windowFrame;
 
@@ -256,6 +264,8 @@ class StreamedSettings {
       ..showRemoteCursor = settings['showRemoteCursor'] as bool?
       ..streamAudio = settings['streamAudio'] as bool?
       ..screenId = settings['targetScreenId'] as int?
+      ..desktopSourceId = settings['desktopSourceId'] as String?
+      ..sourceType = settings['sourceType'] as String?
       ..codec = settings['codec'] as String?
       ..hookCursorImage = settings['hookCursorImage'] as bool?
       ..connectPassword = settings['connectPassword'] as String?
