@@ -1236,27 +1236,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   OnScreenRemoteMouse(
                     controller: InputController.mouseController,
                     onPositionChanged: (percentage) {
-                      double xPercent = percentage.dx;
-                      double yPercent = percentage.dy;
-
-                      if (_videoScale != 1.0 || _videoOffset != Offset.zero) {
-                        Offset screenPosition = Offset(
-                          percentage.dx * widgetSize.width,
-                          percentage.dy * widgetSize.height,
-                        );
-
-                        Offset viewCenter =
-                            Offset(widgetSize.width / 2, widgetSize.height / 2);
-                        Offset videoPosition = viewCenter +
-                            (screenPosition - viewCenter - _videoOffset) /
-                                _videoScale;
-
-                        xPercent = (videoPosition.dx / widgetSize.width)
-                            .clamp(0.0, 1.0);
-                        yPercent = (videoPosition.dy / widgetSize.height)
-                            .clamp(0.0, 1.0);
-                      }
-
+                      // percentage is already normalized to content (excluding letterbox/pillarbox)
+                      final xPercent = percentage.dx;
+                      final yPercent = percentage.dy;
                       WebrtcService.currentRenderingSession?.inputController
                           ?.requestMoveMouseAbsl(xPercent, yPercent,
                               WebrtcService.currentRenderingSession!.screenId);

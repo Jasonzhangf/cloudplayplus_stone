@@ -180,11 +180,18 @@ static NSDictionary* _Nullable flutter_sck_lookup_window_meta(NSString* sourceId
             NSString* appName = w.owningApplication.applicationName ?: @"";
             NSString* bundleId = w.owningApplication.bundleIdentifier ?: @"";
             // Return stable identifiers for the Dart layer.
+            CGRect frame = w.frame;
             meta = @{
               @"windowId" : @(w.windowID),
               @"appName" : appName,
               @"appId" : bundleId,
               @"title" : w.title ?: @"",
+              @"frame" : @{
+                @"x" : @(frame.origin.x),
+                @"y" : @(frame.origin.y),
+                @"width" : @(frame.size.width),
+                @"height" : @(frame.size.height),
+              },
             };
             break;
           }
