@@ -46,7 +46,14 @@ class ContentToWindowMap {
   /// The target window bounds on the host screen in pixels.
   final RectD windowRect;
 
-  const ContentToWindowMap({required this.contentRect, required this.windowRect});
+  /// The actual window ID on the host OS.
+  final int? windowId;
+
+  const ContentToWindowMap({
+    required this.contentRect,
+    required this.windowRect,
+    this.windowId,
+  });
 }
 
 @immutable

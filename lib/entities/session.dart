@@ -231,7 +231,7 @@ class StreamingSession {
         if (newchannel.label == "userInputUnsafe") {
           UDPChannel = newchannel;
           inputController = InputController(UDPChannel!, false, screenId);
-          inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame);
+          inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame, windowId: streamSettings?.windowId);
           //This channel is only used to send unsafe user input
           /*
         channel?.onMessage = (msg) {
@@ -241,7 +241,7 @@ class StreamingSession {
           if (!useUnsafeDatachannel) {
             inputController = InputController(channel!, true, screenId);
             inputController
-                ?.setCaptureMapFromFrame(streamSettings?.windowFrame);
+                ?.setCaptureMapFromFrame(streamSettings?.windowFrame, windowId: streamSettings?.windowId);
           }
           channel?.onMessage = (msg) {
             processDataChannelMessageFromHost(msg);
@@ -526,6 +526,7 @@ class StreamingSession {
         inputController = InputController(UDPChannel!, false, screenId);
       } else {
         inputController = InputController(channel!, true, screenId);
+        inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame, windowId: streamSettings?.windowId);
       }
 
       //For web, RTCDataChannel.readyState is not 'open', and this should only for windows
@@ -902,7 +903,13 @@ class StreamingSession {
           final text =
               (payload is Map) ? (payload['text']?.toString() ?? '') : '';
           if (text.isEmpty) break;
-          await HardwareSimulator.keyboard.performTextInput(text);
+          final windowId = streamSettings?.windowId;
+          if (windowId != null) {
+            await HardwareSimulator.keyboard
+                .performTextInputToWindow(windowId: windowId, text: text);
+          } else {
+            await HardwareSimulator.keyboard.performTextInput(text);
+          }
           break;
         default:
           VLOG0("unhandled message from client.please debug");

@@ -35,12 +35,11 @@ class InputController {
   /// Window capture metadata for host-side coordinate mapping.
   ContentToWindowMap? _captureMap;
 
-  void setCaptureMapFromFrame(Map<String, double>? frame) {
+  void setCaptureMapFromFrame(Map<String, double>? frame, {int? windowId}) {
+    final resolvedWindowId = windowId ?? (frame?['windowId']?.toInt());
     if (frame != null &&
         frame['x'] != null &&
-        frame['y'] != null &&
-        frame['width'] != null &&
-        frame['height'] != null) {
+        frame['y'] != null && frame['width'] != null && frame['height'] != null && resolvedWindowId != null) {
       final windowRect = RectD(
         left: frame['x']!,
         top: frame['y']!,
@@ -51,6 +50,7 @@ class InputController {
       _captureMap = ContentToWindowMap(
         contentRect: windowRect,
         windowRect: windowRect,
+        windowId: resolvedWindowId,
       );
     } else {
       _captureMap = null;
@@ -277,23 +277,26 @@ class InputController {
     final x = byteData.getFloat32(2, Endian.little);
     final y = byteData.getFloat32(6, Endian.little);
 
-    // If window streaming metadata exists, map (u,v) to host window pixels.
-    if (_captureMap != null) {
+    // Keep last known normalized cursor position so subsequent click packets
+    // (which do not carry coordinates) can be mapped correctly.
+    lastx = x.clamp(0.0, 1.0);
+    lasty = y.clamp(0.0, 1.0);
+
+    if (_captureMap != null && _captureMap!.windowId != null) {
+      VLOG0('[InputController] window-map enabled windowId=${_captureMap!.windowId}');
+      // If window streaming metadata exists, map (u,v) to host window pixels.
       final pixel =
           mapContentNormalizedToWindowPixel(map: _captureMap!, u: x, v: y);
-      // TODO: Replace with an API that supports absolute pixels.
-      // For now, use screen-relative mode (0..1). We assume the window frame
-      // is relative to the active screen bounds.
-      final rx = ((pixel.x - _captureMap!.windowRect.left) /
-              _captureMap!.windowRect.width)
-          .clamp(0.0, 1.0);
-      final ry = ((pixel.y - _captureMap!.windowRect.top) /
-              _captureMap!.windowRect.height)
-          .clamp(0.0, 1.0);
-      HardwareSimulator.mouse.performMouseMoveAbsl(rx, ry, screenId);
+      // Directly pass windowId to the new function in HardwareSimulator
+      HardwareSimulator.mouse.performMouseMoveToWindow(
+        windowId: _captureMap!.windowId!,
+        percentX: (pixel.x - _captureMap!.windowRect.left) / _captureMap!.windowRect.width,
+        percentY: (pixel.y - _captureMap!.windowRect.top) / _captureMap!.windowRect.height,
+      );
       return;
     }
 
+    VLOG0('[InputController] window-map disabled; using screen abs');
     HardwareSimulator.mouse.performMouseMoveAbsl(x, y, screenId);
   }
 
@@ -328,7 +331,27 @@ class InputController {
     bool isDown = byteData.getUint8(2) == 1; // 第3个字节存储了 isDown (1 表示按下, 0 表示松开)
 
     // 调用模拟点击的方法
+    if (_captureMap != null && _captureMap!.windowId != null) {
+      final pixel = mapContentNormalizedToWindowPixel(
+          map: _captureMap!, u: lastx, v: lasty);
+      final frame = _captureMap!.windowRect;
+      var percentX = (pixel.x - frame.left) / frame.width;
+      var percentY = (pixel.y - frame.top) / frame.height;
+      percentX = percentX.clamp(0.001, 0.999);
+      percentY = percentY.clamp(0.001, 0.999);
+      VLOG0('[InputController] window-click: windowId=${_captureMap!.windowId}, pixel=(${pixel.x.toStringAsFixed(1)}, ${pixel.y.toStringAsFixed(1)}), frame=(${frame.left.toStringAsFixed(0)},${frame.top.toStringAsFixed(0)}) ${frame.width.toStringAsFixed(0)}x${frame.height.toStringAsFixed(0)}, percent=(${percentX.toStringAsFixed(2)},${percentY.toStringAsFixed(2)})');
+      HardwareSimulator.mouse.performMouseClickToWindow(
+        windowId: _captureMap!.windowId!,
+        percentX: percentX,
+        percentY: percentY,
+        buttonId: buttonId,
+        isDown: isDown,
+      );
+      return;
+    }
     HardwareSimulator.mouse.performMouseClick(buttonId, isDown);
+    VLOG0('[InputController] Called performMouseClick (screen-relative) with buttonId: $buttonId, isDown: $isDown');
+
   }
 
   void requestMouseScroll(double? dx, double? dy) async {
@@ -540,7 +563,15 @@ class InputController {
     int keyCode = byteData.getUint8(1); // 第2个字节存储了 buttonId
     bool isDown = byteData.getUint8(2) == 1; // 第3个字节存储了 isDown (1 表示按下, 0 表示松开)
 
-    // 调用模拟点击的方法
+    // If we're streaming a specific window, ensure that window is focused before injecting keys.
+    if (_captureMap != null && _captureMap!.windowId != null) {
+      HardwareSimulator.keyboard.performKeyEventToWindow(
+        windowId: _captureMap!.windowId!,
+        keyCode: keyCode,
+        isDown: isDown,
+      );
+      return;
+    }
     HardwareSimulator.keyboard.performKeyEvent(keyCode, isDown);
   }
 

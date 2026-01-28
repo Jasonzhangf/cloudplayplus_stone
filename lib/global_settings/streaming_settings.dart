@@ -52,6 +52,9 @@ class StreamingSettings {
    static String? desktopSourceId; // Source ID from getSources()
    static String? sourceType; // 'screen' or 'window'
 
+   static int? windowId;
+   static Map<String, double>? windowFrame;
+
   static bool revertCursorWheel = false;
   static bool autoHideLocalCursor = true;
   static bool switchCmdCtrl = false;
@@ -207,6 +210,8 @@ class StreamingSettings {
       'targetScreenId': targetScreenId,
       'desktopSourceId': desktopSourceId,
       'sourceType': sourceType,
+      'windowId': windowId,
+      'windowFrame': windowFrame,
       'codec': codec,
       'hookCursorImage': hookCursorImage,
       'connectPassword': connectPassword,
