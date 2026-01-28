@@ -3,6 +3,7 @@ import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/pages/display_manager_page.dart';
+import 'package:cloudplayplus/pages/input_trace_page.dart';
 import 'package:cloudplayplus/pages/login_screen.dart';
 import 'package:cloudplayplus/pages/window_select_page.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
@@ -103,6 +104,18 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   );
                 },
               ),
+              if (AppPlatform.isDeskTop)
+                SettingsTile.navigation(
+                  leading: const Icon(Icons.history),
+                  title: const Text('输入录制/回放'),
+                  onPressed: (context) {
+                    Navigation.navigateTo(
+                      context: context,
+                      screen: const InputTracePage(),
+                      style: NavigationRouteStyle.cupertino,
+                    );
+                  },
+                ),
               if (AppPlatform.isWindows)
                 SettingsTile.navigation(
                   leading: const Icon(Icons.monitor),

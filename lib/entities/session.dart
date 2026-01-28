@@ -23,6 +23,7 @@ import '../services/app_info_service.dart';
 import '../services/webrtc_service.dart';
 import '../webrtctest/rtc_service_impl.dart';
 import '../utils/rtc_utils.dart';
+import '../utils/input/input_trace.dart';
 import 'messages.dart';
 
 /*
@@ -819,6 +820,10 @@ class StreamingSession {
 
   Future<void> processDataChannelMessageFromClient(
       RTCDataChannelMessage message) async {
+    if (InputTraceService.instance.isRecording) {
+      InputTraceService.instance.recorder.maybeWriteMeta(streamSettings: streamSettings);
+      InputTraceService.instance.recordIfInputMessage(message);
+    }
     if (message.isBinary) {
       VLOG0("message from Client:${message.binary[0]}");
       switch (message.binary[0]) {
