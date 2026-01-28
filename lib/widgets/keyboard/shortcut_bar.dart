@@ -83,7 +83,9 @@ class _ShortcutBarState extends State<ShortcutBar> {
     final row = SingleChildScrollView(
       controller: _scrollController,
       scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
       child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
           if (widget.showSettingsButton) ...[
             _buildSettingsButton(),
@@ -104,7 +106,8 @@ class _ShortcutBarState extends State<ShortcutBar> {
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.75),
         border: Border(
-          top: BorderSide(color: Colors.white.withValues(alpha: 0.12), width: 1),
+          top:
+              BorderSide(color: Colors.white.withValues(alpha: 0.12), width: 1),
         ),
         boxShadow: [
           BoxShadow(
@@ -249,7 +252,8 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
                 widget.label!,
                 style: TextStyle(
                   fontSize: 9,
-                  color: Colors.white.withValues(alpha: widget.isSettings ? 0.9 : 0.75),
+                  color: Colors.white
+                      .withValues(alpha: widget.isSettings ? 0.9 : 0.75),
                 ),
               ),
             ],
@@ -311,7 +315,8 @@ class _ArrowClusterButton extends StatelessWidget {
             style: TextStyle(
               fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: Colors.white.withValues(alpha: shortcut == null ? 0.25 : 0.92),
+              color: Colors.white
+                  .withValues(alpha: shortcut == null ? 0.25 : 0.92),
             ),
           ),
         ),
@@ -580,8 +585,7 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                         label: Text(getPlatformDisplayName(platform)),
                         selected: isSelected,
                         onSelected: (_) => _switchPlatform(platform),
-                        selectedColor:
-                            Colors.black.withValues(alpha: 0.08),
+                        selectedColor: Colors.black.withValues(alpha: 0.08),
                         checkmarkColor: Colors.black,
                       );
                     }).toList(),
@@ -660,52 +664,52 @@ class _ShortcutTile extends StatelessWidget {
     return GestureDetector(
       onLongPress: onDragHandle,
       child: Container(
-      decoration: BoxDecoration(
-        color: Colors.grey.shade50,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Row(
-        children: [
-          // 名称和快捷键
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  shortcut.label,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.w500,
-                    fontSize: 14,
+        decoration: BoxDecoration(
+          color: Colors.grey.shade50,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.grey.shade200),
+        ),
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            // 名称和快捷键
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    shortcut.label,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w500,
+                      fontSize: 14,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  formatShortcutKeys(shortcut.keys),
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey.shade600,
-                    fontFamily: 'monospace',
+                  const SizedBox(height: 4),
+                  Text(
+                    formatShortcutKeys(shortcut.keys),
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: Colors.grey.shade600,
+                      fontFamily: 'monospace',
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          // 右侧：默认是开关；长按/进入编辑后显示排序把手
-          ReorderableDragStartListener(
-            index: shortcut.order - 1,
-            enabled: reorderMode,
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              child: Icon(
-                Icons.drag_handle,
-                color: reorderMode ? Colors.black54 : Colors.transparent,
+                ],
               ),
             ),
-          ),
-        ],
-      ),
+            // 右侧：默认是开关；长按/进入编辑后显示排序把手
+            ReorderableDragStartListener(
+              index: shortcut.order - 1,
+              enabled: reorderMode,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Icon(
+                  Icons.drag_handle,
+                  color: reorderMode ? Colors.black54 : Colors.transparent,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

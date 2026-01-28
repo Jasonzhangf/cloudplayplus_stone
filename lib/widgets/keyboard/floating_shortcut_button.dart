@@ -37,6 +37,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   final TextEditingController _systemKeyboardController =
       TextEditingController();
   String _lastSystemKeyboardValue = '';
+  bool _suppressSystemKeyboardOnChanged = false;
+
+  static const _modifierKeyCodes = <int>{
+    0xA0, // ShiftLeft
+    0xA1, // ShiftRight
+    0xA2, // ControlLeft
+    0xA3, // ControlRight
+    0xA4, // AltLeft
+    0xA5, // AltRight
+    0x5B, // MetaLeft
+    0x5C, // MetaRight
+  };
 
   @override
   void initState() {
@@ -75,6 +87,12 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         WebrtcService.currentRenderingSession?.inputController;
     if (inputController == null) return;
 
+    // Defensive: release any potentially "stuck" modifiers so special keys
+    // (Backspace/Arrows) don't turn into "delete all"/"jump" behaviors.
+    for (final code in _modifierKeyCodes) {
+      inputController.requestKeyEvent(code, false);
+    }
+
     // 按下所有按键
     for (final key in shortcut.keys) {
       final keyCode = _getKeyCodeFromString(key.keyCode);
@@ -90,6 +108,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         if (keyCode != null && keyCode != 0) {
           inputController.requestKeyEvent(keyCode, false);
         }
+      }
+      for (final code in _modifierKeyCodes) {
+        inputController.requestKeyEvent(code, false);
       }
     });
   }
@@ -327,6 +348,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       },
                       onChanged: (value) {
                         if (!_useSystemKeyboard) return;
+                        if (_suppressSystemKeyboardOnChanged) return;
                         final composing =
                             _systemKeyboardController.value.composing;
                         InputDebugService.instance.log(
@@ -364,6 +386,21 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                           }
                         }
                         _lastSystemKeyboardValue = delta.nextLastValue;
+
+                        // Keep the IME text client "small" so we don't accidentally
+                        // emit many backspaces when the local buffer diverges from remote state.
+                        final composingActive =
+                            composing.isValid && !composing.isCollapsed;
+                        if (!composingActive && value.isNotEmpty) {
+                          _suppressSystemKeyboardOnChanged = true;
+                          _systemKeyboardController.value =
+                              const TextEditingValue(
+                            text: '',
+                            selection: TextSelection.collapsed(offset: 0),
+                          );
+                          _lastSystemKeyboardValue = '';
+                          _suppressSystemKeyboardOnChanged = false;
+                        }
                       },
                       selectionControls: null,
                     ),
@@ -405,6 +442,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     return Material(
       elevation: 8,
       borderRadius: BorderRadius.circular(16),
+      clipBehavior: Clip.none,
       child: Container(
         height: 52,
         padding: const EdgeInsets.symmetric(horizontal: 6),
@@ -419,91 +457,132 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
             ),
           ],
         ),
-        child: Row(
+        child: Stack(
+          clipBehavior: Clip.none,
           children: [
-            IconButton(
-              icon: const Icon(Icons.settings),
-              onPressed: () {
-                showModalBottomSheet(
-                  context: context,
-                  isScrollControlled: true,
-                  builder: (_) => _ShortcutSettingsSheet(
-                    settings: _settings,
-                    onSettingsChanged: _handleSettingsChanged,
-                    sendComposingText: _sendComposingText,
-                    onSendComposingTextChanged: (v) =>
-                        setState(() => _sendComposingText = v),
-                  ),
-                );
-              },
-              iconSize: 18,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-              color: Colors.white.withValues(alpha: 0.92),
-            ),
-            const SizedBox(width: 4),
-            _ArrowRow(
-              left: left,
-              up: up,
-              down: down,
-              right: right,
-              onShortcutPressed: _handleShortcutPressed,
-            ),
-            const SizedBox(width: 6),
-            IconButton(
-              icon: Icon(
-                _useSystemKeyboard
-                    ? Icons.keyboard_alt_outlined
-                    : Icons.keyboard_outlined,
-              ),
-              tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
-              onPressed: () {
-                setState(() => _useSystemKeyboard = !_useSystemKeyboard);
-                if (_useSystemKeyboard) {
-                  ScreenController.setShowVirtualKeyboard(false);
-                  FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
-                  SystemChannels.textInput.invokeMethod('TextInput.show');
-                } else {
-                  SystemChannels.textInput.invokeMethod('TextInput.hide');
-                  FocusScope.of(context).unfocus();
-                  ScreenController.setShowVirtualKeyboard(true);
-                }
-              },
-              iconSize: 18,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-              color: Colors.white.withValues(alpha: 0.92),
-            ),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: ShortcutBar(
-                  settings: settingsWithoutArrows,
-                  onSettingsChanged: _handleSettingsChanged,
+            Row(
+              children: [
+                IconButton(
+                  icon: const Icon(Icons.settings),
+                  onPressed: () {
+                    showModalBottomSheet(
+                      context: context,
+                      isScrollControlled: true,
+                      builder: (_) => _ShortcutSettingsSheet(
+                        settings: _settings,
+                        onSettingsChanged: _handleSettingsChanged,
+                        sendComposingText: _sendComposingText,
+                        onSendComposingTextChanged: (v) =>
+                            setState(() => _sendComposingText = v),
+                      ),
+                    );
+                  },
+                  iconSize: 18,
+                  padding: const EdgeInsets.all(4),
+                  constraints:
+                      const BoxConstraints.tightFor(width: 30, height: 30),
+                  color: Colors.white.withValues(alpha: 0.92),
+                ),
+                const SizedBox(width: 4),
+                _ArrowRow(
+                  left: left,
+                  up: up,
+                  down: down,
+                  right: right,
                   onShortcutPressed: _handleShortcutPressed,
-                  showSettingsButton: false,
-                  showBackground: false,
-                  padding: EdgeInsets.zero,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Padding(
+                    // Reserve space so the top-right floating controls don't cover the scroller.
+                    padding: const EdgeInsets.only(right: 72),
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: ShortcutBar(
+                        settings: settingsWithoutArrows,
+                        onSettingsChanged: _handleSettingsChanged,
+                        onShortcutPressed: _handleShortcutPressed,
+                        showSettingsButton: false,
+                        showBackground: false,
+                        padding: EdgeInsets.zero,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            Positioned(
+              right: 4,
+              top: -18,
+              child: Material(
+                color: Colors.black.withValues(alpha: 0.78),
+                borderRadius: BorderRadius.circular(12),
+                child: Container(
+                  height: 30,
+                  padding: const EdgeInsets.symmetric(horizontal: 4),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.14),
+                      width: 1,
+                    ),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IconButton(
+                        icon: Icon(
+                          _useSystemKeyboard
+                              ? Icons.keyboard_alt_outlined
+                              : Icons.keyboard_outlined,
+                        ),
+                        tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
+                        onPressed: () {
+                          setState(
+                              () => _useSystemKeyboard = !_useSystemKeyboard);
+                          if (_useSystemKeyboard) {
+                            ScreenController.setShowVirtualKeyboard(false);
+                            FocusScope.of(context)
+                                .requestFocus(_systemKeyboardFocusNode);
+                            SystemChannels.textInput
+                                .invokeMethod('TextInput.show');
+                          } else {
+                            SystemChannels.textInput
+                                .invokeMethod('TextInput.hide');
+                            FocusScope.of(context).unfocus();
+                            ScreenController.setShowVirtualKeyboard(true);
+                          }
+                        },
+                        iconSize: 18,
+                        padding: const EdgeInsets.all(0),
+                        constraints: const BoxConstraints.tightFor(
+                            width: 26, height: 26),
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                      const SizedBox(width: 2),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        tooltip: '关闭快捷栏',
+                        onPressed: () {
+                          setState(() {
+                            _isPanelVisible = false;
+                          });
+                          ScreenController.setShowVirtualKeyboard(false);
+                          ScreenController.setShortcutOverlayHeight(0);
+                          FocusScope.of(context).unfocus();
+                          SystemChannels.textInput
+                              .invokeMethod('TextInput.hide');
+                        },
+                        iconSize: 18,
+                        padding: const EdgeInsets.all(0),
+                        constraints: const BoxConstraints.tightFor(
+                            width: 26, height: 26),
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 6),
-            IconButton(
-              icon: const Icon(Icons.close),
-              onPressed: () {
-                setState(() {
-                  _isPanelVisible = false;
-                });
-                ScreenController.setShowVirtualKeyboard(false);
-                ScreenController.setShortcutOverlayHeight(0);
-                FocusScope.of(context).unfocus();
-                SystemChannels.textInput.invokeMethod('TextInput.hide');
-              },
-              iconSize: 18,
-              padding: const EdgeInsets.all(4),
-              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-              color: Colors.white.withValues(alpha: 0.92),
             ),
           ],
         ),
@@ -575,18 +654,60 @@ class _ArrowRow extends StatelessWidget {
 }
 
 /// 设置面板（复用 shortcut_bar.dart 中的逻辑）
-class _ShortcutSettingsSheet extends StatelessWidget {
+class _ShortcutSettingsSheet extends StatefulWidget {
   final ShortcutSettings settings;
   final ValueChanged<ShortcutSettings> onSettingsChanged;
   final bool sendComposingText;
   final ValueChanged<bool> onSendComposingTextChanged;
 
   const _ShortcutSettingsSheet({
+    super.key,
     required this.settings,
     required this.onSettingsChanged,
     required this.sendComposingText,
     required this.onSendComposingTextChanged,
   });
+
+  @override
+  State<_ShortcutSettingsSheet> createState() => _ShortcutSettingsSheetState();
+}
+
+class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
+  late ShortcutSettings _settings;
+
+  @override
+  void initState() {
+    super.initState();
+    _settings = widget.settings;
+  }
+
+  void _updateSettings(ShortcutSettings s) {
+    setState(() => _settings = s);
+    widget.onSettingsChanged(s);
+  }
+
+  void _toggleEnabled(String id, bool enabled) {
+    final newShortcuts = _settings.shortcuts.map((s) {
+      if (s.id == id) return s.copyWith(enabled: enabled);
+      return s;
+    }).toList();
+    _updateSettings(_settings.copyWith(shortcuts: newShortcuts));
+  }
+
+  void _reorder(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex -= 1;
+      final items = List<ShortcutItem>.from(_settings.shortcuts);
+      final moved = items.removeAt(oldIndex);
+      items.insert(newIndex, moved);
+      final updated = <ShortcutItem>[];
+      for (int i = 0; i < items.length; i++) {
+        updated.add(items[i].copyWith(order: i + 1));
+      }
+      _settings = _settings.copyWith(shortcuts: updated);
+    });
+    widget.onSettingsChanged(_settings);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -607,8 +728,8 @@ class _ShortcutSettingsSheet extends StatelessWidget {
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('发送预编辑文本（中文输入时可能发送拼音）'),
-                  value: sendComposingText,
-                  onChanged: onSendComposingTextChanged,
+                  value: widget.sendComposingText,
+                  onChanged: widget.onSendComposingTextChanged,
                 ),
                 ValueListenableBuilder<bool>(
                   valueListenable: debug.enabled,
@@ -684,25 +805,29 @@ class _ShortcutSettingsSheet extends StatelessWidget {
           ),
           // 设置列表
           Expanded(
-            child: ListView(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              children: settings.shortcuts.map((shortcut) {
-                return SwitchListTile(
+            child: ReorderableListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              buildDefaultDragHandles: false,
+              onReorder: _reorder,
+              itemCount: _settings.shortcuts.length,
+              itemBuilder: (context, index) {
+                final shortcut = _settings.shortcuts[index];
+                return ListTile(
+                  key: ValueKey(shortcut.id),
+                  dense: true,
+                  leading: Checkbox(
+                    value: shortcut.enabled,
+                    onChanged: (v) => _toggleEnabled(shortcut.id, v ?? true),
+                  ),
                   title: Text(shortcut.label),
                   subtitle: Text(formatShortcutKeys(shortcut.keys)),
-                  value: shortcut.enabled,
-                  onChanged: (value) {
-                    final newShortcuts = settings.shortcuts.map((s) {
-                      if (s.id == shortcut.id) {
-                        return s.copyWith(enabled: value);
-                      }
-                      return s;
-                    }).toList();
-                    onSettingsChanged(
-                        settings.copyWith(shortcuts: newShortcuts));
-                  },
+                  trailing: ReorderableDragStartListener(
+                    index: index,
+                    child: const Icon(Icons.drag_handle),
+                  ),
+                  onTap: () => _toggleEnabled(shortcut.id, !shortcut.enabled),
                 );
-              }).toList(),
+              },
             ),
           ),
         ],
