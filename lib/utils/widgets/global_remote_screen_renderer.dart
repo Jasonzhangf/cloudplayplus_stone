@@ -498,9 +498,20 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   void _handleTwoFingerScroll(double deltaX, double deltaY) {
     if (!StreamingSettings.touchpadTwoFingerScroll) return;
     // 仅允许垂直滚动。
-    // 需求：双指上下滚动要模拟鼠标上下滚动，并且发送到“双指当前触摸的坐标处”。
-    // 做法：先把鼠标绝对位置移动到双指中心点（_pinchFocalPoint），再发送滚轮。
-    if (_pinchFocalPoint != null) {
+    // 需求：双指上下滚动要模拟鼠标上下滚动，并且滚轮注入点在左手指位置。
+    // 做法：移动鼠标到“两指中 X 更小的手指”处，再发送滚轮。
+    if (_touchpadPointers.length == 2) {
+      final positions = _touchpadPointers.values.toList();
+      final leftFinger =
+          (positions[0].dx <= positions[1].dx) ? positions[0] : positions[1];
+      final pos = _calculatePositionPercent(leftFinger);
+      if (pos != null) {
+        WebrtcService.currentRenderingSession?.inputController
+            ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
+                WebrtcService.currentRenderingSession!.screenId);
+      }
+    } else if (_pinchFocalPoint != null) {
+      // Fallback: use the two-finger center.
       final pos = _calculatePositionPercent(_pinchFocalPoint!);
       if (pos != null) {
         WebrtcService.currentRenderingSession?.inputController

@@ -23,6 +23,12 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   late ShortcutSettings _settings;
   bool _isPanelVisible = false;
   bool _useSystemKeyboard = true;
+  static const _arrowIds = {
+    'arrow-left',
+    'arrow-right',
+    'arrow-up',
+    'arrow-down'
+  };
   // Android 的很多输入法（含英文）会一直处于 composing 状态直到空格/回车，
   // 如果不发送 composing 文本，会表现为“只有空格能输入”。
   // 默认在 Android 开启；如需拼音/中文候选，可在面板里关闭。
@@ -211,6 +217,13 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     // Reserve bottom space so the remote video can be lifted above our toolbar + system keyboard.
     // Keep this in sync with the panel height/offset below.
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (_isPanelVisible &&
+          _useSystemKeyboard &&
+          !_systemKeyboardFocusNode.hasFocus) {
+        FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      }
       final inset = _isPanelVisible ? 60.0 : 0.0;
       ScreenController.setShortcutOverlayHeight(inset);
     });
@@ -364,11 +377,37 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 
   Widget _buildShortcutPanel(BuildContext context) {
+    ShortcutItem? left;
+    ShortcutItem? right;
+    ShortcutItem? up;
+    ShortcutItem? down;
+    for (final s in _settings.enabledShortcuts) {
+      switch (s.id) {
+        case 'arrow-left':
+          left = s;
+          break;
+        case 'arrow-right':
+          right = s;
+          break;
+        case 'arrow-up':
+          up = s;
+          break;
+        case 'arrow-down':
+          down = s;
+          break;
+      }
+    }
+
+    final settingsWithoutArrows = _settings.copyWith(
+      shortcuts:
+          _settings.shortcuts.where((s) => !_arrowIds.contains(s.id)).toList(),
+    );
     return Material(
       elevation: 8,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         height: 52,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(16),
@@ -380,105 +419,157 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
             ),
           ],
         ),
-        child: Stack(
+        child: Row(
           children: [
-            // Full-width shortcut scroller (pad so overlay buttons don't cover content).
-            Positioned.fill(
-              child: Padding(
-                padding: const EdgeInsets.only(left: 36, right: 72),
-                child: Center(
-                  child: ShortcutBar(
-                      settings: _settings,
-                      onSettingsChanged: _handleSettingsChanged,
-                      onShortcutPressed: _handleShortcutPressed,
-                      showSettingsButton: false,
-                      showBackground: false,
-                      padding: EdgeInsets.zero),
+            IconButton(
+              icon: const Icon(Icons.settings),
+              onPressed: () {
+                showModalBottomSheet(
+                  context: context,
+                  isScrollControlled: true,
+                  builder: (_) => _ShortcutSettingsSheet(
+                    settings: _settings,
+                    onSettingsChanged: _handleSettingsChanged,
+                    sendComposingText: _sendComposingText,
+                    onSendComposingTextChanged: (v) =>
+                        setState(() => _sendComposingText = v),
+                  ),
+                );
+              },
+              iconSize: 18,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+            const SizedBox(width: 4),
+            _ArrowRow(
+              left: left,
+              up: up,
+              down: down,
+              right: right,
+              onShortcutPressed: _handleShortcutPressed,
+            ),
+            const SizedBox(width: 6),
+            IconButton(
+              icon: Icon(
+                _useSystemKeyboard
+                    ? Icons.keyboard_alt_outlined
+                    : Icons.keyboard_outlined,
+              ),
+              tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
+              onPressed: () {
+                setState(() => _useSystemKeyboard = !_useSystemKeyboard);
+                if (_useSystemKeyboard) {
+                  ScreenController.setShowVirtualKeyboard(false);
+                  FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+                  SystemChannels.textInput.invokeMethod('TextInput.show');
+                } else {
+                  SystemChannels.textInput.invokeMethod('TextInput.hide');
+                  FocusScope.of(context).unfocus();
+                  ScreenController.setShowVirtualKeyboard(true);
+                }
+              },
+              iconSize: 18,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ShortcutBar(
+                  settings: settingsWithoutArrows,
+                  onSettingsChanged: _handleSettingsChanged,
+                  onShortcutPressed: _handleShortcutPressed,
+                  showSettingsButton: false,
+                  showBackground: false,
+                  padding: EdgeInsets.zero,
                 ),
               ),
             ),
-            // Settings button (top-left, overlayed).
-            Positioned(
-              left: 2,
-              top: 2,
-              child: IconButton(
-                icon: const Icon(Icons.settings),
-                onPressed: () {
-                  showModalBottomSheet(
-                    context: context,
-                    isScrollControlled: true,
-                    builder: (_) => _ShortcutSettingsSheet(
-                      settings: _settings,
-                      onSettingsChanged: _handleSettingsChanged,
-                      sendComposingText: _sendComposingText,
-                      onSendComposingTextChanged: (v) =>
-                          setState(() => _sendComposingText = v),
-                    ),
-                  );
-                },
-                iconSize: 18,
-                padding: const EdgeInsets.all(4),
-                constraints:
-                    const BoxConstraints.tightFor(width: 30, height: 30),
-                color: Colors.white.withValues(alpha: 0.92),
-              ),
-            ),
-            // Keyboard toggle + close button (top-right, overlayed).
-            Positioned(
-              right: 2,
-              top: 2,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    icon: Icon(
-                      _useSystemKeyboard
-                          ? Icons.keyboard_alt_outlined
-                          : Icons.keyboard_outlined,
-                    ),
-                    tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
-                    onPressed: () {
-                      setState(() => _useSystemKeyboard = !_useSystemKeyboard);
-                      if (_useSystemKeyboard) {
-                        ScreenController.setShowVirtualKeyboard(false);
-                        FocusScope.of(context)
-                            .requestFocus(_systemKeyboardFocusNode);
-                        SystemChannels.textInput.invokeMethod('TextInput.show');
-                      } else {
-                        SystemChannels.textInput.invokeMethod('TextInput.hide');
-                        FocusScope.of(context).unfocus();
-                        ScreenController.setShowVirtualKeyboard(true);
-                      }
-                    },
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(4),
-                    constraints:
-                        const BoxConstraints.tightFor(width: 30, height: 30),
-                    color: Colors.white.withValues(alpha: 0.92),
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () {
-                      setState(() {
-                        _isPanelVisible = false;
-                      });
-                      ScreenController.setShowVirtualKeyboard(false);
-                      ScreenController.setShortcutOverlayHeight(0);
-                      FocusScope.of(context).unfocus();
-                      SystemChannels.textInput.invokeMethod('TextInput.hide');
-                    },
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(4),
-                    constraints:
-                        const BoxConstraints.tightFor(width: 30, height: 30),
-                    color: Colors.white.withValues(alpha: 0.92),
-                  ),
-                ],
-              ),
+            const SizedBox(width: 6),
+            IconButton(
+              icon: const Icon(Icons.close),
+              onPressed: () {
+                setState(() {
+                  _isPanelVisible = false;
+                });
+                ScreenController.setShowVirtualKeyboard(false);
+                ScreenController.setShortcutOverlayHeight(0);
+                FocusScope.of(context).unfocus();
+                SystemChannels.textInput.invokeMethod('TextInput.hide');
+              },
+              iconSize: 18,
+              padding: const EdgeInsets.all(4),
+              constraints: const BoxConstraints.tightFor(width: 30, height: 30),
+              color: Colors.white.withValues(alpha: 0.92),
             ),
           ],
         ),
       ),
+    );
+  }
+}
+
+class _ArrowRow extends StatelessWidget {
+  final ShortcutItem? left;
+  final ShortcutItem? up;
+  final ShortcutItem? down;
+  final ShortcutItem? right;
+  final ValueChanged<ShortcutItem> onShortcutPressed;
+
+  const _ArrowRow({
+    required this.left,
+    required this.up,
+    required this.down,
+    required this.right,
+    required this.onShortcutPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    Widget buildKey(String label, ShortcutItem? shortcut) {
+      return InkWell(
+        onTap: shortcut == null ? null : () => onShortcutPressed(shortcut),
+        borderRadius: BorderRadius.circular(8),
+        child: Container(
+          width: 28,
+          height: 28,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.black.withValues(alpha: 0.65),
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(
+              color: Colors.white.withValues(alpha: 0.18),
+              width: 1,
+            ),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w700,
+              color: Colors.white.withValues(
+                alpha: shortcut == null ? 0.25 : 0.92,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        buildKey('←', left),
+        const SizedBox(width: 4),
+        buildKey('↑', up),
+        const SizedBox(width: 4),
+        buildKey('↓', down),
+        const SizedBox(width: 4),
+        buildKey('→', right),
+      ],
     );
   }
 }
