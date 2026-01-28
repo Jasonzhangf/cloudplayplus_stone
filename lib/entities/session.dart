@@ -136,6 +136,7 @@ class StreamingSession {
     selfSessionType = SelfSessionType.controller;
     screenId = StreamingSettings.targetScreenId!;
     await _lock.synchronized(() async {
+      _resetPingState();
       restartPingTimeoutTimer(10);
       controlled.connectionState.value =
           StreamingSessionConnectionState.connceting;
@@ -247,13 +248,17 @@ class StreamingSession {
           channel?.onMessage = (msg) {
             processDataChannelMessageFromHost(msg);
           };
+          _schedulePingKickoff(Uint8List.fromList([LP_PING, RP_PING]));
 
           channel?.onDataChannelState = (state) async {
             VLOG0(
                 '[WebRTC] dataChannelState: ${controlled.websocketSessionid} label=${channel?.label} state=$state');
             if (state == RTCDataChannelState.RTCDataChannelOpen) {
-              await channel?.send(RTCDataChannelMessage.fromBinary(
-                  Uint8List.fromList([LP_PING, RP_PING])));
+              if (!_pingKickoffSent) {
+                await channel?.send(RTCDataChannelMessage.fromBinary(
+                    Uint8List.fromList([LP_PING, RP_PING])));
+                _pingKickoffSent = true;
+              }
               if (StreamingSettings.streamAudio!) {
                 StreamingSettings.audioBitrate ??= 32;
                 audioBitrate = StreamingSettings.audioBitrate!;
@@ -383,6 +388,7 @@ class StreamingSession {
         _cursorPositionHookRegistered = true;
       }
       selfSessionType = SelfSessionType.controlled;
+      _resetPingState();
       restartPingTimeoutTimer(10);
       streamSettings = settings;
 
@@ -487,6 +493,7 @@ class StreamingSession {
         ..ordered = true;
       channel =
           await pc!.createDataChannel('userInput', reliableDataChannelDict);
+      _schedulePingKickoff(Uint8List.fromList([LP_PING, RP_PONG]));
 
       channel?.onMessage = (RTCDataChannelMessage msg) {
         if (!image_hooked && !AppPlatform.isWeb) {
@@ -693,7 +700,7 @@ class StreamingSession {
       //Another stop request was triggered. return.
       return;
     }
-    _pingTimeoutTimer?.cancel(); // 取消之前的Timer
+    _resetPingState();
     connectionState = StreamingSessionConnectionState.disconnecting;
 
     await _lock.synchronized(() async {
@@ -777,12 +784,54 @@ class StreamingSession {
   }
 
   Timer? _pingTimeoutTimer;
+  Timer? _pingKickoffTimer;
+  bool _pingKickoffSent = false;
+  bool _pingEverReceived = false;
+
+  void _resetPingState() {
+    _pingTimeoutTimer?.cancel();
+    _pingTimeoutTimer = null;
+    _pingKickoffTimer?.cancel();
+    _pingKickoffTimer = null;
+    _pingKickoffSent = false;
+    _pingEverReceived = false;
+  }
+
+  void _schedulePingKickoff(Uint8List payload) {
+    if (_pingKickoffSent || _pingEverReceived) return;
+    _pingKickoffTimer?.cancel();
+    int attempts = 0;
+    const maxAttempts = 80; // ~16s @ 200ms
+    const interval = Duration(milliseconds: 200);
+    _pingKickoffTimer = Timer.periodic(interval, (t) {
+      attempts++;
+      if (_pingKickoffSent || _pingEverReceived) {
+        t.cancel();
+        return;
+      }
+      final ch = channel;
+      if (ch == null) {
+        if (attempts >= maxAttempts) t.cancel();
+        return;
+      }
+      if (ch.state == RTCDataChannelState.RTCDataChannelOpen) {
+        ch.send(RTCDataChannelMessage.fromBinary(payload)).then((_) {
+          _pingKickoffSent = true;
+          t.cancel();
+        }).catchError((_) {
+          if (attempts >= maxAttempts) t.cancel();
+        });
+        return;
+      }
+      if (attempts >= maxAttempts) t.cancel();
+    });
+  }
 
   void restartPingTimeoutTimer(int second) {
     _pingTimeoutTimer?.cancel(); // 取消之前的Timer
     _pingTimeoutTimer = Timer(Duration(seconds: second), () {
       // 超过指定时间秒没收到pingpong，断开连接
-      VLOG0("No ping message received within 10 seconds, disconnecting...");
+      VLOG0("No ping message received within $second seconds, disconnecting...");
       close();
       if (selfSessionType == SelfSessionType.controller) {
         MessageBoxManager()
@@ -829,6 +878,7 @@ class StreamingSession {
       switch (message.binary[0]) {
         case LP_PING:
           if (message.binary.length == 2 && message.binary[1] == RP_PING) {
+            _pingEverReceived = true;
             restartPingTimeoutTimer(30);
             Timer(const Duration(seconds: 1), () {
               if (connectionState ==
@@ -927,6 +977,7 @@ class StreamingSession {
       switch (message.binary[0]) {
         case LP_PING:
           if (message.binary.length == 2 && message.binary[1] == RP_PONG) {
+            _pingEverReceived = true;
             restartPingTimeoutTimer(30);
             Timer(const Duration(seconds: 1), () {
               if (connectionState ==
