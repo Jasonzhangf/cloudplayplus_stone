@@ -40,6 +40,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
   @override
   void dispose() {
+    ScreenController.setShortcutOverlayHeight(0);
     _systemKeyboardFocusNode.dispose();
     _systemKeyboardController.dispose();
     _lastSystemKeyboardValue = '';
@@ -196,68 +197,82 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return Stack(
-      children: [
-        // 悬浮按钮：仅在面板隐藏时显示，避免遮挡视线（面板内自带关闭按钮）
-        if (!_isPanelVisible)
-          Positioned(
-            right: 16,
-            bottom: 16,
-            child: Material(
-              elevation: 4,
-              borderRadius: BorderRadius.circular(28),
-              child: InkWell(
-                onTap: () {
-                  setState(() => _isPanelVisible = true);
-                  // Default: show system soft keyboard.
-                  if (_useSystemKeyboard) {
-                    ScreenController.setShowVirtualKeyboard(false);
-                    FocusScope.of(context)
-                        .requestFocus(_systemKeyboardFocusNode);
-                    SystemChannels.textInput.invokeMethod('TextInput.show');
-                  } else {
-                    SystemChannels.textInput.invokeMethod('TextInput.hide');
-                    ScreenController.setShowVirtualKeyboard(true);
-                  }
-                },
-                borderRadius: BorderRadius.circular(28),
-                child: Container(
-                  width: 56,
-                  height: 56,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.75),
+    // Reserve bottom space so the remote video can be lifted above our toolbar + system keyboard.
+    // Keep this in sync with the panel height/offset below.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final inset = _isPanelVisible ? 60.0 : 0.0;
+      ScreenController.setShortcutOverlayHeight(inset);
+    });
+    return ValueListenableBuilder<double>(
+      valueListenable: ScreenController.virtualKeyboardOverlayHeight,
+      builder: (context, vkHeight, child) {
+        final bottom = bottomInset + vkHeight + 8;
+        return Stack(
+          children: [
+            // 悬浮按钮：仅在面板隐藏时显示，避免遮挡视线（面板内自带关闭按钮）
+            if (!_isPanelVisible)
+              Positioned(
+                right: 16,
+                bottom: 16,
+                child: Material(
+                  elevation: 4,
+                  borderRadius: BorderRadius.circular(28),
+                  child: InkWell(
+                    onTap: () {
+                      setState(() => _isPanelVisible = true);
+                      // Default: show system soft keyboard.
+                      if (_useSystemKeyboard) {
+                        ScreenController.setShowVirtualKeyboard(false);
+                        FocusScope.of(context)
+                            .requestFocus(_systemKeyboardFocusNode);
+                        SystemChannels.textInput
+                            .invokeMethod('TextInput.show');
+                      } else {
+                        SystemChannels.textInput
+                            .invokeMethod('TextInput.hide');
+                        ScreenController.setShowVirtualKeyboard(true);
+                      }
+                    },
                     borderRadius: BorderRadius.circular(28),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.18),
-                      width: 1,
-                    ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withOpacity(0.35),
-                        blurRadius: 8,
-                        offset: const Offset(0, 4),
+                    child: Container(
+                      width: 56,
+                      height: 56,
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.75),
+                        borderRadius: BorderRadius.circular(28),
+                        border: Border.all(
+                          color: Colors.white.withValues(alpha: 0.18),
+                          width: 1,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.35),
+                            blurRadius: 8,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: Icon(
-                    Icons.keyboard,
-                    color: Colors.white.withValues(alpha: 0.9),
-                    size: 28,
+                      child: Icon(
+                        Icons.keyboard,
+                        color: Colors.white.withValues(alpha: 0.9),
+                        size: 28,
+                      ),
+                    ),
                   ),
                 ),
               ),
-            ),
-          ),
-        // 快捷键面板
-        if (_isPanelVisible)
-          Positioned(
-            left: 12,
-            right: 12,
-            // Dock right above the system keyboard; no extra offset to avoid covering content.
-            bottom: (bottomInset > 0 ? bottomInset : 12) + 8,
-            child: _buildShortcutPanel(context),
-          ),
-      ],
+            // 快捷键面板
+            if (_isPanelVisible)
+              Positioned(
+                left: 12,
+                right: 12,
+                // Dock right above whichever keyboard is visible.
+                bottom: bottom > 0 ? bottom : 12,
+                child: _buildShortcutPanel(context),
+              ),
+          ],
+        );
+      },
     );
   }
 
@@ -269,7 +284,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       child: Container(
         constraints: BoxConstraints(
           maxWidth: MediaQuery.of(context).size.width - 24,
-          maxHeight: showVirtualKeyboard ? 64 : 120,
+          maxHeight: 52,
         ),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.7),
@@ -284,157 +299,107 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         ),
         child: Stack(
           children: [
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // 标题栏
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.55),
-                    borderRadius: const BorderRadius.only(
-                      topLeft: Radius.circular(16),
-                      topRight: Radius.circular(16),
-                    ),
+            Container(
+              height: 52,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                color: Colors.black.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(16),
+              ),
+              child: Row(
+                children: [
+                  IconButton(
+                    icon: const Icon(Icons.settings),
+                    onPressed: () {
+                      showModalBottomSheet(
+                        context: context,
+                        isScrollControlled: true,
+                        builder: (_) => _ShortcutSettingsSheet(
+                          settings: _settings,
+                          onSettingsChanged: _handleSettingsChanged,
+                        ),
+                      );
+                    },
+                    iconSize: 18,
+                    padding: const EdgeInsets.all(4),
+                    constraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 32),
+                    color: Colors.white.withValues(alpha: 0.92),
                   ),
-                  child: Row(
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.settings),
-                        onPressed: () {
-                          showModalBottomSheet(
-                            context: context,
-                            isScrollControlled: true,
-                            builder: (_) => _ShortcutSettingsSheet(
-                              settings: _settings,
-                              onSettingsChanged: _handleSettingsChanged,
-                            ),
-                          );
-                        },
-                        iconSize: 18,
-                        padding: const EdgeInsets.all(4),
-                        constraints:
-                            const BoxConstraints(minWidth: 32, minHeight: 32),
-                        color: Colors.white.withValues(alpha: 0.92),
-                      ),
-                      const Text(
-                        '快捷键',
-                        style: TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white,
-                        ),
-                      ),
-                      const Spacer(),
-                      if (_useSystemKeyboard)
-                        IconButton(
-                          icon: Icon(
-                            _sendComposingText
-                                ? Icons.text_fields
-                                : Icons.text_fields_outlined,
-                          ),
-                          tooltip: _sendComposingText
-                              ? '发送预编辑文本：开'
-                              : '发送预编辑文本：关',
-                          onPressed: () => setState(
-                              () => _sendComposingText = !_sendComposingText),
-                          iconSize: 18,
-                          padding: const EdgeInsets.all(4),
-                          constraints: const BoxConstraints(
-                              minWidth: 32, minHeight: 32),
-                          color: Colors.white.withValues(alpha: 0.92),
-                        ),
-                      SegmentedButton<bool>(
-                        segments: const [
-                          ButtonSegment<bool>(
-                            value: false,
-                            label: Text('电脑键盘'),
-                          ),
-                          ButtonSegment<bool>(
-                            value: true,
-                            label: Text('手机键盘'),
-                          ),
-                        ],
-                        selected: {_useSystemKeyboard},
-                        showSelectedIcon: false,
-                        style: ButtonStyle(
-                          backgroundColor: WidgetStateProperty.resolveWith(
-                            (states) => Colors.grey.shade200,
-                          ),
-                          foregroundColor: WidgetStateProperty.resolveWith(
-                            (states) => Colors.black87,
-                          ),
-                          overlayColor: WidgetStateProperty.all(
-                            Colors.black.withValues(alpha: 0.08),
-                          ),
-                          visualDensity: VisualDensity.compact,
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                          textStyle: WidgetStateProperty.all(
-                            const TextStyle(fontSize: 12),
-                          ),
-                          padding: WidgetStateProperty.all(
-                            const EdgeInsets.symmetric(
-                                horizontal: 6, vertical: 0),
-                          ),
-                        ),
-                        onSelectionChanged: (value) {
-                          final next = value.first;
-                          setState(() {
-                            _useSystemKeyboard = next;
-                          });
-                          if (!_isPanelVisible) return;
-                          if (_useSystemKeyboard) {
-                            ScreenController.setShowVirtualKeyboard(false);
-                            FocusScope.of(context)
-                                .requestFocus(_systemKeyboardFocusNode);
-                            SystemChannels.textInput
-                                .invokeMethod('TextInput.show');
-                          } else {
-                            SystemChannels.textInput
-                                .invokeMethod('TextInput.hide');
-                            FocusScope.of(context).unfocus();
-                            ScreenController.setShowVirtualKeyboard(true);
-                          }
-                        },
-                      ),
-                      const SizedBox(width: 6),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        onPressed: () {
-                          setState(() {
-                            _isPanelVisible = false;
-                          });
-                          ScreenController.setShowVirtualKeyboard(false);
-                          FocusScope.of(context).unfocus();
-                          SystemChannels.textInput
-                              .invokeMethod('TextInput.hide');
-                        },
-                        iconSize: 18,
-                        padding: const EdgeInsets.all(4),
-                        constraints:
-                            const BoxConstraints(minWidth: 32, minHeight: 32),
-                        color: Colors.white.withValues(alpha: 0.92),
-                      ),
-                    ],
-                  ),
-                ),
-                // 快捷键条：当内置 PC 键盘展开时隐藏，避免与键盘层叠。
-                if (!showVirtualKeyboard)
-                  Flexible(
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.horizontal,
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 6, vertical: 6),
+                  Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 6),
                       child: ShortcutBar(
                         settings: _settings,
                         onSettingsChanged: _handleSettingsChanged,
                         onShortcutPressed: _handleShortcutPressed,
+                        showSettingsButton: false,
+                        showBackground: false,
                       ),
                     ),
                   ),
-              ],
+                  if (_useSystemKeyboard)
+                    IconButton(
+                      icon: Icon(
+                        _sendComposingText
+                            ? Icons.text_fields
+                            : Icons.text_fields_outlined,
+                      ),
+                      tooltip: _sendComposingText ? '预编辑：开' : '预编辑：关',
+                      onPressed: () => setState(
+                          () => _sendComposingText = !_sendComposingText),
+                      iconSize: 18,
+                      padding: const EdgeInsets.all(4),
+                      constraints:
+                          const BoxConstraints(minWidth: 32, minHeight: 32),
+                      color: Colors.white.withValues(alpha: 0.92),
+                    ),
+                  IconButton(
+                    icon: Icon(
+                      _useSystemKeyboard
+                          ? Icons.keyboard_alt_outlined
+                          : Icons.keyboard_outlined,
+                    ),
+                    tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
+                    onPressed: () {
+                      setState(() => _useSystemKeyboard = !_useSystemKeyboard);
+                      if (_useSystemKeyboard) {
+                        ScreenController.setShowVirtualKeyboard(false);
+                        FocusScope.of(context)
+                            .requestFocus(_systemKeyboardFocusNode);
+                        SystemChannels.textInput.invokeMethod('TextInput.show');
+                      } else {
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        FocusScope.of(context).unfocus();
+                        ScreenController.setShowVirtualKeyboard(true);
+                      }
+                    },
+                    iconSize: 18,
+                    padding: const EdgeInsets.all(4),
+                    constraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 32),
+                    color: Colors.white.withValues(alpha: 0.92),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () {
+                      setState(() {
+                        _isPanelVisible = false;
+                      });
+                      ScreenController.setShowVirtualKeyboard(false);
+                      ScreenController.setShortcutOverlayHeight(0);
+                      FocusScope.of(context).unfocus();
+                      SystemChannels.textInput.invokeMethod('TextInput.hide');
+                    },
+                    iconSize: 18,
+                    padding: const EdgeInsets.all(4),
+                    constraints:
+                        const BoxConstraints(minWidth: 32, minHeight: 32),
+                    color: Colors.white.withValues(alpha: 0.92),
+                  ),
+                ],
+              ),
             ),
             // Offscreen text client for system keyboard input forwarding.
             if (_useSystemKeyboard)

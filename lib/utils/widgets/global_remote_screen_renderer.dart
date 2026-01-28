@@ -970,9 +970,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         valueListenable: ScreenController.showDetailUseScrollView,
         builder: (context, usescrollview, child) {
           if (!usescrollview) {
-            return Stack(
-              children: [
-                Listener(
+            final keyboardInset = MediaQuery.of(context).viewInsets.bottom;
+            return ValueListenableBuilder<double>(
+              valueListenable: ScreenController.bottomOverlayInset,
+              builder: (context, overlayInset, child) {
+                final bottomPad = keyboardInset + overlayInset;
+                return Stack(
+                  children: [
+                    Padding(
+                      padding: EdgeInsets.only(bottom: bottomPad),
+                      child: Stack(
+                        children: [
+                          Listener(
                   onPointerSignal: (PointerSignalEvent event) {
                     if (AppPlatform.isMobile) return;
                     if (event is PointerScrollEvent) {
@@ -1251,9 +1260,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 /*_hasAudio
                     ? RTCVideoView(WebrtcService.globalAudioRenderer!)
                     : Container(),*/
-                const OnScreenVirtualGamepad(),
-                const EnhancedKeyboardPanel(), // 放置在Stack中，独立于Listener和RawKeyboardListener,
-                const FloatingShortcutButton(),
                 _buildMiniMap(),
                 const Positioned(
                   top: 20,
@@ -1314,7 +1320,15 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                             ?.requestMouseClick(3, _rightButtonDown);
                       }
                     }),
-              ],
+                        ],
+                      ),
+                    ),
+                    const OnScreenVirtualGamepad(),
+                    const EnhancedKeyboardPanel(), // 放置在Stack中，独立于Listener和RawKeyboardListener,
+                    const FloatingShortcutButton(),
+                  ],
+                );
+              },
             );
           }
           return const SizedBox.shrink();

@@ -7,6 +7,15 @@ class ShortcutBar extends StatefulWidget {
   /// 快捷键设置
   final ShortcutSettings settings;
 
+  /// 是否显示“设置”按钮
+  final bool showSettingsButton;
+
+  /// 是否渲染背景容器（用于嵌入到其它工具栏中）
+  final bool showBackground;
+
+  /// 内容 padding（仅在 showBackground=true 时使用；否则由外部控制）
+  final EdgeInsetsGeometry padding;
+
   /// 设置变化回调
   final ValueChanged<ShortcutSettings> onSettingsChanged;
 
@@ -18,6 +27,9 @@ class ShortcutBar extends StatefulWidget {
     required this.settings,
     required this.onSettingsChanged,
     required this.onShortcutPressed,
+    this.showSettingsButton = true,
+    this.showBackground = true,
+    this.padding = const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
   });
 
   @override
@@ -68,6 +80,26 @@ class _ShortcutBarState extends State<ShortcutBar> {
       }
     }
 
+    final row = SingleChildScrollView(
+      controller: _scrollController,
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          if (widget.showSettingsButton) ...[
+            _buildSettingsButton(),
+            const SizedBox(width: 8),
+          ],
+          ..._buildShortcutButtonsWithArrows(
+            filteredShortcuts,
+            arrowShortcuts,
+            insertIndex,
+          ),
+        ],
+      ),
+    );
+
+    if (!widget.showBackground) return row;
+
     return Container(
       decoration: BoxDecoration(
         color: Colors.black.withValues(alpha: 0.75),
@@ -82,24 +114,8 @@ class _ShortcutBarState extends State<ShortcutBar> {
           ),
         ],
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
-      child: SingleChildScrollView(
-        controller: _scrollController,
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          children: [
-            // 设置按钮
-            _buildSettingsButton(),
-            const SizedBox(width: 8),
-            // 快捷键按钮列表
-            ..._buildShortcutButtonsWithArrows(
-              filteredShortcuts,
-              arrowShortcuts,
-              insertIndex,
-            ),
-          ],
-        ),
-      ),
+      padding: widget.padding,
+      child: row,
     );
   }
 

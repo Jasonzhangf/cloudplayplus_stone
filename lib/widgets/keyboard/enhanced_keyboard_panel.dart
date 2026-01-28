@@ -119,7 +119,12 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
     return ValueListenableBuilder<bool>(
       valueListenable: ScreenController.showVirtualKeyboard,
       builder: (context, showKeyboard, child) {
-        if (!showKeyboard) return const SizedBox();
+        if (!showKeyboard) {
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            ScreenController.setVirtualKeyboardOverlayHeight(0);
+          });
+          return const SizedBox();
+        }
 
         // When the built-in PC keyboard is shown, ensure system soft keyboard is hidden
         // to prevent layout overlap.
@@ -141,6 +146,10 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
             // 缩放后的尺寸
             double scaledWidth = originalWidth * scale;
             double scaledHeight = originalHeight * scale;
+
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              ScreenController.setVirtualKeyboardOverlayHeight(scaledHeight);
+            });
 
             return Align(
               alignment: Alignment.bottomCenter,

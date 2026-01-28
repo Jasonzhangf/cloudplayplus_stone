@@ -50,6 +50,34 @@ class ScreenController {
     }
   }
 
+  // Extra bottom inset reserved for in-app overlays (e.g. shortcut toolbar, in-app keyboard),
+  // used to lift the remote video so it won't be covered by input UIs.
+  static ValueNotifier<double> bottomOverlayInset = ValueNotifier(0);
+  static ValueNotifier<double> shortcutOverlayHeight = ValueNotifier(0);
+  static ValueNotifier<double> virtualKeyboardOverlayHeight = ValueNotifier(0);
+
+  static void _recomputeBottomOverlayInset() {
+    final next =
+        shortcutOverlayHeight.value + virtualKeyboardOverlayHeight.value;
+    if (bottomOverlayInset.value != next) {
+      bottomOverlayInset.value = next;
+    }
+  }
+
+  static void setShortcutOverlayHeight(double value) {
+    if (shortcutOverlayHeight.value != value) {
+      shortcutOverlayHeight.value = value;
+      _recomputeBottomOverlayInset();
+    }
+  }
+
+  static void setVirtualKeyboardOverlayHeight(double value) {
+    if (virtualKeyboardOverlayHeight.value != value) {
+      virtualKeyboardOverlayHeight.value = value;
+      _recomputeBottomOverlayInset();
+    }
+  }
+
   static ValueNotifier<bool> showVirtualGamePad = ValueNotifier(false);
   static void setshowVirtualGamePad(bool value) {
     if (showVirtualGamePad.value != value) {
