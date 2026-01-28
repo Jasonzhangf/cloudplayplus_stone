@@ -469,9 +469,20 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         double cumulativeCenterMovement =
             (center - _initialTwoFingerCenter!).distance;
 
-        if (cumulativeDistanceChangeRatio > 0.02) {
+        // Android 上双指容易出现轻微 pinch 抖动，导致误判为缩放；
+        // 这里偏向判定为滚动，除非缩放意图非常明显。
+        final zoomRatioThreshold = AppPlatform.isMobile ? 0.08 : 0.02;
+        final scrollMoveThreshold = AppPlatform.isMobile ? 10.0 : 15.0;
+        final zoomCenterMax = AppPlatform.isMobile ? 8.0 : 10.0;
+
+        if (cumulativeCenterMovement > scrollMoveThreshold &&
+            cumulativeDistanceChangeRatio < (zoomRatioThreshold * 0.75)) {
+          _twoFingerGestureType = TwoFingerGestureType.scroll;
+        } else if (cumulativeDistanceChangeRatio > zoomRatioThreshold &&
+            cumulativeCenterMovement < zoomCenterMax) {
           _twoFingerGestureType = TwoFingerGestureType.zoom;
-        } else if (cumulativeCenterMovement > 15) {
+        } else if (cumulativeCenterMovement > (scrollMoveThreshold * 1.8)) {
+          // 兜底：两指明显在移动时，按滚动处理。
           _twoFingerGestureType = TwoFingerGestureType.scroll;
         }
       }
