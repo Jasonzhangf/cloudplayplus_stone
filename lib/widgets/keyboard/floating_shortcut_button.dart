@@ -292,76 +292,68 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
           mainAxisSize: MainAxisSize.min,
           children: [
             // Hidden field to capture system keyboard input and forward to remote.
-            // Keep it 1x1 and offscreen for layout, but focusable.
+            // Keep it visually hidden, but large enough for IME to deliver composing/marked text
+            // reliably (some keyboards behave poorly with a 1x1 text client).
             SizedBox(
-              width: 1,
-              height: 1,
-              child: EditableText(
-                controller: _systemKeyboardController,
-                focusNode: _systemKeyboardFocusNode,
-                style: const TextStyle(fontSize: 1, color: Colors.transparent),
-                cursorColor: Colors.transparent,
-                backgroundCursorColor: Colors.transparent,
-                keyboardType: TextInputType.text,
-                textInputAction: TextInputAction.send,
-                maxLines: 1,
-                autocorrect: false,
-                enableSuggestions: false,
-                onSubmitted: (_) {
-                  if (!_useSystemKeyboard) return;
-                  final inputController =
-                      WebrtcService.currentRenderingSession?.inputController;
-                  if (inputController == null) return;
-                  // Map "enter/done" to VK_RETURN.
-                  inputController.requestKeyEvent(0x0D, true);
-                  inputController.requestKeyEvent(0x0D, false);
-                },
-                onChanged: (value) {
-                  if (!_useSystemKeyboard) return;
-                  final composing = _systemKeyboardController.value.composing;
-                  if (!_sendComposingText &&
-                      composing.isValid &&
-                      !composing.isCollapsed) {
-                    return;
-                  }
-                  final inputController =
-                      WebrtcService.currentRenderingSession?.inputController;
-                  if (inputController == null) return;
-
-                  final delta = computeSystemKeyboardDelta(
-                    lastValue: _lastSystemKeyboardValue,
-                    currentValue: value,
-                    preferTextForNonAscii: true,
-                  );
-                  for (final op in delta.ops) {
-                    switch (op.type) {
-                      case InputOpType.text:
-                        inputController.requestTextInput(op.text);
-                        break;
-                      case InputOpType.key:
-                        // Map ASCII rune to VK with shift handling if possible
-                        final rune = op.keyCode;
-                        if (rune == 0x08) {
-                          inputController.requestKeyEvent(0x08, op.isDown);
-                          break;
-                        }
-                        final vkCode = _vkFromRune(rune);
-                        if (vkCode == null) break;
-                        final needsShift = _needsShiftForRune(rune);
-                        if (needsShift && op.isDown) {
-                          inputController.requestKeyEvent(0xA0, true);
-                        }
-                        inputController.requestKeyEvent(vkCode, op.isDown);
-                        if (needsShift && !op.isDown) {
-                          inputController.requestKeyEvent(0xA0, false);
-                        }
-                        break;
+              width: 220,
+              height: 44,
+              child: Opacity(
+                opacity: 0.0,
+                child: EditableText(
+                  controller: _systemKeyboardController,
+                  focusNode: _systemKeyboardFocusNode,
+                  style: const TextStyle(fontSize: 16, color: Colors.transparent),
+                  cursorColor: Colors.transparent,
+                  backgroundCursorColor: Colors.transparent,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.send,
+                  maxLines: 1,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  onSubmitted: (_) {
+                    if (!_useSystemKeyboard) return;
+                    final inputController =
+                        WebrtcService.currentRenderingSession?.inputController;
+                    if (inputController == null) return;
+                    // Map "enter/done" to VK_RETURN.
+                    inputController.requestKeyEvent(0x0D, true);
+                    inputController.requestKeyEvent(0x0D, false);
+                  },
+                  onChanged: (value) {
+                    if (!_useSystemKeyboard) return;
+                    final composing = _systemKeyboardController.value.composing;
+                    if (!_sendComposingText &&
+                        composing.isValid &&
+                        !composing.isCollapsed) {
+                      return;
                     }
-                  }
-                  _lastSystemKeyboardValue = delta.nextLastValue;
-                },
-                // Prevent showing anything; selection isn't used.
-                selectionControls: null,
+                    final inputController =
+                        WebrtcService.currentRenderingSession?.inputController;
+                    if (inputController == null) return;
+
+                    final delta = computeSystemKeyboardDelta(
+                      lastValue: _lastSystemKeyboardValue,
+                      currentValue: value,
+                      preferTextForNonAscii: true,
+                      // Even ASCII is sent as text so macOS can inject reliably via unicode typing.
+                      preferTextForAscii: true,
+                    );
+                    for (final op in delta.ops) {
+                      switch (op.type) {
+                        case InputOpType.text:
+                          inputController.requestTextInput(op.text);
+                          break;
+                        case InputOpType.key:
+                          // Only used for backspace in current delta encoder.
+                          inputController.requestKeyEvent(op.keyCode, op.isDown);
+                          break;
+                      }
+                    }
+                    _lastSystemKeyboardValue = delta.nextLastValue;
+                  },
+                  // Prevent showing anything; selection isn't used.
+                  selectionControls: null,
+                ),
               ),
             ),
             if (_isPanelVisible)

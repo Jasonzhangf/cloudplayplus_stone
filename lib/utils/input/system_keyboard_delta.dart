@@ -35,6 +35,7 @@ SystemKeyboardDeltaResult computeSystemKeyboardDelta({
   required String lastValue,
   required String currentValue,
   required bool preferTextForNonAscii,
+  bool preferTextForAscii = false,
 }) {
   if (currentValue == lastValue) {
     return SystemKeyboardDeltaResult(nextLastValue: lastValue, ops: const []);
@@ -56,7 +57,7 @@ SystemKeyboardDeltaResult computeSystemKeyboardDelta({
     final appended = currentValue.substring(lastValue.length);
     return SystemKeyboardDeltaResult(
       nextLastValue: currentValue,
-      ops: _encodeText(appended, preferTextForNonAscii),
+      ops: _encodeText(appended, preferTextForNonAscii, preferTextForAscii),
     );
   }
 
@@ -66,14 +67,17 @@ SystemKeyboardDeltaResult computeSystemKeyboardDelta({
     ops.add(const InputOp.key(0x08, true));
     ops.add(const InputOp.key(0x08, false));
   }
-  ops.addAll(_encodeText(currentValue, preferTextForNonAscii));
+  ops.addAll(_encodeText(currentValue, preferTextForNonAscii, preferTextForAscii));
   return SystemKeyboardDeltaResult(nextLastValue: currentValue, ops: ops);
 }
 
-List<InputOp> _encodeText(String text, bool preferTextForNonAscii) {
+List<InputOp> _encodeText(String text, bool preferTextForNonAscii, bool preferTextForAscii) {
   if (text.isEmpty) return const [];
   final hasNonAscii = text.runes.any((r) => r > 0x7F);
   if (hasNonAscii && preferTextForNonAscii) {
+    return [InputOp.text(text)];
+  }
+  if (!hasNonAscii && preferTextForAscii) {
     return [InputOp.text(text)];
   }
   // ASCII only: emit per-char key ops with down/up.
@@ -85,4 +89,3 @@ List<InputOp> _encodeText(String text, bool preferTextForNonAscii) {
   }
   return ops;
 }
-
