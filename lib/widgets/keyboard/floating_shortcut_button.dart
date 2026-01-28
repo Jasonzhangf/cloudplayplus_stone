@@ -7,6 +7,7 @@ import '../../services/webrtc_service.dart';
 import '../../controller/screen_controller.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/system_keyboard_delta.dart';
+import '../../utils/input/input_debug.dart';
 
 /// 悬浮快捷键按钮 - 固定在右下角
 /// 点击打开快捷键面板和快捷键条
@@ -299,61 +300,55 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         ),
         child: Stack(
           children: [
-            Container(
-              height: 52,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              decoration: BoxDecoration(
-                color: Colors.black.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(16),
+            // Full-width shortcut scroller.
+            Positioned.fill(
+              child: Padding(
+                padding: const EdgeInsets.only(left: 40, right: 84),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: ShortcutBar(
+                    settings: _settings,
+                    onSettingsChanged: _handleSettingsChanged,
+                    onShortcutPressed: _handleShortcutPressed,
+                    showSettingsButton: false,
+                    showBackground: false,
+                    padding: EdgeInsets.zero,
+                  ),
+                ),
               ),
+            ),
+            // Settings button (top-left, overlayed).
+            Positioned(
+              left: 2,
+              top: 2,
+              child: IconButton(
+                icon: const Icon(Icons.settings),
+                onPressed: () {
+                  showModalBottomSheet(
+                    context: context,
+                    isScrollControlled: true,
+                    builder: (_) => _ShortcutSettingsSheet(
+                      settings: _settings,
+                      onSettingsChanged: _handleSettingsChanged,
+                      sendComposingText: _sendComposingText,
+                      onSendComposingTextChanged: (v) =>
+                          setState(() => _sendComposingText = v),
+                    ),
+                  );
+                },
+                iconSize: 18,
+                padding: const EdgeInsets.all(4),
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                color: Colors.white.withValues(alpha: 0.92),
+              ),
+            ),
+            // Keyboard toggle + close button (top-right, overlayed).
+            Positioned(
+              right: 2,
+              top: 2,
               child: Row(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  IconButton(
-                    icon: const Icon(Icons.settings),
-                    onPressed: () {
-                      showModalBottomSheet(
-                        context: context,
-                        isScrollControlled: true,
-                        builder: (_) => _ShortcutSettingsSheet(
-                          settings: _settings,
-                          onSettingsChanged: _handleSettingsChanged,
-                        ),
-                      );
-                    },
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(4),
-                    constraints:
-                        const BoxConstraints(minWidth: 32, minHeight: 32),
-                    color: Colors.white.withValues(alpha: 0.92),
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 6),
-                      child: ShortcutBar(
-                        settings: _settings,
-                        onSettingsChanged: _handleSettingsChanged,
-                        onShortcutPressed: _handleShortcutPressed,
-                        showSettingsButton: false,
-                        showBackground: false,
-                      ),
-                    ),
-                  ),
-                  if (_useSystemKeyboard)
-                    IconButton(
-                      icon: Icon(
-                        _sendComposingText
-                            ? Icons.text_fields
-                            : Icons.text_fields_outlined,
-                      ),
-                      tooltip: _sendComposingText ? '预编辑：开' : '预编辑：关',
-                      onPressed: () => setState(
-                          () => _sendComposingText = !_sendComposingText),
-                      iconSize: 18,
-                      padding: const EdgeInsets.all(4),
-                      constraints:
-                          const BoxConstraints(minWidth: 32, minHeight: 32),
-                      color: Colors.white.withValues(alpha: 0.92),
-                    ),
                   IconButton(
                     icon: Icon(
                       _useSystemKeyboard
@@ -380,7 +375,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                         const BoxConstraints(minWidth: 32, minHeight: 32),
                     color: Colors.white.withValues(alpha: 0.92),
                   ),
-                  const SizedBox(width: 4),
                   IconButton(
                     icon: const Icon(Icons.close),
                     onPressed: () {
@@ -435,9 +429,13 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       if (!_useSystemKeyboard) return;
                       final composing =
                           _systemKeyboardController.value.composing;
+                      InputDebugService.instance.log(
+                          'IME onChanged len=${value.length} composing=${composing.isValid ? "${composing.start}-${composing.end}" : "invalid"}');
                       if (!_sendComposingText &&
                           composing.isValid &&
                           !composing.isCollapsed) {
+                        InputDebugService.instance.log(
+                            'IME composing active -> dropped (toggle to send composing)');
                         return;
                       }
                       final inputController = WebrtcService
@@ -451,6 +449,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                         // Even ASCII is sent as text so macOS can inject reliably via unicode typing.
                         preferTextForAscii: true,
                       );
+                      InputDebugService.instance.log(
+                          'IME delta ops=${delta.ops.length} lastLen=${_lastSystemKeyboardValue.length} -> curLen=${value.length}');
                       for (final op in delta.ops) {
                         switch (op.type) {
                           case InputOpType.text:
@@ -480,14 +480,19 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 class _ShortcutSettingsSheet extends StatelessWidget {
   final ShortcutSettings settings;
   final ValueChanged<ShortcutSettings> onSettingsChanged;
+  final bool sendComposingText;
+  final ValueChanged<bool> onSendComposingTextChanged;
 
   const _ShortcutSettingsSheet({
     required this.settings,
     required this.onSettingsChanged,
+    required this.sendComposingText,
+    required this.onSendComposingTextChanged,
   });
 
   @override
   Widget build(BuildContext context) {
+    final debug = InputDebugService.instance;
     return Container(
       height: MediaQuery.of(context).size.height * 0.7,
       decoration: const BoxDecoration(
@@ -496,6 +501,59 @@ class _ShortcutSettingsSheet extends StatelessWidget {
       ),
       child: Column(
         children: [
+          // 输入相关开关/调试
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16),
+            child: Column(
+              children: [
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('发送预编辑文本（中文输入时可能发送拼音）'),
+                  value: sendComposingText,
+                  onChanged: onSendComposingTextChanged,
+                ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: debug.enabled,
+                  builder: (context, enabled, child) {
+                    return SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('开启输入调试日志（本机）'),
+                      value: enabled,
+                      onChanged: (v) => debug.enabled.value = v,
+                    );
+                  },
+                ),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          final text = debug.dump();
+                          Clipboard.setData(ClipboardData(text: text));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('已复制调试日志到剪贴板')),
+                          );
+                        },
+                        child: const Text('复制调试日志'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () {
+                          debug.clear();
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(content: Text('已清空调试日志')),
+                          );
+                        },
+                        child: const Text('清空调试日志'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
           // 拖动指示器
           Container(
             margin: const EdgeInsets.only(top: 8),

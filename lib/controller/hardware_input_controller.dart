@@ -22,6 +22,7 @@ import '../entities/messages.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:gamepads/gamepads.dart';
 import 'package:cloudplayplus/utils/input/coordinate_mapping.dart';
+import 'package:cloudplayplus/utils/input/input_debug.dart';
 
 typedef CursorUpdatedCallback = void Function(MouseCursor newcursor);
 
@@ -534,6 +535,8 @@ class InputController {
 
   void requestKeyEvent(int? keyCode, bool isDown) async {
     if (keyCode == null) return;
+    InputDebugService.instance.log(
+        'OUT keyEvent code=$keyCode ${isDown ? "down" : "up"} state=${channel.state}');
     // VLOG0("sending key event code {$keyCode} isDown {$isDown}");
     // 创建一个 ByteData 足够存储 LP_MOUSEBUTTON, buttonId, isDown
     ByteData byteData = ByteData(3);
@@ -595,6 +598,9 @@ class InputController {
   /// This uses RTCDataChannel *text* message so host can decode as UTF-8 string.
   void requestTextInput(String text) {
     if (text.isEmpty) return;
+    final preview = text.length > 80 ? '${text.substring(0, 80)}…' : text;
+    InputDebugService.instance
+        .log('OUT textInput len=${text.length} "$preview" state=${channel.state}');
     final mapData = {
       'textInput': {
         'text': text,
