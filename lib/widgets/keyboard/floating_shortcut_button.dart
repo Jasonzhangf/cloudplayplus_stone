@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
 import '../../models/shortcut.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
@@ -21,6 +22,10 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   late ShortcutSettings _settings;
   bool _isPanelVisible = false;
   bool _useSystemKeyboard = true;
+  // Android 的很多输入法（含英文）会一直处于 composing 状态直到空格/回车，
+  // 如果不发送 composing 文本，会表现为“只有空格能输入”。
+  // 默认在 Android 开启；如需拼音/中文候选，可在面板里关闭。
+  bool _sendComposingText = defaultTargetPlatform == TargetPlatform.android;
   final FocusNode _systemKeyboardFocusNode = FocusNode();
   final TextEditingController _systemKeyboardController =
       TextEditingController();
@@ -136,6 +141,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     0x20: (vkCode: 0x20, needsShift: false), // Space
     0x08: (vkCode: 0x08, needsShift: false), // Backspace
     0x0D: (vkCode: 0x0D, needsShift: false), // Enter
+    0x0A: (vkCode: 0x0D, needsShift: false), // LF -> Enter (some IMEs insert '\n')
     0x09: (vkCode: 0x09, needsShift: false), // Tab
 
     // Shifted number symbols
@@ -297,10 +303,25 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 cursorColor: Colors.transparent,
                 backgroundCursorColor: Colors.transparent,
                 keyboardType: TextInputType.text,
+                textInputAction: TextInputAction.send,
+                maxLines: 1,
+                autocorrect: false,
+                enableSuggestions: false,
+                onSubmitted: (_) {
+                  if (!_useSystemKeyboard) return;
+                  final inputController =
+                      WebrtcService.currentRenderingSession?.inputController;
+                  if (inputController == null) return;
+                  // Map "enter/done" to VK_RETURN.
+                  inputController.requestKeyEvent(0x0D, true);
+                  inputController.requestKeyEvent(0x0D, false);
+                },
                 onChanged: (value) {
                   if (!_useSystemKeyboard) return;
                   final composing = _systemKeyboardController.value.composing;
-                  if (composing.isValid && !composing.isCollapsed) {
+                  if (!_sendComposingText &&
+                      composing.isValid &&
+                      !composing.isCollapsed) {
                     return;
                   }
                   final inputController =
@@ -343,6 +364,14 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 selectionControls: null,
               ),
             ),
+            if (_isPanelVisible)
+              SwitchListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                title: const Text('发送预编辑文本（可能影响中文输入）'),
+                value: _sendComposingText,
+                onChanged: (v) => setState(() => _sendComposingText = v),
+              ),
             // 标题栏
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
