@@ -62,6 +62,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 
   void _handleShortcutPressed(ShortcutItem shortcut) {
+    final keys = shortcut.keys.map((k) => k.keyCode).join('+');
+    InputDebugService.instance
+        .log('UI shortcutPressed id=${shortcut.id} keys=$keys');
     final inputController =
         WebrtcService.currentRenderingSession?.inputController;
     if (inputController == null) return;
@@ -147,44 +150,47 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     0x20: (vkCode: 0x20, needsShift: false), // Space
     0x08: (vkCode: 0x08, needsShift: false), // Backspace
     0x0D: (vkCode: 0x0D, needsShift: false), // Enter
-    0x0A: (vkCode: 0x0D, needsShift: false), // LF -> Enter (some IMEs insert '\n')
+    0x0A: (
+      vkCode: 0x0D,
+      needsShift: false
+    ), // LF -> Enter (some IMEs insert '\n')
     0x09: (vkCode: 0x09, needsShift: false), // Tab
 
     // Shifted number symbols
-    0x21: (vkCode: 0x31, needsShift: true),  // !
-    0x40: (vkCode: 0x32, needsShift: true),  // @
-    0x23: (vkCode: 0x33, needsShift: true),  // #
-    0x24: (vkCode: 0x34, needsShift: true),  // $
-    0x25: (vkCode: 0x35, needsShift: true),  // %
-    0x5E: (vkCode: 0x36, needsShift: true),  // ^
-    0x26: (vkCode: 0x37, needsShift: true),  // &
-    0x2A: (vkCode: 0x38, needsShift: true),  // *
-    0x28: (vkCode: 0x39, needsShift: true),  // (
-    0x29: (vkCode: 0x30, needsShift: true),  // )
+    0x21: (vkCode: 0x31, needsShift: true), // !
+    0x40: (vkCode: 0x32, needsShift: true), // @
+    0x23: (vkCode: 0x33, needsShift: true), // #
+    0x24: (vkCode: 0x34, needsShift: true), // $
+    0x25: (vkCode: 0x35, needsShift: true), // %
+    0x5E: (vkCode: 0x36, needsShift: true), // ^
+    0x26: (vkCode: 0x37, needsShift: true), // &
+    0x2A: (vkCode: 0x38, needsShift: true), // *
+    0x28: (vkCode: 0x39, needsShift: true), // (
+    0x29: (vkCode: 0x30, needsShift: true), // )
 
     // OEM keys (US layout)
     0x2D: (vkCode: 0xBD, needsShift: false), // -
-    0x5F: (vkCode: 0xBD, needsShift: true),  // _
+    0x5F: (vkCode: 0xBD, needsShift: true), // _
     0x3D: (vkCode: 0xBB, needsShift: false), // =
-    0x2B: (vkCode: 0xBB, needsShift: true),  // +
+    0x2B: (vkCode: 0xBB, needsShift: true), // +
     0x5B: (vkCode: 0xDB, needsShift: false), // [
-    0x7B: (vkCode: 0xDB, needsShift: true),  // {
+    0x7B: (vkCode: 0xDB, needsShift: true), // {
     0x5D: (vkCode: 0xDD, needsShift: false), // ]
-    0x7D: (vkCode: 0xDD, needsShift: true),  // }
+    0x7D: (vkCode: 0xDD, needsShift: true), // }
     0x5C: (vkCode: 0xDC, needsShift: false), // \
-    0x7C: (vkCode: 0xDC, needsShift: true),  // |
+    0x7C: (vkCode: 0xDC, needsShift: true), // |
     0x3B: (vkCode: 0xBA, needsShift: false), // ;
-    0x3A: (vkCode: 0xBA, needsShift: true),  // :
+    0x3A: (vkCode: 0xBA, needsShift: true), // :
     0x27: (vkCode: 0xDE, needsShift: false), // '
-    0x22: (vkCode: 0xDE, needsShift: true),  // "
+    0x22: (vkCode: 0xDE, needsShift: true), // "
     0x60: (vkCode: 0xC0, needsShift: false), // `
-    0x7E: (vkCode: 0xC0, needsShift: true),  // ~
+    0x7E: (vkCode: 0xC0, needsShift: true), // ~
     0x2C: (vkCode: 0xBC, needsShift: false), // ,
-    0x3C: (vkCode: 0xBC, needsShift: true),  // <
+    0x3C: (vkCode: 0xBC, needsShift: true), // <
     0x2E: (vkCode: 0xBE, needsShift: false), // .
-    0x3E: (vkCode: 0xBE, needsShift: true),  // >
+    0x3E: (vkCode: 0xBE, needsShift: true), // >
     0x2F: (vkCode: 0xBF, needsShift: false), // /
-    0x3F: (vkCode: 0xBF, needsShift: true),  // ?
+    0x3F: (vkCode: 0xBF, needsShift: true), // ?
   };
 
   int? _vkFromRune(int rune) {
@@ -195,7 +201,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
   bool _needsShiftForRune(int rune) {
     if (rune >= 0x61 && rune <= 0x7A) return false; // a-z
-    if (rune >= 0x41 && rune <= 0x5A) return true;  // A-Z
+    if (rune >= 0x41 && rune <= 0x5A) return true; // A-Z
     return _asciiToVkMap[rune]?.needsShift ?? false;
   }
 
@@ -230,11 +236,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                         ScreenController.setShowVirtualKeyboard(false);
                         FocusScope.of(context)
                             .requestFocus(_systemKeyboardFocusNode);
-                        SystemChannels.textInput
-                            .invokeMethod('TextInput.show');
+                        SystemChannels.textInput.invokeMethod('TextInput.show');
                       } else {
-                        SystemChannels.textInput
-                            .invokeMethod('TextInput.hide');
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
                         ScreenController.setShowVirtualKeyboard(true);
                       }
                     },
@@ -269,8 +273,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
             // 快捷键面板
             if (_isPanelVisible)
               Positioned(
-                left: 12,
-                right: 12,
+                left: 8,
+                right: 8,
                 // Dock right above whichever keyboard is visible.
                 bottom: bottom > 0 ? bottom : 12,
                 child: _buildShortcutPanel(context),
@@ -360,15 +364,11 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 
   Widget _buildShortcutPanel(BuildContext context) {
-    final showVirtualKeyboard = ScreenController.showVirtualKeyboard.value;
     return Material(
       elevation: 8,
       borderRadius: BorderRadius.circular(16),
       child: Container(
-        constraints: BoxConstraints(
-          maxWidth: MediaQuery.of(context).size.width - 24,
-          maxHeight: 52,
-        ),
+        height: 52,
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(16),
@@ -382,20 +382,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         ),
         child: Stack(
           children: [
-            // Full-width shortcut scroller.
+            // Full-width shortcut scroller (pad so overlay buttons don't cover content).
             Positioned.fill(
               child: Padding(
-                padding: const EdgeInsets.only(left: 40, right: 84),
-                child: Align(
-                  alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.only(left: 36, right: 72),
+                child: Center(
                   child: ShortcutBar(
-                    settings: _settings,
-                    onSettingsChanged: _handleSettingsChanged,
-                    onShortcutPressed: _handleShortcutPressed,
-                    showSettingsButton: false,
-                    showBackground: false,
-                    padding: EdgeInsets.zero,
-                  ),
+                      settings: _settings,
+                      onSettingsChanged: _handleSettingsChanged,
+                      onShortcutPressed: _handleShortcutPressed,
+                      showSettingsButton: false,
+                      showBackground: false,
+                      padding: EdgeInsets.zero),
                 ),
               ),
             ),
@@ -420,7 +418,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 },
                 iconSize: 18,
                 padding: const EdgeInsets.all(4),
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints:
+                    const BoxConstraints.tightFor(width: 30, height: 30),
                 color: Colors.white.withValues(alpha: 0.92),
               ),
             ),
@@ -454,7 +453,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     iconSize: 18,
                     padding: const EdgeInsets.all(4),
                     constraints:
-                        const BoxConstraints(minWidth: 32, minHeight: 32),
+                        const BoxConstraints.tightFor(width: 30, height: 30),
                     color: Colors.white.withValues(alpha: 0.92),
                   ),
                   IconButton(
@@ -471,7 +470,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     iconSize: 18,
                     padding: const EdgeInsets.all(4),
                     constraints:
-                        const BoxConstraints(minWidth: 32, minHeight: 32),
+                        const BoxConstraints.tightFor(width: 30, height: 30),
                     color: Colors.white.withValues(alpha: 0.92),
                   ),
                 ],
@@ -608,7 +607,8 @@ class _ShortcutSettingsSheet extends StatelessWidget {
                       }
                       return s;
                     }).toList();
-                    onSettingsChanged(settings.copyWith(shortcuts: newShortcuts));
+                    onSettingsChanged(
+                        settings.copyWith(shortcuts: newShortcuts));
                   },
                 );
               }).toList(),
