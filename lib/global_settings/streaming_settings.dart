@@ -48,12 +48,12 @@ class StreamingSettings {
   static int? targetScreenId;
   static String? connectPassword;
 
-   // Desktop source selection
-   static String? desktopSourceId; // Source ID from getSources()
-   static String? sourceType; // 'screen' or 'window'
+  // Desktop source selection
+  static String? desktopSourceId; // Source ID from getSources()
+  static String? sourceType; // 'screen' or 'window'
 
-   static int? windowId;
-   static Map<String, double>? windowFrame;
+  static int? windowId;
+  static Map<String, double>? windowFrame;
 
   static bool revertCursorWheel = false;
   static bool autoHideLocalCursor = true;
@@ -74,6 +74,7 @@ class StreamingSettings {
   // 触控板手势开关
   static bool touchpadTwoFingerScroll = true; // 双指滚动
   static bool touchpadTwoFingerZoom = true; // 双指缩放
+  static double touchpadTwoFingerScrollSpeed = 1.0; // 双指滚动速度倍率
 
   // 指针缩放倍率
   static double cursorScale = 50.0;
@@ -178,6 +179,9 @@ class StreamingSettings {
         SharedPreferencesManager.getBool('touchpadTwoFingerScroll') ?? true;
     touchpadTwoFingerZoom =
         SharedPreferencesManager.getBool('touchpadTwoFingerZoom') ?? true;
+    touchpadTwoFingerScrollSpeed =
+        SharedPreferencesManager.getDouble('touchpadTwoFingerScrollSpeed') ??
+            1.0;
 
     if (AppPlatform.isDeskTop) {
       useClipBoard = SharedPreferencesManager.getBool('useClipBoard') ?? true;

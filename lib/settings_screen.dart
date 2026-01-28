@@ -1071,6 +1071,7 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
   double _touchpadSensitivityLocked = 10.0; // 鼠标锁定状态下的移动灵敏度
   bool _touchpadTwoFingerScroll = true; // 双指滚动
   bool _touchpadTwoFingerZoom = true; // 双指缩放
+  double _touchpadTwoFingerScrollSpeed = 1.0; // 双指滚动速度倍率
   double _cursorScale = 50.0;
   final List<double> _scaleValues = [
     12.5,
@@ -1111,6 +1112,17 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
     20.0,
     30.0,
     40.0
+  ];
+  final List<double> _twoFingerScrollSpeedValues = [
+    0.25,
+    0.5,
+    0.75,
+    1.0,
+    1.25,
+    1.5,
+    2.0,
+    3.0,
+    4.0,
   ];
 
   // 将实际值映射到滑块位置（0-1之间）
@@ -1169,6 +1181,23 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
     return _sensitivityLockedValues[index];
   }
 
+  double _mapTwoFingerScrollSpeedValueToPosition(double value) {
+    int index = _twoFingerScrollSpeedValues.indexOf(value);
+    if (index == -1) {
+      index = _twoFingerScrollSpeedValues.indexWhere((v) => v > value) - 1;
+      if (index < 0) index = 0;
+      if (index >= _twoFingerScrollSpeedValues.length - 1) {
+        index = _twoFingerScrollSpeedValues.length - 2;
+      }
+    }
+    return index / (_twoFingerScrollSpeedValues.length - 1);
+  }
+
+  double _mapTwoFingerScrollSpeedPositionToValue(double position) {
+    int index = (position * (_twoFingerScrollSpeedValues.length - 1)).round();
+    return _twoFingerScrollSpeedValues[index];
+  }
+
   @override
   void initState() {
     super.initState();
@@ -1200,6 +1229,14 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
     // 加载触控板手势开关
     _touchpadTwoFingerScroll = StreamingSettings.touchpadTwoFingerScroll;
     _touchpadTwoFingerZoom = StreamingSettings.touchpadTwoFingerZoom;
+    final savedTwoFingerScrollSpeed =
+        StreamingSettings.touchpadTwoFingerScrollSpeed;
+    _touchpadTwoFingerScrollSpeed = _twoFingerScrollSpeedValues.reduce(
+      (a, b) => (a - savedTwoFingerScrollSpeed).abs() <
+              (b - savedTwoFingerScrollSpeed).abs()
+          ? a
+          : b,
+    );
     setState(() {});
   }
 
@@ -1223,7 +1260,7 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
               title: const Text('键鼠设置'),
               tiles: [
                 SettingsTile.switchTile(
-                  title: const Text('反转鼠标滚轮'),
+                  title: const Text('反转滚轮方向（鼠标/双指）'),
                   leading: const Icon(Icons.mouse),
                   initialValue: revertCursorWheel,
                   onToggle: (bool value) {
@@ -1498,8 +1535,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                   ),
                 ],
               ),
-            // 触控板手势设置（只在触控板模式下显示）
-            if (_touchInputMode == TouchInputMode.touchpad.index)
+            // 双指手势设置：触摸/触控板模式都支持（鼠标模式不需要）
+            if (_touchInputMode != TouchInputMode.mouse.index)
               SettingsSection(
                 title: const Text('触控板手势'),
                 tiles: [
@@ -1516,6 +1553,65 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                         StreamingSettings.touchpadTwoFingerScroll = value;
                       });
                     },
+                  ),
+                  CustomSettingsTile(
+                    child: Material(
+                      color: Colors.transparent,
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  '双指滚动速度',
+                                  style: TextStyle(fontWeight: FontWeight.bold),
+                                ),
+                                Text(
+                                  '${_touchpadTwoFingerScrollSpeed.toStringAsFixed(2)}x',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8.0),
+                            CupertinoSlider(
+                              value: _mapTwoFingerScrollSpeedValueToPosition(
+                                _touchpadTwoFingerScrollSpeed,
+                              ),
+                              min: 0.0,
+                              max: 1.0,
+                              divisions: _twoFingerScrollSpeedValues.length - 1,
+                              onChanged: (position) {
+                                final newValue =
+                                    _mapTwoFingerScrollSpeedPositionToValue(
+                                        position);
+                                setState(() {
+                                  _touchpadTwoFingerScrollSpeed = newValue;
+                                  SharedPreferencesManager.setDouble(
+                                    'touchpadTwoFingerScrollSpeed',
+                                    newValue,
+                                  );
+                                  StreamingSettings
+                                      .touchpadTwoFingerScrollSpeed = newValue;
+                                });
+                              },
+                            ),
+                            const Text(
+                              '调节双指滚动的速度倍率（触摸/触控板模式）',
+                              style: TextStyle(
+                                color: Colors.grey,
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
                   ),
                   SettingsTile.switchTile(
                     title: const Text('双指缩放'),

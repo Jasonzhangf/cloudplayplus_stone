@@ -16,6 +16,9 @@ class ShortcutBar extends StatefulWidget {
   /// 内容 padding（仅在 showBackground=true 时使用；否则由外部控制）
   final EdgeInsetsGeometry padding;
 
+  /// Whether to wrap the row with a horizontal scroller.
+  final bool scrollable;
+
   /// 设置变化回调
   final ValueChanged<ShortcutSettings> onSettingsChanged;
 
@@ -30,6 +33,7 @@ class ShortcutBar extends StatefulWidget {
     this.showSettingsButton = true,
     this.showBackground = true,
     this.padding = const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+    this.scrollable = true,
   });
 
   @override
@@ -80,25 +84,29 @@ class _ShortcutBarState extends State<ShortcutBar> {
       }
     }
 
-    final row = SingleChildScrollView(
-      controller: _scrollController,
-      scrollDirection: Axis.horizontal,
-      physics: const BouncingScrollPhysics(),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (widget.showSettingsButton) ...[
-            _buildSettingsButton(),
-            const SizedBox(width: 8),
-          ],
-          ..._buildShortcutButtonsWithArrows(
-            filteredShortcuts,
-            arrowShortcuts,
-            insertIndex,
-          ),
+    final rowChild = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (widget.showSettingsButton) ...[
+          _buildSettingsButton(),
+          const SizedBox(width: 8),
         ],
-      ),
+        ..._buildShortcutButtonsWithArrows(
+          filteredShortcuts,
+          arrowShortcuts,
+          insertIndex,
+        ),
+      ],
     );
+
+    final row = widget.scrollable
+        ? SingleChildScrollView(
+            controller: _scrollController,
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            child: rowChild,
+          )
+        : rowChild;
 
     if (!widget.showBackground) return row;
 

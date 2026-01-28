@@ -6,6 +6,7 @@ import 'package:cloudplayplus/controller/hardware_input_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
+import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/streamed_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
@@ -73,6 +74,7 @@ class StreamingSession {
 
   RTCRtpSender? videoSender;
   //RTCRtpSender? audioSender;
+  MediaStream? _switchedVideoStream;
 
   //used to send reliable messages.
   RTCDataChannel? channel;
@@ -233,7 +235,8 @@ class StreamingSession {
         if (newchannel.label == "userInputUnsafe") {
           UDPChannel = newchannel;
           inputController = InputController(UDPChannel!, false, screenId);
-          inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame, windowId: streamSettings?.windowId);
+          inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
+              windowId: streamSettings?.windowId);
           //This channel is only used to send unsafe user input
           /*
         channel?.onMessage = (msg) {
@@ -242,8 +245,8 @@ class StreamingSession {
           channel = newchannel;
           if (!useUnsafeDatachannel) {
             inputController = InputController(channel!, true, screenId);
-            inputController
-                ?.setCaptureMapFromFrame(streamSettings?.windowFrame, windowId: streamSettings?.windowId);
+            inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
+                windowId: streamSettings?.windowId);
           }
           channel?.onMessage = (msg) {
             processDataChannelMessageFromHost(msg);
@@ -534,7 +537,8 @@ class StreamingSession {
         inputController = InputController(UDPChannel!, false, screenId);
       } else {
         inputController = InputController(channel!, true, screenId);
-        inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame, windowId: streamSettings?.windowId);
+        inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
+            windowId: streamSettings?.windowId);
       }
 
       //For web, RTCDataChannel.readyState is not 'open', and this should only for windows
@@ -708,6 +712,15 @@ class StreamingSession {
       //clean audio session.
       audioSession?.dispose();
       audioSession = null;
+      if (_switchedVideoStream != null) {
+        try {
+          for (final t in _switchedVideoStream!.getTracks()) {
+            t.stop();
+          }
+          await _switchedVideoStream!.dispose();
+        } catch (_) {}
+        _switchedVideoStream = null;
+      }
 
       candidates.clear();
       inputController = null;
@@ -831,7 +844,8 @@ class StreamingSession {
     _pingTimeoutTimer?.cancel(); // 取消之前的Timer
     _pingTimeoutTimer = Timer(Duration(seconds: second), () {
       // 超过指定时间秒没收到pingpong，断开连接
-      VLOG0("No ping message received within $second seconds, disconnecting...");
+      VLOG0(
+          "No ping message received within $second seconds, disconnecting...");
       close();
       if (selfSessionType == SelfSessionType.controller) {
         MessageBoxManager()
@@ -870,7 +884,8 @@ class StreamingSession {
   Future<void> processDataChannelMessageFromClient(
       RTCDataChannelMessage message) async {
     if (InputTraceService.instance.isRecording) {
-      InputTraceService.instance.recorder.maybeWriteMeta(streamSettings: streamSettings);
+      InputTraceService.instance.recorder
+          .maybeWriteMeta(streamSettings: streamSettings);
       InputTraceService.instance.recordIfInputMessage(message);
     }
     if (message.isBinary) {
@@ -966,6 +981,14 @@ class StreamingSession {
             await HardwareSimulator.keyboard.performTextInput(text);
           }
           break;
+        case "desktopSourcesRequest":
+          if (!AppPlatform.isDeskTop) break;
+          await _handleDesktopSourcesRequest(data['desktopSourcesRequest']);
+          break;
+        case "setCaptureTarget":
+          if (!AppPlatform.isDeskTop) break;
+          await _handleSetCaptureTarget(data['setCaptureTarget']);
+          break;
         default:
           VLOG0("unhandled message from client.please debug");
       }
@@ -1021,10 +1044,177 @@ class StreamingSession {
           Clipboard.setData(ClipboardData(text: data['clipboard']));
           _lastClipboardContent = data['clipboard'];
           break;
+        case "desktopSources":
+          RemoteWindowService.instance
+              .handleDesktopSourcesMessage(data['desktopSources']);
+          break;
+        case "captureTargetChanged":
+          final payload = data['captureTargetChanged'];
+          if (payload is Map) {
+            final windowIdAny = payload['windowId'];
+            final frameAny = payload['frame'];
+            final sourceIdAny = payload['desktopSourceId'];
+            final sourceTypeAny = payload['sourceType'];
+            if (streamSettings != null) {
+              if (windowIdAny is num) {
+                streamSettings!.windowId = windowIdAny.toInt();
+              }
+              if (frameAny is Map) {
+                streamSettings!.windowFrame = frameAny.map((k, v) => MapEntry(
+                    k.toString(), (v is num) ? (v as num).toDouble() : 0.0));
+              }
+              if (sourceIdAny != null) {
+                streamSettings!.desktopSourceId = sourceIdAny.toString();
+              }
+              if (sourceTypeAny != null) {
+                streamSettings!.sourceType = sourceTypeAny.toString();
+              }
+            }
+            inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
+                windowId: streamSettings?.windowId);
+          }
+          RemoteWindowService.instance
+              .handleCaptureTargetChangedMessage(payload);
+          break;
         default:
           VLOG0("unhandled message from host.please debug");
       }
     }
+  }
+
+  Future<void> _handleDesktopSourcesRequest(dynamic payload) async {
+    if (channel == null ||
+        channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    final typesAny = (payload is Map) ? payload['types'] : null;
+    final wantWindow = (typesAny is List)
+        ? typesAny.any((e) => e.toString().toLowerCase() == 'window')
+        : true;
+    final types = wantWindow ? [SourceType.Window] : [SourceType.Screen];
+
+    final sources = await desktopCapturer.getSources(types: types);
+    final list = sources
+        .map((s) => <String, dynamic>{
+              'id': s.id,
+              'windowId': s.windowId,
+              'title': s.name,
+              'appId': s.appId,
+              'appName': s.appName,
+              'frame': s.frame,
+              'type': desktopSourceTypeToString[s.type],
+            })
+        .toList();
+    channel?.send(
+      RTCDataChannelMessage(
+        jsonEncode({
+          'desktopSources': {
+            'sources': list,
+            'selectedWindowId': streamSettings?.windowId,
+          }
+        }),
+      ),
+    );
+  }
+
+  Future<void> _handleSetCaptureTarget(dynamic payload) async {
+    if (channel == null ||
+        channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    if (videoSender == null) return;
+
+    final typeAny = (payload is Map) ? payload['type'] : null;
+    final type = typeAny?.toString() ?? 'window';
+    if (type != 'window') return;
+
+    final windowIdAny = (payload is Map) ? payload['windowId'] : null;
+    final sources =
+        await desktopCapturer.getSources(types: [SourceType.Window]);
+    DesktopCapturerSource? selected;
+    if (windowIdAny is num) {
+      final wid = windowIdAny.toInt();
+      for (final s in sources) {
+        if (s.windowId == wid) {
+          selected = s;
+          break;
+        }
+      }
+    }
+    if (selected == null) return;
+    await _switchCaptureToSource(selected);
+  }
+
+  Future<void> _switchCaptureToSource(DesktopCapturerSource source) async {
+    if (pc == null || videoSender == null) return;
+
+    final int fps = streamSettings?.framerate ?? 30;
+    final mediaConstraints = <String, dynamic>{
+      'video': {
+        'deviceId': {'exact': source.id},
+        'mandatory': {
+          'frameRate': fps,
+          'hasCursor': false,
+        }
+      },
+      'audio': false
+    };
+
+    MediaStream? newStream;
+    try {
+      newStream =
+          await navigator.mediaDevices.getDisplayMedia(mediaConstraints);
+    } catch (e) {
+      VLOG0("switch capture getDisplayMedia failed.$e");
+      return;
+    }
+
+    final tracks = newStream.getVideoTracks();
+    if (tracks.isEmpty) {
+      await newStream.dispose();
+      return;
+    }
+    final newTrack = tracks.first;
+    try {
+      await videoSender!.replaceTrack(newTrack);
+    } catch (e) {
+      VLOG0("switch capture replaceTrack failed.$e");
+      await newStream.dispose();
+      return;
+    }
+
+    // Stop previous switched stream (do NOT stop the shared stream in StreamedManager).
+    if (_switchedVideoStream != null) {
+      try {
+        for (final t in _switchedVideoStream!.getTracks()) {
+          t.stop();
+        }
+        await _switchedVideoStream!.dispose();
+      } catch (_) {}
+    }
+    _switchedVideoStream = newStream;
+
+    streamSettings?.desktopSourceId = source.id;
+    streamSettings?.sourceType = desktopSourceTypeToString[source.type];
+    streamSettings?.windowId = source.windowId;
+    streamSettings?.windowFrame = source.frame;
+    inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
+        windowId: streamSettings?.windowId);
+
+    channel?.send(
+      RTCDataChannelMessage(
+        jsonEncode({
+          'captureTargetChanged': {
+            'desktopSourceId': source.id,
+            'sourceType': desktopSourceTypeToString[source.type],
+            'windowId': source.windowId,
+            'frame': source.frame,
+            'title': source.name,
+            'appName': source.appName,
+          }
+        }),
+      ),
+    );
   }
 
   void startClipboardSync() {

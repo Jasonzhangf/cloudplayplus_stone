@@ -399,16 +399,19 @@ class InputController {
       percentX = percentX.clamp(0.001, 0.999);
       percentY = percentY.clamp(0.001, 0.999);
 
-      HardwareSimulator.mouse.performMouseMoveToWindow(
+      HardwareSimulator.mouse
+          .performMouseMoveToWindow(
         windowId: _captureMap!.windowId!,
         percentX: percentX,
         percentY: percentY,
-      );
-      HardwareSimulator.mouse.performMouseScrollToWindow(
-        windowId: _captureMap!.windowId!,
-        dx: dx,
-        dy: dy,
-      );
+      )
+          .whenComplete(() {
+        HardwareSimulator.mouse.performMouseScrollToWindow(
+          windowId: _captureMap!.windowId!,
+          dx: dx,
+          dy: dy,
+        );
+      });
       return;
     }
     HardwareSimulator.mouse.performMouseScroll(dx, dy);

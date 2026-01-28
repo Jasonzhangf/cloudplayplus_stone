@@ -7,7 +7,8 @@ class InputOp {
   final int keyCode;
   final bool isDown;
 
-  const InputOp._(this.type, {this.text = '', this.keyCode = 0, this.isDown = false});
+  const InputOp._(this.type,
+      {this.text = '', this.keyCode = 0, this.isDown = false});
 
   const InputOp.text(String text) : this._(InputOpType.text, text: text);
 
@@ -22,7 +23,8 @@ class SystemKeyboardDeltaResult {
   final String nextLastValue;
   final List<InputOp> ops;
 
-  const SystemKeyboardDeltaResult({required this.nextLastValue, required this.ops});
+  const SystemKeyboardDeltaResult(
+      {required this.nextLastValue, required this.ops});
 }
 
 /// Compute delta operations between previous and current system keyboard buffer.
@@ -41,37 +43,56 @@ SystemKeyboardDeltaResult computeSystemKeyboardDelta({
     return SystemKeyboardDeltaResult(nextLastValue: lastValue, ops: const []);
   }
 
-  // deletion
-  if (lastValue.startsWith(currentValue)) {
-    final deleted = lastValue.length - currentValue.length;
+  int commonPrefix = 0;
+  final minLen = (lastValue.length < currentValue.length)
+      ? lastValue.length
+      : currentValue.length;
+  while (commonPrefix < minLen &&
+      lastValue.codeUnitAt(commonPrefix) ==
+          currentValue.codeUnitAt(commonPrefix)) {
+    commonPrefix++;
+  }
+
+  int commonSuffix = 0;
+  final lastRemain = lastValue.length - commonPrefix;
+  final curRemain = currentValue.length - commonPrefix;
+  final suffixLimit = (lastRemain < curRemain) ? lastRemain : curRemain;
+  while (commonSuffix < suffixLimit &&
+      lastValue.codeUnitAt(lastValue.length - 1 - commonSuffix) ==
+          currentValue.codeUnitAt(currentValue.length - 1 - commonSuffix)) {
+    commonSuffix++;
+  }
+
+  final deleted = lastValue.length - commonPrefix - commonSuffix;
+  final inserted =
+      currentValue.substring(commonPrefix, currentValue.length - commonSuffix);
+
+  // Our injection model assumes caret at end. If text changed in the middle,
+  // fall back to "replace all" semantics to avoid mismatched cursor positions.
+  if (commonSuffix > 0 && (deleted > 0 || inserted.isNotEmpty)) {
     final ops = <InputOp>[];
-    for (int i = 0; i < deleted; i++) {
+    for (int i = 0; i < lastValue.length; i++) {
       ops.add(const InputOp.key(0x08, true));
       ops.add(const InputOp.key(0x08, false));
     }
+    ops.addAll(
+        _encodeText(currentValue, preferTextForNonAscii, preferTextForAscii));
     return SystemKeyboardDeltaResult(nextLastValue: currentValue, ops: ops);
   }
 
-  // append
-  if (currentValue.startsWith(lastValue)) {
-    final appended = currentValue.substring(lastValue.length);
-    return SystemKeyboardDeltaResult(
-      nextLastValue: currentValue,
-      ops: _encodeText(appended, preferTextForNonAscii, preferTextForAscii),
-    );
-  }
-
-  // replacement: delete old then send new
   final ops = <InputOp>[];
-  for (int i = 0; i < lastValue.length; i++) {
+  // Delete tail.
+  for (int i = 0; i < deleted; i++) {
     ops.add(const InputOp.key(0x08, true));
     ops.add(const InputOp.key(0x08, false));
   }
-  ops.addAll(_encodeText(currentValue, preferTextForNonAscii, preferTextForAscii));
+  // Insert tail.
+  ops.addAll(_encodeText(inserted, preferTextForNonAscii, preferTextForAscii));
   return SystemKeyboardDeltaResult(nextLastValue: currentValue, ops: ops);
 }
 
-List<InputOp> _encodeText(String text, bool preferTextForNonAscii, bool preferTextForAscii) {
+List<InputOp> _encodeText(
+    String text, bool preferTextForNonAscii, bool preferTextForAscii) {
   if (text.isEmpty) return const [];
   final hasNonAscii = text.runes.any((r) => r > 0x7F);
   if (hasNonAscii && preferTextForNonAscii) {

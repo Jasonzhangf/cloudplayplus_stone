@@ -530,7 +530,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 WebrtcService.currentRenderingSession!.screenId);
       }
     }
-    _scrollController.doScroll(0, deltaY);
+    final speed = StreamingSettings.touchpadTwoFingerScrollSpeed;
+    _scrollController.doScroll(0, deltaY * speed);
   }
 
   void _handlePinchZoom(double scaleChange) {
@@ -1004,166 +1005,190 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                       child: Stack(
                         children: [
                           Listener(
-                  onPointerSignal: (PointerSignalEvent event) {
-                    if (AppPlatform.isMobile) return;
-                    if (event is PointerScrollEvent) {
-                      //this does not work on macos for touch bar, works for web.
-                      if (event.scrollDelta.dx.abs() > 0 ||
-                          event.scrollDelta.dy.abs() > 0) {
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseScroll(
-                                event.scrollDelta.dx, event.scrollDelta.dy);
-                      }
-                    }
-                  },
-                  onPointerPanZoomStart: (PointerPanZoomStartEvent event) {
-                    if (AppPlatform.isDeskTop) {
-                      _scrollController.startScroll();
-                    }
-                  },
-                  onPointerPanZoomUpdate: (PointerPanZoomUpdateEvent event) {
-                    if (AppPlatform.isDeskTop) {
-                      _scrollController.doScroll(
-                          event.panDelta.dx, event.panDelta.dy);
-                    }
-                  },
-                  onPointerPanZoomEnd: (PointerPanZoomEndEvent event) {
-                    if (AppPlatform.isDeskTop) {
-                      _scrollController.startFling();
-                    }
-                  },
-                  onPointerDown: (PointerDownEvent event) {
-                    focusNode.requestFocus();
-                    if (WebrtcService.currentRenderingSession == null) return;
+                            onPointerSignal: (PointerSignalEvent event) {
+                              if (AppPlatform.isMobile) return;
+                              if (event is PointerScrollEvent) {
+                                //this does not work on macos for touch bar, works for web.
+                                if (event.scrollDelta.dx.abs() > 0 ||
+                                    event.scrollDelta.dy.abs() > 0) {
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseScroll(event.scrollDelta.dx,
+                                          event.scrollDelta.dy);
+                                }
+                              }
+                            },
+                            onPointerPanZoomStart:
+                                (PointerPanZoomStartEvent event) {
+                              if (AppPlatform.isDeskTop) {
+                                _scrollController.startScroll();
+                              }
+                            },
+                            onPointerPanZoomUpdate:
+                                (PointerPanZoomUpdateEvent event) {
+                              if (AppPlatform.isDeskTop) {
+                                _scrollController.doScroll(
+                                    event.panDelta.dx, event.panDelta.dy);
+                              }
+                            },
+                            onPointerPanZoomEnd:
+                                (PointerPanZoomEndEvent event) {
+                              if (AppPlatform.isDeskTop) {
+                                _scrollController.startFling();
+                              }
+                            },
+                            onPointerDown: (PointerDownEvent event) {
+                              focusNode.requestFocus();
+                              if (WebrtcService.currentRenderingSession == null)
+                                return;
 
-                    if (event.kind == PointerDeviceKind.touch) {
-                      _handleTouchDown(event);
-                    } else if (event.kind == PointerDeviceKind.stylus) {
-                      _handleStylusDown(event);
-                    } else if (event.kind == PointerDeviceKind.mouse) {
-                      // For IOS we use on_screen_remote_mouse_cursor.
-                      if (AppPlatform.isMobile) return;
-                      _syncMouseButtonState(event);
-                    }
-                  },
-                  onPointerUp: (PointerUpEvent event) {
-                    if (WebrtcService.currentRenderingSession == null) return;
+                              if (event.kind == PointerDeviceKind.touch) {
+                                _handleTouchDown(event);
+                              } else if (event.kind ==
+                                  PointerDeviceKind.stylus) {
+                                _handleStylusDown(event);
+                              } else if (event.kind ==
+                                  PointerDeviceKind.mouse) {
+                                // For IOS we use on_screen_remote_mouse_cursor.
+                                if (AppPlatform.isMobile) return;
+                                _syncMouseButtonState(event);
+                              }
+                            },
+                            onPointerUp: (PointerUpEvent event) {
+                              if (WebrtcService.currentRenderingSession == null)
+                                return;
 
-                    if (event.kind == PointerDeviceKind.touch) {
-                      _handleTouchUp(event);
-                    } else if (event.kind == PointerDeviceKind.stylus) {
-                      _handleStylusUp(event);
-                    } else if (event.kind == PointerDeviceKind.mouse) {
-                      if (AppPlatform.isMobile) {
-                        //legacy impl for mouse on IOS. Used when user does not want on screen cursor.
-                        _syncMouseButtonStateUP(event);
-                      } else {
-                        _syncMouseButtonState(event);
-                      }
-                    }
-                  },
-                  onPointerCancel: (PointerCancelEvent event) {
-                    if (WebrtcService.currentRenderingSession == null) return;
+                              if (event.kind == PointerDeviceKind.touch) {
+                                _handleTouchUp(event);
+                              } else if (event.kind ==
+                                  PointerDeviceKind.stylus) {
+                                _handleStylusUp(event);
+                              } else if (event.kind ==
+                                  PointerDeviceKind.mouse) {
+                                if (AppPlatform.isMobile) {
+                                  //legacy impl for mouse on IOS. Used when user does not want on screen cursor.
+                                  _syncMouseButtonStateUP(event);
+                                } else {
+                                  _syncMouseButtonState(event);
+                                }
+                              }
+                            },
+                            onPointerCancel: (PointerCancelEvent event) {
+                              if (WebrtcService.currentRenderingSession == null)
+                                return;
 
-                    // 根据不同的输入设备类型，调用相应的 up 处理
-                    if (event.kind == PointerDeviceKind.touch) {
-                      if (_isUsingTouchMode) {
-                        _handleTouchModeUp(event.pointer % 9 + 1);
-                      } else if (_isUsingTouchpadMode) {
-                        _handleTouchpadUp(event);
-                      } else {
-                        _handleMouseModeUp();
-                      }
-                    } else if (event.kind == PointerDeviceKind.stylus) {
-                      // 手写笔取消时，发送笔抬起事件
-                      final pos = _calculatePositionPercent(event.position);
-                      if (pos != null) {
-                        _penDown = false;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestPenEvent(
-                          pos.xPercent,
-                          pos.yPercent,
-                          false, // isDown
-                          false, // hasButton
-                          0.0, // 压力为0
-                          _lastPenOrientation * 180.0 / 3.14159,
-                          _lastPenTilt * 180.0 / 3.14159,
-                        );
-                      }
-                    } else if (event.kind == PointerDeviceKind.mouse) {
-                      // 鼠标取消时，释放所有按钮
-                      if (_leftButtonDown) {
-                        _leftButtonDown = false;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(1, false);
-                      }
-                      if (_rightButtonDown) {
-                        _rightButtonDown = false;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(3, false);
-                      }
-                      if (_middleButtonDown) {
-                        _middleButtonDown = false;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(2, false);
-                      }
-                      if (_backButtonDown) {
-                        _backButtonDown = false;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(4, false);
-                      }
-                      if (_forwardButtonDown) {
-                        _forwardButtonDown = false;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(5, false);
-                      }
-                    }
+                              // 根据不同的输入设备类型，调用相应的 up 处理
+                              if (event.kind == PointerDeviceKind.touch) {
+                                if (_isUsingTouchMode) {
+                                  _handleTouchModeUp(event.pointer % 9 + 1);
+                                } else if (_isUsingTouchpadMode) {
+                                  _handleTouchpadUp(event);
+                                } else {
+                                  _handleMouseModeUp();
+                                }
+                              } else if (event.kind ==
+                                  PointerDeviceKind.stylus) {
+                                // 手写笔取消时，发送笔抬起事件
+                                final pos =
+                                    _calculatePositionPercent(event.position);
+                                if (pos != null) {
+                                  _penDown = false;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestPenEvent(
+                                    pos.xPercent,
+                                    pos.yPercent,
+                                    false, // isDown
+                                    false, // hasButton
+                                    0.0, // 压力为0
+                                    _lastPenOrientation * 180.0 / 3.14159,
+                                    _lastPenTilt * 180.0 / 3.14159,
+                                  );
+                                }
+                              } else if (event.kind ==
+                                  PointerDeviceKind.mouse) {
+                                // 鼠标取消时，释放所有按钮
+                                if (_leftButtonDown) {
+                                  _leftButtonDown = false;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(1, false);
+                                }
+                                if (_rightButtonDown) {
+                                  _rightButtonDown = false;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(3, false);
+                                }
+                                if (_middleButtonDown) {
+                                  _middleButtonDown = false;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(2, false);
+                                }
+                                if (_backButtonDown) {
+                                  _backButtonDown = false;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(4, false);
+                                }
+                                if (_forwardButtonDown) {
+                                  _forwardButtonDown = false;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(5, false);
+                                }
+                              }
 
-                    // 清理触控板状态
-                    if (_isUsingTouchpadMode) {
-                      _lastTouchpadPosition = null;
-                    }
-                  },
-                  onPointerMove: (PointerMoveEvent event) {
-                    if (WebrtcService.currentRenderingSession == null) return;
+                              // 清理触控板状态
+                              if (_isUsingTouchpadMode) {
+                                _lastTouchpadPosition = null;
+                              }
+                            },
+                            onPointerMove: (PointerMoveEvent event) {
+                              if (WebrtcService.currentRenderingSession == null)
+                                return;
 
-                    if (_mouseTouchMode == MouseMode.leftClick &&
-                        event.kind == PointerDeviceKind.mouse) {
-                      _syncMouseButtonState(event);
-                    }
+                              if (_mouseTouchMode == MouseMode.leftClick &&
+                                  event.kind == PointerDeviceKind.mouse) {
+                                _syncMouseButtonState(event);
+                              }
 
-                    // When cursor is locked, we don't need to handle mouse move events here.
-                    if (InputController.isCursorLocked &&
-                        event.kind == PointerDeviceKind.mouse) return;
+                              // When cursor is locked, we don't need to handle mouse move events here.
+                              if (InputController.isCursorLocked &&
+                                  event.kind == PointerDeviceKind.mouse) return;
 
-                    if (event.kind == PointerDeviceKind.touch) {
-                      _handleTouchMove(event);
-                    } else if (event.kind == PointerDeviceKind.stylus) {
-                      _handleStylusMove(event);
-                    } else {
-                      if (AppPlatform.isMobile) return;
-                      _handleMousePositionUpdate(event.position);
-                    }
-                  },
-                  onPointerHover: (PointerHoverEvent event) {
-                    if (AppPlatform.isMobile) return;
-                    if (InputController.isCursorLocked ||
-                        WebrtcService.currentRenderingSession == null) return;
+                              if (event.kind == PointerDeviceKind.touch) {
+                                _handleTouchMove(event);
+                              } else if (event.kind ==
+                                  PointerDeviceKind.stylus) {
+                                _handleStylusMove(event);
+                              } else {
+                                if (AppPlatform.isMobile) return;
+                                _handleMousePositionUpdate(event.position);
+                              }
+                            },
+                            onPointerHover: (PointerHoverEvent event) {
+                              if (AppPlatform.isMobile) return;
+                              if (InputController.isCursorLocked ||
+                                  WebrtcService.currentRenderingSession == null)
+                                return;
 
-                    _handleMousePositionUpdate(event.position);
-                  },
-                  child: FocusScope(
-                    node: _fsnode,
-                    onKey: (data, event) {
-                      return KeyEventResult.handled;
-                    },
-                    child: KeyboardListener(
-                      focusNode: focusNode,
-                      onKeyEvent: (event) {
-                        if (event is KeyDownEvent || event is KeyUpEvent) {
-                          // For web, there is a bug where an unexpected keyup is
-                          // triggered. https://github.com/flutter/engine/pull/17742/files
-                          /*_pressedKey = event.logicalKey.keyLabel.isEmpty
+                              _handleMousePositionUpdate(event.position);
+                            },
+                            child: FocusScope(
+                              node: _fsnode,
+                              onKey: (data, event) {
+                                return KeyEventResult.handled;
+                              },
+                              child: KeyboardListener(
+                                focusNode: focusNode,
+                                onKeyEvent: (event) {
+                                  if (event is KeyDownEvent ||
+                                      event is KeyUpEvent) {
+                                    // For web, there is a bug where an unexpected keyup is
+                                    // triggered. https://github.com/flutter/engine/pull/17742/files
+                                    /*_pressedKey = event.logicalKey.keyLabel.isEmpty
                               ? event.logicalKey.debugName ?? 'Unknown'
                               : event.logicalKey.keyLabel;
                           if (event is KeyDownEvent) {
@@ -1172,176 +1197,203 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                             _pressedKey = _pressedKey + " Up";
                           }
                           print("${_pressedKey} at ${DateTime.now()}");*/
-                          PhysicalKeyboardKey keyToSend = event.physicalKey;
-                          if (StreamingSettings.switchCmdCtrl) {
-                            if (event.physicalKey ==
-                                PhysicalKeyboardKey.metaLeft) {
-                              keyToSend = PhysicalKeyboardKey.controlLeft;
-                            } else if (event.physicalKey ==
-                                PhysicalKeyboardKey.controlLeft) {
-                              keyToSend = PhysicalKeyboardKey.metaLeft;
-                            }
-                          }
-                          WebrtcService.currentRenderingSession?.inputController
-                              ?.requestKeyEvent(
-                                  physicalToWindowsKeyMap[keyToSend],
-                                  event is KeyDownEvent);
-                        }
-                      },
-                      child: kIsWeb
-                          ? ValueListenableBuilder<double>(
-                              valueListenable: aspectRatioNotifier, // 监听宽高比的变化
-                              builder: (context, aspectRatio, child) {
-                                return LayoutBuilder(builder:
-                                    (BuildContext context,
-                                        BoxConstraints constraints) {
-                                  VLOG0(
-                                      "------max height: {$constraints.maxHeight} aspectratio: {$aspectRatioNotifier.value}");
-                                  double realHeight = constraints.maxHeight;
-                                  double realWidth = constraints.maxWidth;
-                                  if (constraints.maxHeight *
-                                          aspectRatioNotifier.value >
-                                      constraints.maxWidth) {
-                                    realHeight =
-                                        realWidth / aspectRatioNotifier.value;
-                                  } else {
-                                    realWidth =
-                                        realHeight * aspectRatioNotifier.value;
+                                    PhysicalKeyboardKey keyToSend =
+                                        event.physicalKey;
+                                    if (StreamingSettings.switchCmdCtrl) {
+                                      if (event.physicalKey ==
+                                          PhysicalKeyboardKey.metaLeft) {
+                                        keyToSend =
+                                            PhysicalKeyboardKey.controlLeft;
+                                      } else if (event.physicalKey ==
+                                          PhysicalKeyboardKey.controlLeft) {
+                                        keyToSend =
+                                            PhysicalKeyboardKey.metaLeft;
+                                      }
+                                    }
+                                    WebrtcService.currentRenderingSession
+                                        ?.inputController
+                                        ?.requestKeyEvent(
+                                            physicalToWindowsKeyMap[keyToSend],
+                                            event is KeyDownEvent);
                                   }
-                                  return Center(
-                                      child: SizedBox(
-                                          width: realWidth,
-                                          height: realHeight,
-                                          child: RTCVideoView(
-                                              WebrtcService
-                                                  .globalVideoRenderer!,
-                                              setAspectRatio: (newAspectRatio) {
-                                            // 延迟更新 aspectRatio，避免在构建过程中触发 setState
-                                            if (newAspectRatio.isNaN) return;
-                                            WidgetsBinding.instance
-                                                .addPostFrameCallback((_) {
-                                              if (aspectRatioNotifier.value ==
-                                                  newAspectRatio) {
-                                                return;
-                                              }
-                                              aspectRatioNotifier.value =
-                                                  newAspectRatio;
-                                            });
-                                          }, onRenderBoxUpdated:
-                                                  (newRenderBox) {
-                                            parentBox =
-                                                context.findRenderObject()
-                                                    as RenderBox;
-                                            renderBox = newRenderBox;
-                                            widgetSize = newRenderBox.size;
-                                          })));
-                                });
-                              })
-                          : RTCVideoView(
-                              WebrtcService.globalVideoRenderer!,
-                              scale: _videoScale,
-                              offset: _videoOffset,
-                              onRenderBoxUpdated: (newRenderBox) {
-                                parentBox =
-                                    context.findRenderObject() as RenderBox;
-                                renderBox = newRenderBox;
-                                widgetSize = newRenderBox.size;
-                              },
-                              setAspectRatio: (newAspectRatio) {
-                                if (AppPlatform.isMobile) {
-                                  InputController.mouseController
-                                      .setAspectRatio(newAspectRatio);
-                                }
-                              },
+                                },
+                                child: kIsWeb
+                                    ? ValueListenableBuilder<double>(
+                                        valueListenable:
+                                            aspectRatioNotifier, // 监听宽高比的变化
+                                        builder: (context, aspectRatio, child) {
+                                          return LayoutBuilder(builder:
+                                              (BuildContext context,
+                                                  BoxConstraints constraints) {
+                                            VLOG0(
+                                                "------max height: {$constraints.maxHeight} aspectratio: {$aspectRatioNotifier.value}");
+                                            double realHeight =
+                                                constraints.maxHeight;
+                                            double realWidth =
+                                                constraints.maxWidth;
+                                            if (constraints.maxHeight *
+                                                    aspectRatioNotifier.value >
+                                                constraints.maxWidth) {
+                                              realHeight = realWidth /
+                                                  aspectRatioNotifier.value;
+                                            } else {
+                                              realWidth = realHeight *
+                                                  aspectRatioNotifier.value;
+                                            }
+                                            return Center(
+                                                child: SizedBox(
+                                                    width: realWidth,
+                                                    height: realHeight,
+                                                    child: RTCVideoView(
+                                                        WebrtcService
+                                                            .globalVideoRenderer!,
+                                                        setAspectRatio:
+                                                            (newAspectRatio) {
+                                                      // 延迟更新 aspectRatio，避免在构建过程中触发 setState
+                                                      if (newAspectRatio.isNaN)
+                                                        return;
+                                                      WidgetsBinding.instance
+                                                          .addPostFrameCallback(
+                                                              (_) {
+                                                        if (aspectRatioNotifier
+                                                                .value ==
+                                                            newAspectRatio) {
+                                                          return;
+                                                        }
+                                                        aspectRatioNotifier
+                                                                .value =
+                                                            newAspectRatio;
+                                                      });
+                                                    }, onRenderBoxUpdated:
+                                                            (newRenderBox) {
+                                                      parentBox = context
+                                                              .findRenderObject()
+                                                          as RenderBox;
+                                                      renderBox = newRenderBox;
+                                                      widgetSize =
+                                                          newRenderBox.size;
+                                                    })));
+                                          });
+                                        })
+                                    : RTCVideoView(
+                                        WebrtcService.globalVideoRenderer!,
+                                        scale: _videoScale,
+                                        offset: _videoOffset,
+                                        onRenderBoxUpdated: (newRenderBox) {
+                                          parentBox = context.findRenderObject()
+                                              as RenderBox;
+                                          renderBox = newRenderBox;
+                                          widgetSize = newRenderBox.size;
+                                        },
+                                        setAspectRatio: (newAspectRatio) {
+                                          if (AppPlatform.isMobile) {
+                                            InputController.mouseController
+                                                .setAspectRatio(newAspectRatio);
+                                          }
+                                        },
+                                      ),
+                              ),
                             ),
-                    ),
-                  ),
-                ),
-                /*Text(
+                          ),
+                          /*Text(
                   'You pressed: $_pressedKey',
                   style: TextStyle(fontSize: 24, color: Colors.red),
                 ),*/
-                if ((AppPlatform.isAndroidTV) ||
-                    (AppPlatform
-                        .isMobile /*&& AppStateService.isMouseConnected*/))
-                  OnScreenRemoteMouse(
-                    controller: InputController.mouseController,
-                    onPositionChanged: (percentage) {
-                      // percentage is already normalized to content (excluding letterbox/pillarbox)
-                      final xPercent = percentage.dx;
-                      final yPercent = percentage.dy;
-                      WebrtcService.currentRenderingSession?.inputController
-                          ?.requestMoveMouseAbsl(xPercent, yPercent,
-                              WebrtcService.currentRenderingSession!.screenId);
-                    },
-                  ),
-                BlocProvider(
-                  create: (context) => MouseStyleBloc(),
-                  child: const MouseStyleRegion(),
-                ),
-                /*_hasAudio
+                          if ((AppPlatform.isAndroidTV) ||
+                              (AppPlatform
+                                  .isMobile /*&& AppStateService.isMouseConnected*/))
+                            OnScreenRemoteMouse(
+                              controller: InputController.mouseController,
+                              onPositionChanged: (percentage) {
+                                // percentage is already normalized to content (excluding letterbox/pillarbox)
+                                final xPercent = percentage.dx;
+                                final yPercent = percentage.dy;
+                                WebrtcService
+                                    .currentRenderingSession?.inputController
+                                    ?.requestMoveMouseAbsl(
+                                        xPercent,
+                                        yPercent,
+                                        WebrtcService
+                                            .currentRenderingSession!.screenId);
+                              },
+                            ),
+                          BlocProvider(
+                            create: (context) => MouseStyleBloc(),
+                            child: const MouseStyleRegion(),
+                          ),
+                          /*_hasAudio
                     ? RTCVideoView(WebrtcService.globalAudioRenderer!)
                     : Container(),*/
-                _buildMiniMap(),
-                const Positioned(
-                  top: 20,
-                  left: 0,
-                  right: 0,
-                  child: IgnorePointer(
-                    ignoring: true,
-                    child: Center(
-                      child: VideoInfoWidget(),
-                    ),
-                  ),
-                ),
-                OnScreenVirtualMouse(
-                    initialPosition: _virtualMousePosition,
-                    onPositionChanged: (pos) {
-                      if (renderBox == null || parentBox == null) return;
-                      /*final Offset globalPosition =
+                          _buildMiniMap(),
+                          const Positioned(
+                            top: 20,
+                            left: 0,
+                            right: 0,
+                            child: IgnorePointer(
+                              ignoring: true,
+                              child: Center(
+                                child: VideoInfoWidget(),
+                              ),
+                            ),
+                          ),
+                          OnScreenVirtualMouse(
+                              initialPosition: _virtualMousePosition,
+                              onPositionChanged: (pos) {
+                                if (renderBox == null || parentBox == null)
+                                  return;
+                                /*final Offset globalPosition =
                         parentBox.localToGlobal(Offset.zero);*/
-                      final Offset globalPosition =
-                          parentBox!.localToGlobal(pos);
-                      final Offset localPosition =
-                          renderBox!.globalToLocal(globalPosition);
-                      final double xPercent =
-                          (localPosition.dx / widgetSize.width).clamp(0.0, 1.0);
-                      final double yPercent =
-                          (localPosition.dy / widgetSize.height)
-                              .clamp(0.0, 1.0);
-                      VLOG0("dx:{$xPercent},dy{$yPercent},");
-                      WebrtcService.currentRenderingSession!.inputController
-                          ?.requestMoveMouseAbsl(xPercent, yPercent,
-                              WebrtcService.currentRenderingSession!.screenId);
-                    },
-                    onLeftPressed: () {
-                      if (_leftButtonDown == false) {
-                        _leftButtonDown = !_leftButtonDown;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(1, _leftButtonDown);
-                      }
-                    },
-                    onLeftReleased: () {
-                      if (_leftButtonDown == true) {
-                        _leftButtonDown = !_leftButtonDown;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(1, _leftButtonDown);
-                      }
-                    },
-                    onRightPressed: () {
-                      if (_rightButtonDown == false) {
-                        _rightButtonDown = !_rightButtonDown;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(3, _rightButtonDown);
-                      }
-                    },
-                    onRightReleased: () {
-                      if (_rightButtonDown == true) {
-                        _rightButtonDown = !_rightButtonDown;
-                        WebrtcService.currentRenderingSession?.inputController
-                            ?.requestMouseClick(3, _rightButtonDown);
-                      }
-                    }),
+                                final Offset globalPosition =
+                                    parentBox!.localToGlobal(pos);
+                                final Offset localPosition =
+                                    renderBox!.globalToLocal(globalPosition);
+                                final double xPercent =
+                                    (localPosition.dx / widgetSize.width)
+                                        .clamp(0.0, 1.0);
+                                final double yPercent =
+                                    (localPosition.dy / widgetSize.height)
+                                        .clamp(0.0, 1.0);
+                                VLOG0("dx:{$xPercent},dy{$yPercent},");
+                                WebrtcService
+                                    .currentRenderingSession!.inputController
+                                    ?.requestMoveMouseAbsl(
+                                        xPercent,
+                                        yPercent,
+                                        WebrtcService
+                                            .currentRenderingSession!.screenId);
+                              },
+                              onLeftPressed: () {
+                                if (_leftButtonDown == false) {
+                                  _leftButtonDown = !_leftButtonDown;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(1, _leftButtonDown);
+                                }
+                              },
+                              onLeftReleased: () {
+                                if (_leftButtonDown == true) {
+                                  _leftButtonDown = !_leftButtonDown;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(1, _leftButtonDown);
+                                }
+                              },
+                              onRightPressed: () {
+                                if (_rightButtonDown == false) {
+                                  _rightButtonDown = !_rightButtonDown;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(3, _rightButtonDown);
+                                }
+                              },
+                              onRightReleased: () {
+                                if (_rightButtonDown == true) {
+                                  _rightButtonDown = !_rightButtonDown;
+                                  WebrtcService
+                                      .currentRenderingSession?.inputController
+                                      ?.requestMouseClick(3, _rightButtonDown);
+                                }
+                              }),
                         ],
                       ),
                     ),

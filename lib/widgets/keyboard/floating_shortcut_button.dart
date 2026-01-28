@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../models/shortcut.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
 import '../../controller/screen_controller.dart';
+import '../../pages/remote_window_select_page.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/system_keyboard_delta.dart';
 import '../../utils/input/input_debug.dart';
@@ -37,7 +39,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   final TextEditingController _systemKeyboardController =
       TextEditingController();
   String _lastSystemKeyboardValue = '';
-  bool _suppressSystemKeyboardOnChanged = false;
 
   static const _modifierKeyCodes = <int>{
     0xA0, // ShiftLeft
@@ -307,8 +308,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
             // 快捷键面板
             if (_isPanelVisible)
               Positioned(
-                left: 8,
-                right: 8,
+                left: 4,
+                right: 4,
                 // Dock right above whichever keyboard is visible.
                 bottom: bottom > 0 ? bottom : 12,
                 child: _buildShortcutPanel(context),
@@ -348,7 +349,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       },
                       onChanged: (value) {
                         if (!_useSystemKeyboard) return;
-                        if (_suppressSystemKeyboardOnChanged) return;
                         final composing =
                             _systemKeyboardController.value.composing;
                         InputDebugService.instance.log(
@@ -380,27 +380,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                               break;
                             case InputOpType.key:
                               // Only used for backspace in current delta encoder.
+                              if (op.keyCode == 0x08 && op.isDown) {
+                                // Ensure backspace isn't modified by any stuck modifiers.
+                                for (final code in _modifierKeyCodes) {
+                                  inputController.requestKeyEvent(code, false);
+                                }
+                              }
                               inputController.requestKeyEvent(
                                   op.keyCode, op.isDown);
                               break;
                           }
                         }
                         _lastSystemKeyboardValue = delta.nextLastValue;
-
-                        // Keep the IME text client "small" so we don't accidentally
-                        // emit many backspaces when the local buffer diverges from remote state.
-                        final composingActive =
-                            composing.isValid && !composing.isCollapsed;
-                        if (!composingActive && value.isNotEmpty) {
-                          _suppressSystemKeyboardOnChanged = true;
-                          _systemKeyboardController.value =
-                              const TextEditingValue(
-                            text: '',
-                            selection: TextSelection.collapsed(offset: 0),
-                          );
-                          _lastSystemKeyboardValue = '';
-                          _suppressSystemKeyboardOnChanged = false;
-                        }
                       },
                       selectionControls: null,
                     ),
@@ -445,7 +436,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       clipBehavior: Clip.none,
       child: Container(
         height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 4),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.7),
           borderRadius: BorderRadius.circular(16),
@@ -484,28 +475,33 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   color: Colors.white.withValues(alpha: 0.92),
                 ),
                 const SizedBox(width: 4),
-                _ArrowRow(
-                  left: left,
-                  up: up,
-                  down: down,
-                  right: right,
-                  onShortcutPressed: _handleShortcutPressed,
-                ),
-                const SizedBox(width: 6),
                 Expanded(
-                  child: Padding(
-                    // Reserve space so the top-right floating controls don't cover the scroller.
-                    padding: const EdgeInsets.only(right: 72),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: ShortcutBar(
-                        settings: settingsWithoutArrows,
-                        onSettingsChanged: _handleSettingsChanged,
-                        onShortcutPressed: _handleShortcutPressed,
-                        showSettingsButton: false,
-                        showBackground: false,
-                        padding: EdgeInsets.zero,
-                      ),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        _ArrowRow(
+                          left: left,
+                          up: up,
+                          down: down,
+                          right: right,
+                          onShortcutPressed: _handleShortcutPressed,
+                        ),
+                        const SizedBox(width: 8),
+                        ShortcutBar(
+                          settings: settingsWithoutArrows,
+                          onSettingsChanged: _handleSettingsChanged,
+                          onShortcutPressed: _handleShortcutPressed,
+                          showSettingsButton: false,
+                          showBackground: false,
+                          padding: EdgeInsets.zero,
+                          scrollable: false,
+                        ),
+                        // End spacer so last buttons can be scrolled out from under the floating controls.
+                        const SizedBox(width: 48),
+                      ],
                     ),
                   ),
                 ),
@@ -712,6 +708,9 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final debug = InputDebugService.instance;
+    final channel = WebrtcService.currentRenderingSession?.channel;
+    final channelOpen = channel != null &&
+        channel.state == RTCDataChannelState.RTCDataChannelOpen;
     return Container(
       height: MediaQuery.of(context).size.height * 0.7,
       decoration: const BoxDecoration(
@@ -769,6 +768,22 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                       ),
                     ),
                   ],
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: channelOpen
+                      ? () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => RemoteWindowSelectPage(
+                                channel: channel!,
+                              ),
+                            ),
+                          );
+                        }
+                      : null,
+                  icon: const Icon(Icons.window),
+                  label: const Text('选择远端窗口'),
                 ),
               ],
             ),
