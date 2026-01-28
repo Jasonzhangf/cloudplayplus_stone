@@ -36,6 +36,10 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   void initState() {
     super.initState();
     _settings = ShortcutSettings();
+    _systemKeyboardFocusNode.addListener(() {
+      InputDebugService.instance
+          .log('IME focus=${_systemKeyboardFocusNode.hasFocus}');
+    });
     _initShortcuts();
   }
 
@@ -271,6 +275,84 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 bottom: bottom > 0 ? bottom : 12,
                 child: _buildShortcutPanel(context),
               ),
+            // On-screen (but invisible) text client for system keyboard input forwarding.
+            // Keep it on-screen coordinates to improve IME reliability.
+            if (_useSystemKeyboard)
+              Positioned(
+                left: 0,
+                top: 0,
+                width: 220,
+                height: 44,
+                child: IgnorePointer(
+                  ignoring: true,
+                  child: Opacity(
+                    opacity: 0.0,
+                    child: EditableText(
+                      controller: _systemKeyboardController,
+                      focusNode: _systemKeyboardFocusNode,
+                      style: const TextStyle(
+                          fontSize: 16, color: Colors.transparent),
+                      cursorColor: Colors.transparent,
+                      backgroundCursorColor: Colors.transparent,
+                      keyboardType: TextInputType.text,
+                      textInputAction: TextInputAction.send,
+                      maxLines: 1,
+                      autocorrect: false,
+                      enableSuggestions: false,
+                      onSubmitted: (_) {
+                        if (!_useSystemKeyboard) return;
+                        final inputController = WebrtcService
+                            .currentRenderingSession?.inputController;
+                        if (inputController == null) return;
+                        // Map "enter/done" to VK_RETURN.
+                        inputController.requestKeyEvent(0x0D, true);
+                        inputController.requestKeyEvent(0x0D, false);
+                      },
+                      onChanged: (value) {
+                        if (!_useSystemKeyboard) return;
+                        final composing =
+                            _systemKeyboardController.value.composing;
+                        InputDebugService.instance.log(
+                            'IME onChanged len=${value.length} composing=${composing.isValid ? "${composing.start}-${composing.end}" : "invalid"}');
+                        if (!_sendComposingText &&
+                            composing.isValid &&
+                            !composing.isCollapsed) {
+                          InputDebugService.instance.log(
+                              'IME composing active -> dropped (toggle to send composing)');
+                          return;
+                        }
+                        final inputController = WebrtcService
+                            .currentRenderingSession?.inputController;
+                        if (inputController == null) return;
+
+                        final delta = computeSystemKeyboardDelta(
+                          lastValue: _lastSystemKeyboardValue,
+                          currentValue: value,
+                          preferTextForNonAscii: true,
+                          // Even ASCII is sent as text so macOS can inject reliably via unicode typing.
+                          preferTextForAscii: true,
+                        );
+                        InputDebugService.instance.log(
+                            'IME delta ops=${delta.ops.length} lastLen=${_lastSystemKeyboardValue.length} -> curLen=${value.length}');
+                        for (final op in delta.ops) {
+                          switch (op.type) {
+                            case InputOpType.text:
+                              inputController.requestTextInput(op.text);
+                              break;
+                            case InputOpType.key:
+                              // Only used for backspace in current delta encoder.
+                              inputController.requestKeyEvent(
+                                  op.keyCode, op.isDown);
+                              break;
+                          }
+                        }
+                        _lastSystemKeyboardValue = delta.nextLastValue;
+                      },
+                      selectionControls: null,
+                    ),
+                  ),
+                ),
+              ),
           ],
         );
       },
@@ -395,80 +477,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ],
               ),
             ),
-            // Offscreen text client for system keyboard input forwarding.
-            if (_useSystemKeyboard)
-              Positioned(
-                left: -10000,
-                top: -10000,
-                width: 220,
-                height: 44,
-                child: Opacity(
-                  opacity: 0.0,
-                  child: EditableText(
-                    controller: _systemKeyboardController,
-                    focusNode: _systemKeyboardFocusNode,
-                    style: const TextStyle(
-                        fontSize: 16, color: Colors.transparent),
-                    cursorColor: Colors.transparent,
-                    backgroundCursorColor: Colors.transparent,
-                    keyboardType: TextInputType.text,
-                    textInputAction: TextInputAction.send,
-                    maxLines: 1,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    onSubmitted: (_) {
-                      if (!_useSystemKeyboard) return;
-                      final inputController = WebrtcService
-                          .currentRenderingSession?.inputController;
-                      if (inputController == null) return;
-                      // Map "enter/done" to VK_RETURN.
-                      inputController.requestKeyEvent(0x0D, true);
-                      inputController.requestKeyEvent(0x0D, false);
-                    },
-                    onChanged: (value) {
-                      if (!_useSystemKeyboard) return;
-                      final composing =
-                          _systemKeyboardController.value.composing;
-                      InputDebugService.instance.log(
-                          'IME onChanged len=${value.length} composing=${composing.isValid ? "${composing.start}-${composing.end}" : "invalid"}');
-                      if (!_sendComposingText &&
-                          composing.isValid &&
-                          !composing.isCollapsed) {
-                        InputDebugService.instance.log(
-                            'IME composing active -> dropped (toggle to send composing)');
-                        return;
-                      }
-                      final inputController = WebrtcService
-                          .currentRenderingSession?.inputController;
-                      if (inputController == null) return;
-
-                      final delta = computeSystemKeyboardDelta(
-                        lastValue: _lastSystemKeyboardValue,
-                        currentValue: value,
-                        preferTextForNonAscii: true,
-                        // Even ASCII is sent as text so macOS can inject reliably via unicode typing.
-                        preferTextForAscii: true,
-                      );
-                      InputDebugService.instance.log(
-                          'IME delta ops=${delta.ops.length} lastLen=${_lastSystemKeyboardValue.length} -> curLen=${value.length}');
-                      for (final op in delta.ops) {
-                        switch (op.type) {
-                          case InputOpType.text:
-                            inputController.requestTextInput(op.text);
-                            break;
-                          case InputOpType.key:
-                            // Only used for backspace in current delta encoder.
-                            inputController.requestKeyEvent(
-                                op.keyCode, op.isDown);
-                            break;
-                        }
-                      }
-                      _lastSystemKeyboardValue = delta.nextLastValue;
-                    },
-                    selectionControls: null,
-                  ),
-                ),
-              ),
           ],
         ),
       ),
