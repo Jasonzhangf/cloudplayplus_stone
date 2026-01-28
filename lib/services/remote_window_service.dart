@@ -90,6 +90,23 @@ class RemoteWindowService {
     );
   }
 
+  Future<void> selectScreen(RTCDataChannel? channel) async {
+    if (channel == null ||
+        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      error.value = 'DataChannel 未连接';
+      return;
+    }
+    channel.send(
+      RTCDataChannelMessage(
+        jsonEncode({
+          'setCaptureTarget': {
+            'type': 'screen',
+          }
+        }),
+      ),
+    );
+  }
+
   void handleDesktopSourcesMessage(dynamic payload) {
     try {
       final sourcesAny = (payload is Map) ? payload['sources'] : null;

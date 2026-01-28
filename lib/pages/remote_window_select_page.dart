@@ -60,11 +60,22 @@ class _RemoteWindowSelectPageState extends State<RemoteWindowSelectPage> {
                     valueListenable: _service.selectedWindowId,
                     builder: (context, selectedId, ____) {
                       return ListView.separated(
-                        itemCount: sources.length,
+                        itemCount: sources.length + 1,
                         separatorBuilder: (_, __) =>
                             const Divider(height: 1, thickness: 0.5),
                         itemBuilder: (context, index) {
-                          final s = sources[index];
+                          if (index == 0) {
+                            return ListTile(
+                              title: const Text('整个桌面（默认）'),
+                              subtitle: const Text('切回屏幕串流'),
+                              leading: const Icon(Icons.desktop_windows),
+                              onTap: () async {
+                                await _service.selectScreen(widget.channel);
+                                if (context.mounted) Navigator.pop(context);
+                              },
+                            );
+                          }
+                          final s = sources[index - 1];
                           final selected = s.windowId != null &&
                               selectedId != null &&
                               s.windowId == selectedId;

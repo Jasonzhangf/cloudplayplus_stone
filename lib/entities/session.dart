@@ -278,10 +278,19 @@ class StreamingSession {
         }
       };
       // read the latest settings from user settings.
+      final settings = StreamingSettings.toJson();
+      // Default policy: mobile controller always starts with full-desktop stream.
+      // Window selection is done after connection via datachannel.
+      if (AppPlatform.isMobile || AppPlatform.isAndroidTV) {
+        settings.remove('desktopSourceId');
+        settings.remove('sourceType');
+        settings.remove('windowId');
+        settings.remove('windowFrame');
+      }
       WebSocketService.send('requestRemoteControl', {
         'target_uid': ApplicationInfo.user.uid,
         'target_connectionid': controlled.websocketSessionid,
-        'settings': StreamingSettings.toJson(),
+        'settings': settings,
       });
     });
   }
@@ -1126,23 +1135,35 @@ class StreamingSession {
 
     final typeAny = (payload is Map) ? payload['type'] : null;
     final type = typeAny?.toString() ?? 'window';
-    if (type != 'window') return;
-
-    final windowIdAny = (payload is Map) ? payload['windowId'] : null;
-    final sources =
-        await desktopCapturer.getSources(types: [SourceType.Window]);
-    DesktopCapturerSource? selected;
-    if (windowIdAny is num) {
-      final wid = windowIdAny.toInt();
-      for (final s in sources) {
-        if (s.windowId == wid) {
-          selected = s;
-          break;
+    if (type == 'window') {
+      final windowIdAny = (payload is Map) ? payload['windowId'] : null;
+      final sources =
+          await desktopCapturer.getSources(types: [SourceType.Window]);
+      DesktopCapturerSource? selected;
+      if (windowIdAny is num) {
+        final wid = windowIdAny.toInt();
+        for (final s in sources) {
+          if (s.windowId == wid) {
+            selected = s;
+            break;
+          }
         }
       }
+      if (selected == null) return;
+      await _switchCaptureToSource(selected);
+      return;
     }
-    if (selected == null) return;
-    await _switchCaptureToSource(selected);
+
+    if (type == 'screen') {
+      final screens =
+          await desktopCapturer.getSources(types: [SourceType.Screen]);
+      if (screens.isEmpty) return;
+      final idx = streamSettings?.screenId ?? 0;
+      final selected =
+          (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
+      await _switchCaptureToSource(selected);
+      return;
+    }
   }
 
   Future<void> _switchCaptureToSource(DesktopCapturerSource source) async {
