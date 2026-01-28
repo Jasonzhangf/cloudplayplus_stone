@@ -40,7 +40,10 @@ class InputController {
     final resolvedWindowId = windowId ?? (frame?['windowId']?.toInt());
     if (frame != null &&
         frame['x'] != null &&
-        frame['y'] != null && frame['width'] != null && frame['height'] != null && resolvedWindowId != null) {
+        frame['y'] != null &&
+        frame['width'] != null &&
+        frame['height'] != null &&
+        resolvedWindowId != null) {
       final windowRect = RectD(
         left: frame['x']!,
         top: frame['y']!,
@@ -284,15 +287,18 @@ class InputController {
     lasty = y.clamp(0.0, 1.0);
 
     if (_captureMap != null && _captureMap!.windowId != null) {
-      VLOG0('[InputController] window-map enabled windowId=${_captureMap!.windowId}');
+      VLOG0(
+          '[InputController] window-map enabled windowId=${_captureMap!.windowId}');
       // If window streaming metadata exists, map (u,v) to host window pixels.
       final pixel =
           mapContentNormalizedToWindowPixel(map: _captureMap!, u: x, v: y);
       // Directly pass windowId to the new function in HardwareSimulator
       HardwareSimulator.mouse.performMouseMoveToWindow(
         windowId: _captureMap!.windowId!,
-        percentX: (pixel.x - _captureMap!.windowRect.left) / _captureMap!.windowRect.width,
-        percentY: (pixel.y - _captureMap!.windowRect.top) / _captureMap!.windowRect.height,
+        percentX: (pixel.x - _captureMap!.windowRect.left) /
+            _captureMap!.windowRect.width,
+        percentY: (pixel.y - _captureMap!.windowRect.top) /
+            _captureMap!.windowRect.height,
       );
       return;
     }
@@ -340,7 +346,8 @@ class InputController {
       var percentY = (pixel.y - frame.top) / frame.height;
       percentX = percentX.clamp(0.001, 0.999);
       percentY = percentY.clamp(0.001, 0.999);
-      VLOG0('[InputController] window-click: windowId=${_captureMap!.windowId}, pixel=(${pixel.x.toStringAsFixed(1)}, ${pixel.y.toStringAsFixed(1)}), frame=(${frame.left.toStringAsFixed(0)},${frame.top.toStringAsFixed(0)}) ${frame.width.toStringAsFixed(0)}x${frame.height.toStringAsFixed(0)}, percent=(${percentX.toStringAsFixed(2)},${percentY.toStringAsFixed(2)})');
+      VLOG0(
+          '[InputController] window-click: windowId=${_captureMap!.windowId}, pixel=(${pixel.x.toStringAsFixed(1)}, ${pixel.y.toStringAsFixed(1)}), frame=(${frame.left.toStringAsFixed(0)},${frame.top.toStringAsFixed(0)}) ${frame.width.toStringAsFixed(0)}x${frame.height.toStringAsFixed(0)}, percent=(${percentX.toStringAsFixed(2)},${percentY.toStringAsFixed(2)})');
       HardwareSimulator.mouse.performMouseClickToWindow(
         windowId: _captureMap!.windowId!,
         percentX: percentX,
@@ -351,8 +358,8 @@ class InputController {
       return;
     }
     HardwareSimulator.mouse.performMouseClick(buttonId, isDown);
-    VLOG0('[InputController] Called performMouseClick (screen-relative) with buttonId: $buttonId, isDown: $isDown');
-
+    VLOG0(
+        '[InputController] Called performMouseClick (screen-relative) with buttonId: $buttonId, isDown: $isDown');
   }
 
   void requestMouseScroll(double? dx, double? dy) async {
@@ -382,6 +389,28 @@ class InputController {
     double dx = byteData.getFloat32(1, Endian.little);
     double dy = byteData.getFloat32(5, Endian.little);
 
+    if (_captureMap != null && _captureMap!.windowId != null) {
+      // Ensure scroll is targeted to the captured window (not desktop).
+      final pixel = mapContentNormalizedToWindowPixel(
+          map: _captureMap!, u: lastx, v: lasty);
+      final frame = _captureMap!.windowRect;
+      var percentX = (pixel.x - frame.left) / frame.width;
+      var percentY = (pixel.y - frame.top) / frame.height;
+      percentX = percentX.clamp(0.001, 0.999);
+      percentY = percentY.clamp(0.001, 0.999);
+
+      HardwareSimulator.mouse.performMouseMoveToWindow(
+        windowId: _captureMap!.windowId!,
+        percentX: percentX,
+        percentY: percentY,
+      );
+      HardwareSimulator.mouse.performMouseScrollToWindow(
+        windowId: _captureMap!.windowId!,
+        dx: dx,
+        dy: dy,
+      );
+      return;
+    }
     HardwareSimulator.mouse.performMouseScroll(dx, dy);
   }
 
@@ -599,8 +628,8 @@ class InputController {
   void requestTextInput(String text) {
     if (text.isEmpty) return;
     final preview = text.length > 80 ? '${text.substring(0, 80)}…' : text;
-    InputDebugService.instance
-        .log('OUT textInput len=${text.length} "$preview" state=${channel.state}');
+    InputDebugService.instance.log(
+        'OUT textInput len=${text.length} "$preview" state=${channel.state}');
     final mapData = {
       'textInput': {
         'text': text,
