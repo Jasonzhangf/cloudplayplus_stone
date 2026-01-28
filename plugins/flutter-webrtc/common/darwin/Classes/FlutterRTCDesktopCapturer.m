@@ -38,7 +38,19 @@
   return self;
 }
 
-- (void)startWithWindowName:(NSString *)windowName fps:(NSInteger)fps {
+- (CGFloat)_bestEffortBackingScaleForWindowFrame:(CGRect)frame {
+  // ScreenCaptureKit window.frame is in logical points (not physical pixels).
+  // To avoid blurry capture on Retina, multiply by the screen's backingScaleFactor.
+  CGPoint center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
+  for (NSScreen *screen in NSScreen.screens) {
+    if (CGRectContainsPoint(screen.frame, center)) {
+      return screen.backingScaleFactor > 0 ? screen.backingScaleFactor : 1.0;
+    }
+  }
+  return NSScreen.mainScreen.backingScaleFactor > 0 ? NSScreen.mainScreen.backingScaleFactor : 1.0;
+}
+
+- (void)startWithWindowId:(uint32_t)windowId windowNameFallback:(NSString *)windowName fps:(NSInteger)fps {
   __weak __typeof(self) weakSelf = self;
   [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content,
                                                                 NSError * _Nullable error) {
@@ -50,18 +62,27 @@
     }
 
     SCWindow *target = nil;
-    NSString *needle = windowName.lowercaseString;
     for (SCWindow *w in content.windows) {
-      if (w.title && [w.title.lowercaseString isEqualToString:needle]) {
+      if (w.windowID == windowId) {
         target = w;
         break;
       }
     }
-    if (!target) {
+    // Fallback: match by window title if id didn't resolve (best-effort).
+    NSString *needle = windowName.lowercaseString;
+    if (!target && needle.length > 0) {
       for (SCWindow *w in content.windows) {
-        if (w.title && [w.title.lowercaseString containsString:needle]) {
+        if (w.title && [w.title.lowercaseString isEqualToString:needle]) {
           target = w;
           break;
+        }
+      }
+      if (!target) {
+        for (SCWindow *w in content.windows) {
+          if (w.title && [w.title.lowercaseString containsString:needle]) {
+            target = w;
+            break;
+          }
         }
       }
     }
@@ -81,8 +102,10 @@
     NSLog(@"[SCK] Selected window: title=%@ id=%llu", target.title, target.windowID);
 
     SCStreamConfiguration *config = [[SCStreamConfiguration alloc] init];
-    config.width = (int)MAX(1, target.frame.size.width);
-    config.height = (int)MAX(1, target.frame.size.height);
+    CGFloat scale = [self _bestEffortBackingScaleForWindowFrame:target.frame];
+    // width/height are in pixels (not points).
+    config.width = (int)MAX(1, ceil(target.frame.size.width * scale));
+    config.height = (int)MAX(1, ceil(target.frame.size.height * scale));
     // Prefer NV12; it is the most commonly supported format for RTC pipelines.
     config.pixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange;
     config.showsCursor = NO;
@@ -320,7 +343,8 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
     if (source.sourceType == RTCDesktopSourceTypeWindow) {
       if (@available(macOS 12.3, *)) {
         _sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
-        [_sckCapturer startWithWindowName:source.name fps:fps];
+        uint32_t windowId = (uint32_t)[sourceId intValue];
+        [_sckCapturer startWithWindowId:windowId windowNameFallback:source.name fps:fps];
         NSLog(@"start desktop capture (SCK): sourceId: %@, type: window, fps: %lu", sourceId, fps);
         self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
           NSLog(@"stop desktop capture (SCK): sourceId: %@, type: window, trackID %@", sourceId, trackUUID);
