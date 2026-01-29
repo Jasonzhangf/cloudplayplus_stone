@@ -136,6 +136,11 @@ class DesktopCapturerNative extends DesktopCapturer {
   final StreamController<DesktopCapturerSource> _onThumbnailChanged =
       StreamController.broadcast(sync: true);
 
+  @override
+  StreamController<Map<String, dynamic>> get onFrameSize => _onFrameSize;
+  final StreamController<Map<String, dynamic>> _onFrameSize =
+      StreamController.broadcast(sync: true);
+
   final Map<String, DesktopCapturerSourceNative> _sources = {};
 
   void handleEvent(String event, Map<dynamic, dynamic> map) async {
@@ -172,6 +177,11 @@ class DesktopCapturerNative extends DesktopCapturer {
           _onNameChanged.add(source);
           source.onNameChanged.add(source.name);
         }
+        break;
+      case 'desktopCaptureFrameSize':
+        _onFrameSize.add(
+          map.map((k, v) => MapEntry(k.toString(), v)),
+        );
         break;
     }
   }

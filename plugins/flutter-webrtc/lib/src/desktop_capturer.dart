@@ -75,6 +75,11 @@ abstract class DesktopCapturer {
       throw UnimplementedError();
   StreamController<DesktopCapturerSource> get onThumbnailChanged =>
       throw UnimplementedError();
+  /// Emits frame-size events for desktop capture pipelines (best-effort).
+  ///
+  /// On macOS this is used to report the actual captured size (post-crop for SCK).
+  StreamController<Map<String, dynamic>> get onFrameSize =>
+      throw UnimplementedError();
 
   ///Get the screen source of the specified types
   Future<List<DesktopCapturerSource>> getSources(

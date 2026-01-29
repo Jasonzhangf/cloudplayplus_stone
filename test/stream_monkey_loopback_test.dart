@@ -169,6 +169,7 @@ void main() {
       includeWindows: true,
       includeIterm2: true,
       waitTargetChangedTimeout: const Duration(seconds: 1),
+      waitFrameSize: false,
     );
 
     // Monkey is async and will send requests; keep pumping.

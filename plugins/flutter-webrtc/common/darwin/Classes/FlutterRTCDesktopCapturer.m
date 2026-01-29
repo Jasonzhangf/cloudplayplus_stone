@@ -23,9 +23,14 @@
 @property(nonatomic, strong) dispatch_queue_t sampleQueue;
 @property(nonatomic, assign) int64_t startTimeNs;
 @property(nonatomic, assign) BOOL sentFirstFrame;
+@property(nonatomic, assign) int lastReportedWidth;
+@property(nonatomic, assign) int lastReportedHeight;
 @property(nonatomic, assign) BOOL hasCrop;
 @property(nonatomic, assign) CGRect cropRectNorm; // normalized [0..1], origin top-left
 @property(nonatomic, strong) CIContext *ciContext;
+@property(nonatomic, copy) FlutterEventSink eventSink;
+@property(nonatomic, copy) NSString *sourceId;
+@property(nonatomic, assign) uint32_t windowId;
 @end
 
 @implementation FlutterSCKInlineCapturer
@@ -38,8 +43,11 @@
     _sampleQueue = dispatch_queue_create("FlutterSCKInlineCapturer.sample", DISPATCH_QUEUE_SERIAL);
     _startTimeNs = 0;
     _sentFirstFrame = NO;
+    _lastReportedWidth = 0;
+    _lastReportedHeight = 0;
     _hasCrop = NO;
     _cropRectNorm = CGRectZero;
+    _windowId = 0;
   }
   return self;
 }
@@ -61,8 +69,11 @@
 }
 
 - (void)startWithWindowId:(uint32_t)windowId windowNameFallback:(NSString *)windowName fps:(NSInteger)fps cropRectNormalized:(NSDictionary *)cropRect {
+  self.windowId = windowId;
   self.hasCrop = NO;
   self.cropRectNorm = CGRectZero;
+  self.lastReportedWidth = 0;
+  self.lastReportedHeight = 0;
   if (cropRect && [cropRect isKindOfClass:[NSDictionary class]]) {
     id xAny = cropRect[@"x"];
     id yAny = cropRect[@"y"];
@@ -193,10 +204,12 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
   CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
   if (!pixelBuffer) return;
 
+  CVPixelBufferRef originalPixelBuffer = pixelBuffer;
+  size_t srcW = CVPixelBufferGetWidth(originalPixelBuffer);
+  size_t srcH = CVPixelBufferGetHeight(originalPixelBuffer);
+
   CVPixelBufferRef croppedPixelBuffer = nil;
   if (self.hasCrop) {
-    size_t srcW = CVPixelBufferGetWidth(pixelBuffer);
-    size_t srcH = CVPixelBufferGetHeight(pixelBuffer);
     if (srcW > 0 && srcH > 0) {
       CGFloat nx = MAX(0.0, MIN(1.0, self.cropRectNorm.origin.x));
       CGFloat ny = MAX(0.0, MIN(1.0, self.cropRectNorm.origin.y));
@@ -273,6 +286,35 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                                                   timeStampNs:tsNs];
   // Pass a real RTCVideoCapturer instance; some implementations treat nil capturer specially.
   [self.captureDelegate capturer:self.rtcCapturer didCaptureVideoFrame:frame];
+
+  if (self.eventSink) {
+    const int outW = (int)frame.width;
+    const int outH = (int)frame.height;
+    if (outW > 0 && outH > 0 &&
+        (self.lastReportedWidth != outW || self.lastReportedHeight != outH || !self.sentFirstFrame)) {
+      self.lastReportedWidth = outW;
+      self.lastReportedHeight = outH;
+      NSMutableDictionary *payload = [@{
+        @"event": @"desktopCaptureFrameSize",
+        @"sourceId": self.sourceId ?: @"",
+        @"windowId": @(self.windowId),
+        @"width": @(outW),
+        @"height": @(outH),
+        @"srcWidth": @(srcW),
+        @"srcHeight": @(srcH),
+        @"hasCrop": @(self.hasCrop),
+      } mutableCopy];
+      if (self.hasCrop) {
+        payload[@"cropRect"] = @{
+          @"x": @(self.cropRectNorm.origin.x),
+          @"y": @(self.cropRectNorm.origin.y),
+          @"w": @(self.cropRectNorm.size.width),
+          @"h": @(self.cropRectNorm.size.height),
+        };
+      }
+      postEvent(self.eventSink, payload);
+    }
+  }
 
   if (croppedPixelBuffer) {
     CVPixelBufferRelease(croppedPixelBuffer);
@@ -453,6 +495,8 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
 	    if (source.sourceType == RTCDesktopSourceTypeWindow) {
 	      if (@available(macOS 12.3, *)) {
 	        _sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
+          _sckCapturer.eventSink = self.eventSink;
+          _sckCapturer.sourceId = sourceId ?: @"";
 	        uint32_t windowId = (uint32_t)[sourceId intValue];
 	        [_sckCapturer startWithWindowId:windowId windowNameFallback:source.name fps:fps cropRectNormalized:cropRect];
 	        NSLog(@"start desktop capture (SCK): sourceId: %@, type: window, fps: %lu", sourceId, fps);

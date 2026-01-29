@@ -12,6 +12,7 @@ import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/quick_target_service.dart';
 import 'package:cloudplayplus/services/streamed_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
+import 'package:cloudplayplus/services/video_frame_size_event_bus.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/utils/host/host_command_runner.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
@@ -115,6 +116,10 @@ class StreamingSession {
 
   Timer? _clipboardTimer;
   String _lastClipboardContent = '';
+
+  StreamSubscription<Map<String, dynamic>>? _desktopCaptureFrameSizeSub;
+  String? _lastDesktopCaptureFrameSizeSig;
+  int _lastDesktopCaptureFrameSizeSentAtMs = 0;
 
   // 添加生命周期监听器
   static final _lifecycleObserver = _AppLifecycleObserver();
@@ -570,6 +575,8 @@ class StreamingSession {
             cropRect: streamSettings?.cropRect);
       }
 
+      _ensureHostFrameSizeBridge();
+
       //For web, RTCDataChannel.readyState is not 'open', and this should only for windows
       /*if (!kIsWeb && Platform.isWindows){
       channel.send(RTCDataChannelMessage("csrhook"));
@@ -741,6 +748,9 @@ class StreamingSession {
       //clean audio session.
       audioSession?.dispose();
       audioSession = null;
+      await _desktopCaptureFrameSizeSub?.cancel();
+      _desktopCaptureFrameSizeSub = null;
+      _lastDesktopCaptureFrameSizeSig = null;
       if (_switchedVideoStream != null) {
         try {
           for (final t in _switchedVideoStream!.getTracks()) {
@@ -1176,10 +1186,79 @@ class StreamingSession {
             );
           }
           break;
+        case "desktopCaptureFrameSize":
+          final payload = data['desktopCaptureFrameSize'];
+          if (payload is Map) {
+            VideoFrameSizeEventBus.instance.emit(
+              payload.map((k, v) => MapEntry(k.toString(), v)),
+            );
+          }
+          break;
         default:
           VLOG0("unhandled message from host.please debug");
       }
     }
+  }
+
+  void _ensureHostFrameSizeBridge() {
+    if (!AppPlatform.isDeskTop) return;
+    if (_desktopCaptureFrameSizeSub != null) return;
+
+    _desktopCaptureFrameSizeSub = desktopCapturer.onFrameSize.stream.listen(
+      (payload) {
+        if (selfSessionType != SelfSessionType.controlled) return;
+        final dc = channel;
+        if (dc == null ||
+            dc.state != RTCDataChannelState.RTCDataChannelOpen) {
+          return;
+        }
+
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final windowId = (payload['windowId'] is num)
+            ? (payload['windowId'] as num).toInt()
+            : null;
+        final width =
+            (payload['width'] is num) ? (payload['width'] as num).toInt() : null;
+        final height = (payload['height'] is num)
+            ? (payload['height'] as num).toInt()
+            : null;
+
+        final captureType =
+            (streamSettings?.captureTargetType ?? '').toString().trim();
+        final sig = [
+          captureType,
+          streamSettings?.desktopSourceId,
+          streamSettings?.windowId,
+          streamSettings?.iterm2SessionId,
+          windowId,
+          width,
+          height,
+        ].join('|');
+
+        if (_lastDesktopCaptureFrameSizeSig == sig &&
+            (nowMs - _lastDesktopCaptureFrameSizeSentAtMs) < 300) {
+          return;
+        }
+        _lastDesktopCaptureFrameSizeSig = sig;
+        _lastDesktopCaptureFrameSizeSentAtMs = nowMs;
+
+        final out = <String, dynamic>{
+          ...payload,
+          'desktopSourceId': streamSettings?.desktopSourceId,
+          'sourceType': streamSettings?.sourceType,
+          'captureTargetType': streamSettings?.captureTargetType,
+          'iterm2SessionId': streamSettings?.iterm2SessionId,
+          'cropRect': streamSettings?.cropRect,
+          'sentAtMs': nowMs,
+        };
+        dc.send(
+          RTCDataChannelMessage(
+            jsonEncode({'desktopCaptureFrameSize': out}),
+          ),
+        );
+      },
+      onError: (_) {},
+    );
   }
 
   Future<void> _handleDesktopSourcesRequest(dynamic payload) async {
@@ -1901,6 +1980,25 @@ iterm2.run_until_complete(main)
     streamSettings?.sourceType = desktopSourceTypeToString[source.type];
     streamSettings?.windowId = source.windowId;
     streamSettings?.windowFrame = source.frame;
+    if (streamSettings != null) {
+      final captureTypeAny = extraCaptureTarget?['captureTargetType'];
+      if (captureTypeAny != null) {
+        streamSettings!.captureTargetType = captureTypeAny.toString();
+      } else {
+        streamSettings!.captureTargetType = desktopSourceTypeToString[source.type];
+      }
+      final iterm2SessionIdAny = extraCaptureTarget?['iterm2SessionId'];
+      streamSettings!.iterm2SessionId =
+          (iterm2SessionIdAny != null) ? iterm2SessionIdAny.toString() : null;
+
+      final cropAny = extraCaptureTarget?['cropRect'];
+      if (streamSettings!.captureTargetType == 'iterm2' && cropAny is Map) {
+        streamSettings!.cropRect = cropAny.map((k, v) => MapEntry(
+            k.toString(), (v is num) ? (v as num).toDouble() : 0.0));
+      } else {
+        streamSettings!.cropRect = null;
+      }
+    }
     inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
         windowId: streamSettings?.windowId, cropRect: streamSettings?.cropRect);
 
