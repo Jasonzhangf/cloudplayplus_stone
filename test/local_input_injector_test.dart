@@ -36,13 +36,14 @@ class RecordingPlatform extends HardwareSimulatorPlatform {
   }
 
   @override
-  Future<void> performTextInputToWindow({
+  Future<bool> performTextInputToWindow({
     required int windowId,
     required String text,
   }) async {
     textInputToWindowCalls++;
     lastWindowId = windowId;
     lastText = text;
+    return true;
   }
 
   @override
@@ -96,4 +97,3 @@ void main() {
     expect(platform.lastPercentY, closeTo(0.75, 1e-6));
   });
 }
-

@@ -18,19 +18,21 @@ class RecordingHardwareSimulatorPlatform extends HardwareSimulatorPlatform {
   int mouseScrollToWindowCalls = 0;
 
   @override
-  Future<void> performTextInput(String text) async {
+  Future<bool> performTextInput(String text) async {
     textInputCalls++;
     lastText = text;
+    return true;
   }
 
   @override
-  Future<void> performTextInputToWindow({
+  Future<bool> performTextInputToWindow({
     required int windowId,
     required String text,
   }) async {
     textInputToWindowCalls++;
     lastWindowId = windowId;
     lastText = text;
+    return true;
   }
 
   @override
@@ -77,7 +79,7 @@ class RecordingHardwareSimulatorPlatform extends HardwareSimulatorPlatform {
 class UnimplementedWindowInjectionPlatform
     extends RecordingHardwareSimulatorPlatform {
   @override
-  Future<void> performTextInputToWindow({
+  Future<bool> performTextInputToWindow({
     required int windowId,
     required String text,
   }) async {

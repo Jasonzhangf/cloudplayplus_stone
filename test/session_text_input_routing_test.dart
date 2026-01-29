@@ -14,19 +14,21 @@ class RecordingHardwareSimulatorPlatform extends HardwareSimulatorPlatform {
   String? lastText;
 
   @override
-  Future<void> performTextInput(String text) async {
+  Future<bool> performTextInput(String text) async {
     textInputCalls++;
     lastText = text;
+    return true;
   }
 
   @override
-  Future<void> performTextInputToWindow({
+  Future<bool> performTextInputToWindow({
     required int windowId,
     required String text,
   }) async {
     textInputToWindowCalls++;
     lastWindowId = windowId;
     lastText = text;
+    return true;
   }
 }
 
@@ -94,4 +96,3 @@ void main() {
     });
   });
 }
-

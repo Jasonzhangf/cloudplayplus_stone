@@ -77,6 +77,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   bool _isDragging = false; // 是否处于拖拽模式
   int? _draggingPointerId; // 拖拽的手指ID
   bool _lockSingleFingerAfterTwoFinger = false;
+  ({double x, double y})? _lastScrollAnchor;
 
   // 快速单击的阈值
   static const Duration _quickTapDuration =
@@ -537,25 +538,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     if (!StreamingSettings.touchpadTwoFingerScroll) return;
     // 仅允许垂直滚动。
     // 需求：双指上下滚动要模拟鼠标上下滚动，并且滚轮注入点在左手指位置。
-    // 做法：移动鼠标到“两指中 X 更小的手指”处，再发送滚轮。
+    // 做法：把左手指位置作为 anchor 一并发送到滚动包，
+    // 避免 move/scroll 分包导致的竞态（滚到桌面/错误窗口）。
     if (_touchpadPointers.length == 2) {
       final positions = _touchpadPointers.values.toList();
       final leftFinger =
           (positions[0].dx <= positions[1].dx) ? positions[0] : positions[1];
       final pos = _calculatePositionPercent(leftFinger);
-      if (pos != null) {
-        WebrtcService.currentRenderingSession?.inputController
-            ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
-                WebrtcService.currentRenderingSession!.screenId);
-      }
+      if (pos != null) _lastScrollAnchor = (x: pos.xPercent, y: pos.yPercent);
     } else if (_pinchFocalPoint != null) {
       // Fallback: use the two-finger center.
       final pos = _calculatePositionPercent(_pinchFocalPoint!);
-      if (pos != null) {
-        WebrtcService.currentRenderingSession?.inputController
-            ?.requestMoveMouseAbsl(pos.xPercent, pos.yPercent,
-                WebrtcService.currentRenderingSession!.screenId);
-      }
+      if (pos != null) _lastScrollAnchor = (x: pos.xPercent, y: pos.yPercent);
     }
     final speed = StreamingSettings.touchpadTwoFingerScrollSpeed;
     final sign = StreamingSettings.touchpadTwoFingerScrollInvert ? -1.0 : 1.0;
@@ -961,8 +955,13 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     super.initState();
     _scrollController.onScroll = (dx, dy) {
       if (dx.abs() > 0 || dy.abs() > 0) {
-        WebrtcService.currentRenderingSession?.inputController
-            ?.requestMouseScroll(dx * 10, dy * 10);
+        final anchor = _lastScrollAnchor;
+        WebrtcService.currentRenderingSession?.inputController?.requestMouseScroll(
+          dx * 10,
+          dy * 10,
+          anchorX: anchor?.x,
+          anchorY: anchor?.y,
+        );
       }
     };
     ControlManager().addEventListener(_handleControlEvent);

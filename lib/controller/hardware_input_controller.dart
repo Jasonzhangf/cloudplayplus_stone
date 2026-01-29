@@ -379,18 +379,29 @@ class InputController {
         '[InputController] Called performMouseClick (screen-relative) with buttonId: $buttonId, isDown: $isDown');
   }
 
-  void requestMouseScroll(double? dx, double? dy) async {
+  void requestMouseScroll(double? dx, double? dy,
+      {double? anchorX, double? anchorY}) async {
     dx ??= 0;
     dy ??= 0;
     if (StreamingSettings.revertCursorWheel) {
       dy = -dy;
     }
-    // 创建一个 ByteData 足够存储 LP_MOUSEBUTTON, buttonId, isDown
-    ByteData byteData = ByteData(9);
+    // If an anchor point is provided, include it so the host can target wheel
+    // events to the correct window/location in a single packet (avoids race
+    // between move and scroll).
+    final hasAnchor = anchorX != null && anchorY != null;
+    // Packet formats:
+    // - legacy: [type, dx(f32), dy(f32)] => 9 bytes
+    // - anchored: [type, dx(f32), dy(f32), x(f32), y(f32)] => 17 bytes
+    ByteData byteData = ByteData(hasAnchor ? 17 : 9);
     byteData.setUint8(0, LP_MOUSE_SCROLL);
     // 将dx, dy转换为浮点数并存储
     byteData.setFloat32(1, dx, Endian.little);
     byteData.setFloat32(5, dy, Endian.little);
+    if (hasAnchor) {
+      byteData.setFloat32(9, anchorX!.clamp(0.0, 1.0), Endian.little);
+      byteData.setFloat32(13, anchorY!.clamp(0.0, 1.0), Endian.little);
+    }
 
     // 转换 ByteData 为 Uint8List
     Uint8List buffer = byteData.buffer.asUint8List();
@@ -411,8 +422,15 @@ class InputController {
       // On macOS, wheel events go to the window under cursor; move cursor into
       // the window first (atomically inside the native call) to avoid the
       // desktop eating the scroll.
-      final pixel = mapContentNormalizedToWindowPixel(
-          map: _captureMap!, u: lastx, v: lasty);
+      double u = lastx;
+      double v = lasty;
+      if (buffer.length >= 17) {
+        // Anchored scroll packet: use provided point (content-normalized).
+        u = byteData.getFloat32(9, Endian.little).clamp(0.0, 1.0);
+        v = byteData.getFloat32(13, Endian.little).clamp(0.0, 1.0);
+      }
+      final pixel =
+          mapContentNormalizedToWindowPixel(map: _captureMap!, u: u, v: v);
       final frame = _captureMap!.windowRect;
       var percentX = (pixel.x - frame.left) / frame.width;
       var percentY = (pixel.y - frame.top) / frame.height;

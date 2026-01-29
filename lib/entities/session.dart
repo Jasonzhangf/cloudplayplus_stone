@@ -30,6 +30,7 @@ import '../services/webrtc_service.dart';
 import '../webrtctest/rtc_service_impl.dart';
 import '../utils/rtc_utils.dart';
 import '../utils/input/input_trace.dart';
+import '../utils/input/input_debug.dart';
 import 'messages.dart';
 
 /*
@@ -121,6 +122,7 @@ class StreamingSession {
   StreamSubscription<Map<String, dynamic>>? _desktopCaptureFrameSizeSub;
   String? _lastDesktopCaptureFrameSizeSig;
   int _lastDesktopCaptureFrameSizeSentAtMs = 0;
+  int _lastRenegotiateAtMs = 0;
 
   // 添加生命周期监听器
   static final _lifecycleObserver = _AppLifecycleObserver();
@@ -957,6 +959,23 @@ class StreamingSession {
     }
   }
 
+  void _sendInputInjectResult(Map<String, dynamic> payload) {
+    if (selfSessionType != SelfSessionType.controlled) return;
+    final dc = channel;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    try {
+      dc.send(
+        RTCDataChannelMessage(
+          jsonEncode({'inputInjectResult': payload}),
+        ),
+      );
+    } catch (_) {
+      // Best effort.
+    }
+  }
+
   Future<void> processDataChannelMessageFromClient(
       RTCDataChannelMessage message) async {
     if (InputTraceService.instance.isRecording) {
@@ -1063,27 +1082,48 @@ class StreamingSession {
           final text =
               (payload is Map) ? (payload['text']?.toString() ?? '') : '';
           if (text.isEmpty) break;
-          VLOG0(
-              '[INPUT] textInput len=${text.length} captureType=${streamSettings?.captureTargetType} windowId=${streamSettings?.windowId} iterm2=${streamSettings?.iterm2SessionId}');
+          InputDebugService.instance.log(
+              'IN textInput len=${text.length} captureType=${streamSettings?.captureTargetType} windowId=${streamSettings?.windowId} iterm2=${streamSettings?.iterm2SessionId}');
           final captureType = streamSettings?.captureTargetType;
           final iterm2SessionId = streamSettings?.iterm2SessionId;
+          bool ok = true;
+          String method = 'unknown';
           if (captureType == 'iterm2' &&
               iterm2SessionId != null &&
               iterm2SessionId.isNotEmpty) {
             // iTerm2 is a TTY: prefer session-level write to avoid IME/keyboard quirks.
-            await _sendTextToIterm2Session(
+            ok = await _sendTextToIterm2Session(
               sessionId: iterm2SessionId,
               text: text,
             );
+            method = 'iterm2';
+            _sendInputInjectResult({
+              'ok': ok,
+              'method': method,
+              'textLen': text.length,
+              'captureTargetType': captureType,
+              'iterm2SessionId': iterm2SessionId,
+              'windowId': streamSettings?.windowId,
+            });
             break;
           }
           final windowId = streamSettings?.windowId;
           if (windowId != null) {
-            await HardwareSimulator.keyboard
+            ok = await HardwareSimulator.keyboard
                 .performTextInputToWindow(windowId: windowId, text: text);
+            method = 'window';
           } else {
-            await HardwareSimulator.keyboard.performTextInput(text);
+            ok = await HardwareSimulator.keyboard.performTextInput(text);
+            method = 'global';
           }
+          _sendInputInjectResult({
+            'ok': ok,
+            'method': method,
+            'textLen': text.length,
+            'captureTargetType': captureType,
+            'windowId': windowId,
+            'iterm2SessionId': iterm2SessionId,
+          });
           break;
         case "desktopSourcesRequest":
           if (!AppPlatform.isDeskTop) break;
@@ -1229,6 +1269,22 @@ class StreamingSession {
             VideoFrameSizeEventBus.instance.emit(
               payload.map((k, v) => MapEntry(k.toString(), v)),
             );
+          }
+          break;
+        case "inputInjectResult":
+          final payload = data['inputInjectResult'];
+          if (payload is Map) {
+            final okAny = payload['ok'];
+            final ok = okAny is bool ? okAny : null;
+            final method = payload['method']?.toString() ?? '';
+            final ct = payload['captureTargetType']?.toString() ?? '';
+            final windowIdAny = payload['windowId'];
+            final windowId = windowIdAny is num ? windowIdAny.toInt() : null;
+            final iterm2 = payload['iterm2SessionId']?.toString();
+            final textLenAny = payload['textLen'];
+            final textLen = textLenAny is num ? textLenAny.toInt() : null;
+            InputDebugService.instance.log(
+                'IN inputInjectResult ok=$ok method=$method capture=$ct windowId=$windowId iterm2=$iterm2 textLen=$textLen');
           }
           break;
         default:
@@ -1519,7 +1575,13 @@ iterm2.run_until_complete(main)
       // Idempotency: ignore repeated target requests (e.g. reconnect restore + UI tap).
       if (streamSettings != null) {
         if (type == 'screen' && streamSettings!.captureTargetType == 'screen') {
-          return;
+          final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
+          final reqSourceId = sourceIdAny?.toString() ?? '';
+          if (reqSourceId.isEmpty ||
+              (streamSettings!.desktopSourceId != null &&
+                  streamSettings!.desktopSourceId == reqSourceId)) {
+            return;
+          }
         }
         if (type == 'window') {
           final windowIdAny = (payload is Map) ? payload['windowId'] : null;
@@ -2094,6 +2156,14 @@ iterm2.run_until_complete(main)
     inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
         windowId: streamSettings?.windowId, cropRect: streamSettings?.cropRect);
 
+    final capType =
+        (extraCaptureTarget?['captureTargetType'] ?? streamSettings?.captureTargetType)
+            ?.toString();
+    if (capType == 'iterm2' && cropRectNormalized != null) {
+      unawaited(_maybeRenegotiateAfterCaptureSwitch(
+          reason: 'iterm2-crop-switch'));
+    }
+
     channel?.send(
       RTCDataChannelMessage(
         jsonEncode({
@@ -2109,6 +2179,62 @@ iterm2.run_until_complete(main)
         }),
       ),
     );
+  }
+
+  Future<void> _maybeRenegotiateAfterCaptureSwitch({
+    required String reason,
+  }) async {
+    // On some Android decoders/hardware pipelines, switching capture resolution/crop
+    // (especially for iTerm2 panel capture) can result in transient green/black frames
+    // until a fresh keyframe/codec config arrives. Renegotiation is a heavy but reliable
+    // way to force the sender to emit fresh SPS/PPS.
+    if (selfSessionType != SelfSessionType.controlled) return;
+    if (pc == null) return;
+    if (streamSettings == null) return;
+    if (streamSettings?.bitrate == null) return;
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if ((nowMs - _lastRenegotiateAtMs) < 1500) return;
+    _lastRenegotiateAtMs = nowMs;
+
+    // Only renegotiate when signaling state is stable; otherwise we risk "glare".
+    if (pc!.signalingState !=
+        RTCSignalingState.RTCSignalingStateStable) {
+      return;
+    }
+
+    try {
+      RTCSessionDescription sdp = await pc!.createOffer({
+        'mandatory': {
+          'OfferToReceiveAudio': false,
+          'OfferToReceiveVideo': true,
+        },
+        'optional': [],
+      });
+
+      // Keep codec preference consistent with initial offer.
+      if (AppPlatform.isMacos) {
+        final ct = (controller.devicetype).toString().toLowerCase();
+        final isMobileController =
+            ct == 'android' || ct == 'ios' || ct == 'androidtv';
+        final prefer = isMobileController ? 'h264' : 'av1';
+        setPreferredCodec(sdp, audio: 'opus', video: prefer);
+      }
+
+      await pc!.setLocalDescription(_fixSdp(sdp, streamSettings!.bitrate!));
+
+      WebSocketService.send('offer', {
+        'source_connectionid': controlled.websocketSessionid,
+        'target_uid': controller.uid,
+        'target_connectionid': controller.websocketSessionid,
+        'description': {'sdp': sdp.sdp, 'type': sdp.type},
+        'bitrate': streamSettings!.bitrate,
+        'reason': reason,
+      });
+      InputDebugService.instance.log('HOST renegotiate sent reason=$reason');
+    } catch (e) {
+      InputDebugService.instance.log('HOST renegotiate failed reason=$reason err=$e');
+    }
   }
 
   Future<bool> _handleIterm2TtyKeyEvent({
@@ -2269,7 +2395,7 @@ iterm2.run_until_complete(main)
     return true;
   }
 
-  Future<void> _sendTextToIterm2Session({
+  Future<bool> _sendTextToIterm2Session({
     required String sessionId,
     required String text,
   }) async {
@@ -2286,7 +2412,7 @@ import sys
 try:
     import iterm2
 except Exception as e:
-    print(json.dumps({"error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
+    print(json.dumps({"ok": False, "error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
     raise SystemExit(0)
 
 SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -2323,17 +2449,33 @@ async def main(connection):
         if target:
             break
     if not target:
+        print(json.dumps({"ok": False, "error": f"session not found: {SESSION_ID}"}, ensure_ascii=False))
         return
-    await target.async_send_text(text)
+    try:
+        await target.async_send_text(text)
+        print(json.dumps({"ok": True}, ensure_ascii=False))
+    except Exception as e:
+        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
 
 iterm2.run_until_complete(main)
 ''';
 
     try {
-      await runner.run('python3', ['-c', script, sessionId, textB64],
+      final res = await runner.run('python3', ['-c', script, sessionId, textB64],
           timeout: timeout);
+      if (res.exitCode != 0) return false;
+      final out = res.stdoutText.trim();
+      if (out.isEmpty) return true;
+      try {
+        final any = jsonDecode(out);
+        if (any is Map && any['ok'] is bool) {
+          return any['ok'] as bool;
+        }
+      } catch (_) {}
+      return true;
     } catch (_) {
       // Best effort: ignore.
+      return false;
     }
   }
 

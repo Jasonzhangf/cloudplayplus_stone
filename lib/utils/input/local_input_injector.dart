@@ -107,7 +107,34 @@ class LocalInputInjector {
         {
           final dx = byteData.getFloat32(1, Endian.little);
           final dy = byteData.getFloat32(5, Endian.little);
-          HardwareSimulator.mouse.performMouseScroll(dx, dy);
+          final winId = _windowId;
+          if (winId != null && _captureMap != null) {
+            double u = lastx;
+            double v = lasty;
+            if (binary.length >= 17) {
+              u = byteData.getFloat32(9, Endian.little).clamp(0.0, 1.0);
+              v = byteData.getFloat32(13, Endian.little).clamp(0.0, 1.0);
+            }
+            final pixel = mapContentNormalizedToWindowPixel(
+              map: _captureMap!,
+              u: u,
+              v: v,
+            );
+            final frame = _captureMap!.windowRect;
+            var percentX = (pixel.x - frame.left) / frame.width;
+            var percentY = (pixel.y - frame.top) / frame.height;
+            percentX = percentX.clamp(0.001, 0.999);
+            percentY = percentY.clamp(0.001, 0.999);
+            await HardwareSimulator.mouse.performMouseScrollToWindow(
+              windowId: winId,
+              dx: dx,
+              dy: dy,
+              percentX: percentX,
+              percentY: percentY,
+            );
+          } else {
+            HardwareSimulator.mouse.performMouseScroll(dx, dy);
+          }
         }
         return;
       case LP_KEYPRESSED:
