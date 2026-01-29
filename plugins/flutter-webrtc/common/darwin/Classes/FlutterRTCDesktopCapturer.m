@@ -250,13 +250,20 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
           CGRect cropPx = CGRectMake(x, yBottom, w, h);
           CIImage *cropped = [img imageByCroppingToRect:cropPx];
 
+          // Note: Rendering CIImage directly into an NV12 (BiPlanar420) CVPixelBuffer can
+          // produce green frames on some macOS setups (often due to chroma planes not being
+          // populated as expected). Use BGRA for the cropped output buffer to keep rendering
+          // reliable; WebRTC will convert internally as needed.
           NSDictionary *attrs = @{(id)kCVPixelBufferIOSurfacePropertiesKey : @{}};
           CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault, w, h,
-                                               kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                               kCVPixelFormatType_32BGRA,
                                                (__bridge CFDictionaryRef)attrs,
                                                &croppedPixelBuffer);
           if (cvret == kCVReturnSuccess && croppedPixelBuffer) {
-            [self.ciContext render:cropped toCVPixelBuffer:croppedPixelBuffer];
+            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
+            CGRect bounds = CGRectMake(0, 0, w, h);
+            [self.ciContext render:cropped toCVPixelBuffer:croppedPixelBuffer bounds:bounds colorSpace:cs];
+            if (cs) CGColorSpaceRelease(cs);
           } else {
             if (croppedPixelBuffer) {
               CVPixelBufferRelease(croppedPixelBuffer);
