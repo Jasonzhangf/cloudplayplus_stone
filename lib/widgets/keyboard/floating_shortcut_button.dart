@@ -10,6 +10,7 @@ import '../../pages/stream_target_select_page.dart';
 import '../../services/quick_target_service.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
+import '../../services/stream_monkey_service.dart';
 import '../../controller/screen_controller.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/system_keyboard_delta.dart';
@@ -471,8 +472,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       enabled: channelOpen,
                       onPickMode: () => _showStreamModePicker(context, channel),
                       onPickTarget: () => _openTargetPicker(context),
-                      onPickModeAndTarget: () =>
-                          _showStreamModePicker(context, channel, openTarget: true),
+                      onPickModeAndTarget: () => _showStreamModePicker(
+                          context, channel,
+                          openTarget: true),
                       onApplyFavorite: (target) {
                         _applyQuickTarget(target);
                       },
@@ -552,9 +554,11 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       setState(() => _useSystemKeyboard = !_useSystemKeyboard);
                       if (_useSystemKeyboard) {
                         ScreenController.setShowVirtualKeyboard(false);
-                        FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+                        FocusScope.of(context)
+                            .requestFocus(_systemKeyboardFocusNode);
                         WidgetsBinding.instance.addPostFrameCallback((_) {
-                          SystemChannels.textInput.invokeMethod('TextInput.show');
+                          SystemChannels.textInput
+                              .invokeMethod('TextInput.show');
                         });
                       } else {
                         SystemChannels.textInput.invokeMethod('TextInput.hide');
@@ -647,7 +651,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
   Future<void> _applyQuickTarget(QuickStreamTarget target) async {
     final channel = WebrtcService.currentRenderingSession?.channel;
-    if (channel == null || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+    if (channel == null ||
+        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       return;
     }
     await _quick.applyTarget(channel, target);
@@ -995,7 +1000,8 @@ class _FavoriteButton extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white.withValues(alpha: target == null ? 0.45 : 0.92),
+                  color: Colors.white
+                      .withValues(alpha: target == null ? 0.45 : 0.92),
                 ),
               ),
             ),
@@ -1091,6 +1097,11 @@ class _ShortcutSettingsSheet extends StatefulWidget {
 
 class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
   late ShortcutSettings _settings;
+  int _monkeyIterations = 60;
+  double _monkeyDelayMs = 600;
+  bool _monkeyIncludeScreen = true;
+  bool _monkeyIncludeWindows = true;
+  bool _monkeyIncludeIterm2 = true;
 
   @override
   void initState() {
@@ -1242,6 +1253,170 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                       : null,
                   icon: const Icon(Icons.window),
                   label: const Text('选择远端窗口'),
+                ),
+                const SizedBox(height: 8),
+                ValueListenableBuilder<bool>(
+                  valueListenable: StreamMonkeyService.instance.running,
+                  builder: (context, running, _) {
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'Monkey 串流测试',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: channelOpen && !running
+                                    ? () async {
+                                        await StreamMonkeyService.instance
+                                            .start(
+                                          channel: channel!,
+                                          iterations: _monkeyIterations,
+                                          delay: Duration(
+                                            milliseconds:
+                                                _monkeyDelayMs.round(),
+                                          ),
+                                          includeScreen: _monkeyIncludeScreen,
+                                          includeWindows: _monkeyIncludeWindows,
+                                          includeIterm2: _monkeyIncludeIterm2,
+                                        );
+                                      }
+                                    : null,
+                                icon: const Icon(Icons.play_arrow),
+                                label: const Text('开始'),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: running
+                                    ? () => StreamMonkeyService.instance.stop()
+                                    : null,
+                                icon: const Icon(Icons.stop),
+                                label: const Text('停止'),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('迭代次数: $_monkeyIterations'),
+                                  Slider(
+                                    value: _monkeyIterations.toDouble(),
+                                    min: 10,
+                                    max: 200,
+                                    divisions: 19,
+                                    label: '$_monkeyIterations',
+                                    onChanged: running
+                                        ? null
+                                        : (v) => setState(() =>
+                                            _monkeyIterations = v.round()),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text('间隔: ${_monkeyDelayMs.round()}ms'),
+                                  Slider(
+                                    value: _monkeyDelayMs,
+                                    min: 200,
+                                    max: 1500,
+                                    divisions: 13,
+                                    label: '${_monkeyDelayMs.round()}ms',
+                                    onChanged: running
+                                        ? null
+                                        : (v) => setState(() =>
+                                            _monkeyDelayMs = v.roundToDouble()),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        Wrap(
+                          spacing: 8,
+                          children: [
+                            FilterChip(
+                              label: const Text('屏幕'),
+                              selected: _monkeyIncludeScreen,
+                              onSelected: running
+                                  ? null
+                                  : (v) =>
+                                      setState(() => _monkeyIncludeScreen = v),
+                            ),
+                            FilterChip(
+                              label: const Text('窗口'),
+                              selected: _monkeyIncludeWindows,
+                              onSelected: running
+                                  ? null
+                                  : (v) =>
+                                      setState(() => _monkeyIncludeWindows = v),
+                            ),
+                            FilterChip(
+                              label: const Text('iTerm2'),
+                              selected: _monkeyIncludeIterm2,
+                              onSelected: running
+                                  ? null
+                                  : (v) =>
+                                      setState(() => _monkeyIncludeIterm2 = v),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        ValueListenableBuilder<String>(
+                          valueListenable: StreamMonkeyService.instance.status,
+                          builder: (context, s, _) {
+                            return Text(
+                              '状态: $s',
+                              style: const TextStyle(fontSize: 12),
+                            );
+                          },
+                        ),
+                        ValueListenableBuilder<int>(
+                          valueListenable:
+                              StreamMonkeyService.instance.currentIteration,
+                          builder: (context, i, _) {
+                            return Text(
+                              '进度: $i',
+                              style: const TextStyle(fontSize: 12),
+                            );
+                          },
+                        ),
+                        ValueListenableBuilder<String?>(
+                          valueListenable:
+                              StreamMonkeyService.instance.lastError,
+                          builder: (context, e, _) {
+                            if (e == null || e.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            return Text(
+                              '最近错误: $e',
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: Colors.red,
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ],
             ),

@@ -6,6 +6,7 @@ import 'package:cloudplayplus/controller/hardware_input_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
+import 'package:cloudplayplus/services/capture_target_event_bus.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/quick_target_service.dart';
@@ -1169,6 +1170,11 @@ class StreamingSession {
           }
           RemoteWindowService.instance
               .handleCaptureTargetChangedMessage(payload);
+          if (payload is Map) {
+            CaptureTargetEventBus.instance.emit(
+              payload.map((k, v) => MapEntry(k.toString(), v)),
+            );
+          }
           break;
         default:
           VLOG0("unhandled message from host.please debug");
