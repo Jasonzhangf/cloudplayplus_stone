@@ -271,6 +271,7 @@ class StreamedSettings {
   // For iTerm2 panel streaming (TTY friendly input routing).
   String? captureTargetType; // 'screen' | 'window' | 'iterm2'
   String? iterm2SessionId;
+  Map<String, double>? cropRect;
 
   static StreamedSettings fromJson(Map<String, dynamic> settings) {
     return StreamedSettings()
@@ -292,6 +293,10 @@ class StreamedSettings {
       ..customScreenHeight = settings['customScreenHeight'] as int?
       ..captureTargetType = settings['captureTargetType'] as String?
       ..iterm2SessionId = settings['iterm2SessionId'] as String?
+      ..cropRect = (settings['cropRect'] is Map)
+          ? (settings['cropRect'] as Map).map((k, v) =>
+              MapEntry(k.toString(), (v is num) ? (v as num).toDouble() : 0.0))
+          : null
       ..windowId = settings['windowId'] as int?
       ..windowFrame = (settings['windowFrame'] is Map)
           ? (settings['windowFrame'] as Map).map((k, v) =>

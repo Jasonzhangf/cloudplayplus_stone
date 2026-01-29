@@ -56,6 +56,15 @@ class ScreenController {
   static ValueNotifier<double> shortcutOverlayHeight = ValueNotifier(0);
   static ValueNotifier<double> virtualKeyboardOverlayHeight = ValueNotifier(0);
 
+  // Optional capture crop (in captured frame pixel coords) pushed from host.
+  // Used by controller to auto-zoom/crop view (e.g., iTerm2 panel).
+  static ValueNotifier<Map<String, double>?> captureCropRect =
+      ValueNotifier<Map<String, double>?>(null);
+
+  static void setCaptureCropRect(Map<String, double>? rect) {
+    captureCropRect.value = rect;
+  }
+
   static void _recomputeBottomOverlayInset() {
     final next =
         shortcutOverlayHeight.value + virtualKeyboardOverlayHeight.value;

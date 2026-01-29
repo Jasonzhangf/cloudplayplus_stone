@@ -1167,6 +1167,20 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                     );
                   },
                 ),
+                ValueListenableBuilder<bool>(
+                  valueListenable:
+                      widget.quickTargetService.restoreLastTargetOnConnect,
+                  builder: (context, v, _) {
+                    return SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('重连后恢复上次目标'),
+                      subtitle: const Text('安卓端可选择是否自动切回上次窗口/Panel'),
+                      value: v,
+                      onChanged: (nv) => widget.quickTargetService
+                          .setRestoreLastTargetOnConnect(nv),
+                    );
+                  },
+                ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('发送预编辑文本（中文输入时可能发送拼音）'),

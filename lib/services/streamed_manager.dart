@@ -51,14 +51,24 @@ class StreamedManager {
       }
     }
 
+    // `desktopCapturer.getSources(types: [Screen, Window])` returns a mixed list.
+    // `screenId` is an index among *screens*, not among this mixed list.
+    final screenSources =
+        sources.where((source) => source.type == SourceType.Screen).toList();
+    if (settings.screenId != null &&
+        settings.screenId! >= 0 &&
+        settings.screenId! < screenSources.length) {
+      return screenSources[settings.screenId!];
+    }
+
     if (settings.screenId != null &&
         settings.screenId! >= 0 &&
         settings.screenId! < sources.length) {
+      // Fallback: if caller passed an index that happens to match the mixed list.
+      // Prefer screenSources above.
       return sources[settings.screenId!];
     }
 
-    final screenSources =
-        sources.where((source) => source.type == SourceType.Screen).toList();
     if (screenSources.isNotEmpty) {
       return screenSources.first;
     }
@@ -342,11 +352,24 @@ class StreamedManager {
             settings.desktopSourceId = source.id;
             settings.sourceType = 'screen';
           }
+          final frameAny = source.frame;
+          int? minW;
+          int? minH;
+          if (frameAny != null) {
+            final wAny = frameAny['width'];
+            final hAny = frameAny['height'];
+            if (wAny != null) minW = wAny.round();
+            if (hAny != null) minH = hAny.round();
+          }
+          minW ??= 1280;
+          minH ??= 720;
           mediaConstraints = <String, dynamic>{
             'video': {
               'deviceId': {'exact': source.id},
               'mandatory': {
                 'frameRate': settings.framerate,
+                'minWidth': minW,
+                'minHeight': minH,
                 //Todo(haichao): currently disable this because it will cause crash on some devices.
                 'hasCursor': false //settings.showRemoteCursor
               }

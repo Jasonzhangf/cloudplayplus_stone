@@ -3,11 +3,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloudplayplus/controller/hardware_input_controller.dart';
+import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
+import 'package:cloudplayplus/services/quick_target_service.dart';
 import 'package:cloudplayplus/services/streamed_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
@@ -263,6 +265,19 @@ class StreamingSession {
                 await channel?.send(RTCDataChannelMessage.fromBinary(
                     Uint8List.fromList([LP_PING, RP_PING])));
                 _pingKickoffSent = true;
+              }
+              // Android controller: optionally restore last selected window/panel on reconnect.
+              if (!_restoreTargetApplied &&
+                  selfSessionType == SelfSessionType.controller &&
+                  (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
+                _restoreTargetApplied = true;
+                final quick = QuickTargetService.instance;
+                final t = quick.lastTarget.value;
+                if (t != null && quick.restoreLastTargetOnConnect.value) {
+                  try {
+                    await quick.applyTarget(channel, t);
+                  } catch (_) {}
+                }
               }
               if (StreamingSettings.streamAudio!) {
                 StreamingSettings.audioBitrate ??= 32;
@@ -811,6 +826,7 @@ class StreamingSession {
   Timer? _pingKickoffTimer;
   bool _pingKickoffSent = false;
   bool _pingEverReceived = false;
+  bool _restoreTargetApplied = false;
 
   void _resetPingState() {
     _pingTimeoutTimer?.cancel();
@@ -1089,25 +1105,47 @@ class StreamingSession {
             if (streamSettings != null) {
               if (windowIdAny is num) {
                 streamSettings!.windowId = windowIdAny.toInt();
+              } else {
+                streamSettings!.windowId = null;
               }
               if (frameAny is Map) {
                 streamSettings!.windowFrame = frameAny.map((k, v) => MapEntry(
                     k.toString(), (v is num) ? (v as num).toDouble() : 0.0));
+              } else {
+                streamSettings!.windowFrame = null;
               }
               if (sourceIdAny != null) {
                 streamSettings!.desktopSourceId = sourceIdAny.toString();
+              } else {
+                streamSettings!.desktopSourceId = null;
               }
               if (sourceTypeAny != null) {
                 streamSettings!.sourceType = sourceTypeAny.toString();
+              } else {
+                streamSettings!.sourceType = null;
               }
               final captureTypeAny = payload['captureTargetType'];
               if (captureTypeAny != null) {
                 streamSettings!.captureTargetType = captureTypeAny.toString();
+              } else {
+                streamSettings!.captureTargetType = null;
               }
               final iterm2SessionIdAny = payload['iterm2SessionId'];
               if (iterm2SessionIdAny != null) {
                 streamSettings!.iterm2SessionId = iterm2SessionIdAny.toString();
+              } else {
+                streamSettings!.iterm2SessionId = null;
               }
+
+              final cropAny = payload['cropRect'];
+              if (streamSettings!.captureTargetType == 'iterm2' &&
+                  cropAny is Map) {
+                streamSettings!.cropRect = cropAny.map((k, v) => MapEntry(
+                    k.toString(), (v is num) ? (v as num).toDouble() : 0.0));
+              } else {
+                streamSettings!.cropRect = null;
+              }
+              ScreenController.setCaptureCropRect(streamSettings!.cropRect);
             }
             inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
                 windowId: streamSettings?.windowId);
@@ -1299,6 +1337,7 @@ iterm2.run_until_complete(main)
       if (streamSettings != null) {
         streamSettings!.captureTargetType = 'window';
         streamSettings!.iterm2SessionId = null;
+        streamSettings!.cropRect = null;
       }
       final windowIdAny = (payload is Map) ? payload['windowId'] : null;
       final sources =
@@ -1316,7 +1355,11 @@ iterm2.run_until_complete(main)
       if (selected == null) return;
       await _switchCaptureToSource(
         selected,
-        extraCaptureTarget: const {'captureTargetType': 'window'},
+        extraCaptureTarget: const {
+          'captureTargetType': 'window',
+          'iterm2SessionId': null,
+          'cropRect': null,
+        },
       );
       return;
     }
@@ -1325,6 +1368,7 @@ iterm2.run_until_complete(main)
       if (streamSettings != null) {
         streamSettings!.captureTargetType = 'screen';
         streamSettings!.iterm2SessionId = null;
+        streamSettings!.cropRect = null;
       }
       final screens =
           await desktopCapturer.getSources(types: [SourceType.Screen]);
@@ -1334,7 +1378,11 @@ iterm2.run_until_complete(main)
           (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
       await _switchCaptureToSource(
         selected,
-        extraCaptureTarget: const {'captureTargetType': 'screen'},
+        extraCaptureTarget: const {
+          'captureTargetType': 'screen',
+          'iterm2SessionId': null,
+          'cropRect': null,
+        },
       );
       return;
     }
@@ -1422,12 +1470,45 @@ iterm2.run_until_complete(main)
       if (meta.exitCode != 0) return;
 
       int? windowId;
+      Map<String, dynamic>? metaAny;
       try {
         final any = jsonDecode(meta.stdoutText.trim());
-        if (any is Map && any['windowId'] is num) {
-          windowId = (any['windowId'] as num).toInt();
+        if (any is Map) {
+          metaAny = any.map((k, v) => MapEntry(k.toString(), v));
+          if (metaAny!['windowId'] is num) {
+            windowId = (metaAny!['windowId'] as num).toInt();
+          }
         }
       } catch (_) {}
+
+      Map<String, dynamic>? cropRect;
+      if (metaAny != null) {
+        final frameAny = metaAny!['frame'];
+        final windowFrameAny = metaAny!['windowFrame'];
+        if (frameAny is Map && windowFrameAny is Map) {
+          final fx = (frameAny['x'] is num) ? (frameAny['x'] as num).toDouble() : null;
+          final fy = (frameAny['y'] is num) ? (frameAny['y'] as num).toDouble() : null;
+          final fw = (frameAny['w'] is num) ? (frameAny['w'] as num).toDouble() : null;
+          final fh = (frameAny['h'] is num) ? (frameAny['h'] as num).toDouble() : null;
+          final wx = (windowFrameAny['x'] is num) ? (windowFrameAny['x'] as num).toDouble() : 0.0;
+          final wy = (windowFrameAny['y'] is num) ? (windowFrameAny['y'] as num).toDouble() : 0.0;
+          final ww = (windowFrameAny['w'] is num) ? (windowFrameAny['w'] as num).toDouble() : null;
+          final wh = (windowFrameAny['h'] is num) ? (windowFrameAny['h'] as num).toDouble() : null;
+          if (fx != null && fy != null && fw != null && fh != null && ww != null && wh != null) {
+            // Convert iTerm2 session.frame (origin-bottom/visibleFrame-ish) into window-captured image coords (origin top-left).
+            final left = (fx - wx).clamp(0.0, ww);
+            final top = (wh - (fy + fh) - wy).clamp(0.0, wh);
+            cropRect = {
+              'x': left,
+              'y': top,
+              'w': fw.clamp(0.0, ww),
+              'h': fh.clamp(0.0, wh),
+              'baseW': ww,
+              'baseH': wh,
+            };
+          }
+        }
+      }
 
       final sources = await desktopCapturer.getSources(types: [SourceType.Window]);
       DesktopCapturerSource? selected;
@@ -1449,11 +1530,16 @@ iterm2.run_until_complete(main)
       }
       selected ??= sources.isNotEmpty ? sources.first : null;
       if (selected == null) return;
+      if (streamSettings != null) {
+        streamSettings!.cropRect =
+            (cropRect == null) ? null : cropRect!.map((k, v) => MapEntry(k.toString(), (v as num).toDouble()));
+      }
       await _switchCaptureToSource(
         selected,
         extraCaptureTarget: {
           'captureTargetType': 'iterm2',
           'iterm2SessionId': sessionId,
+          'cropRect': cropRect,
         },
       );
       return;
@@ -1467,12 +1553,25 @@ iterm2.run_until_complete(main)
     if (pc == null || videoSender == null) return;
 
     final int fps = streamSettings?.framerate ?? 30;
+    final frameAny = source.frame;
+    int? minW;
+    int? minH;
+    if (frameAny != null) {
+      final wAny = frameAny['width'];
+      final hAny = frameAny['height'];
+      if (wAny != null) minW = wAny.round();
+      if (hAny != null) minH = hAny.round();
+    }
+    minW ??= 1280;
+    minH ??= 720;
     final mediaConstraints = <String, dynamic>{
       'video': {
         'deviceId': {'exact': source.id},
         'mandatory': {
           'frameRate': fps,
           'hasCursor': false,
+          'minWidth': minW,
+          'minHeight': minH,
         }
       },
       'audio': false

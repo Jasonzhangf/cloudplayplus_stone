@@ -17,6 +17,7 @@ class QuickTargetService {
   static const _kLastTarget = 'controller.lastTarget.v1';
   static const _kFavorites = 'controller.favorites.v1';
   static const _kToolbarOpacity = 'controller.toolbarOpacity.v1';
+  static const _kRestoreOnConnect = 'controller.restoreLastTargetOnConnect.v1';
 
   final ValueNotifier<StreamMode> mode = ValueNotifier(StreamMode.desktop);
   final ValueNotifier<QuickStreamTarget?> lastTarget =
@@ -25,6 +26,8 @@ class QuickTargetService {
       ValueNotifier<List<QuickStreamTarget?>>(
           List<QuickStreamTarget?>.filled(4, null));
   final ValueNotifier<double> toolbarOpacity = ValueNotifier<double>(0.72);
+  final ValueNotifier<bool> restoreLastTargetOnConnect =
+      ValueNotifier<bool>(true);
 
   Future<void> init() async {
     final savedMode = SharedPreferencesManager.getInt(_kMode);
@@ -50,12 +53,22 @@ class QuickTargetService {
     if (op != null) {
       toolbarOpacity.value = op.clamp(0.2, 0.95);
     }
+
+    final restore = SharedPreferencesManager.getBool(_kRestoreOnConnect);
+    if (restore != null) {
+      restoreLastTargetOnConnect.value = restore;
+    }
   }
 
   Future<void> setToolbarOpacity(double v) async {
     final value = v.clamp(0.2, 0.95);
     toolbarOpacity.value = value;
     await SharedPreferencesManager.setDouble(_kToolbarOpacity, value);
+  }
+
+  Future<void> setRestoreLastTargetOnConnect(bool v) async {
+    restoreLastTargetOnConnect.value = v;
+    await SharedPreferencesManager.setBool(_kRestoreOnConnect, v);
   }
 
   Future<void> setMode(StreamMode m) async {
@@ -119,4 +132,3 @@ class QuickTargetService {
     return 0;
   }
 }
-
