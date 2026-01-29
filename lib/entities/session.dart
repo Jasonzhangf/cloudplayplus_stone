@@ -1934,6 +1934,52 @@ iterm2.run_until_complete(main)
           }
         }
       }
+      DesktopCapturerSource? bestItermWindowBySize() {
+        if (iterm2MinWidth == null || iterm2MinHeight == null) return null;
+        final targetW = iterm2MinWidth!.toDouble();
+        final targetH = iterm2MinHeight!.toDouble();
+
+        bool isIterm(DesktopCapturerSource s) {
+          final an = (s.appName ?? '').toLowerCase();
+          final aid = (s.appId ?? '').toLowerCase();
+          return an.contains('iterm') || aid.contains('iterm');
+        }
+
+        double frameW(DesktopCapturerSource s) {
+          final f = s.frame;
+          if (f == null) return 0;
+          final w = (f['width'] ?? f['w']);
+          return w ?? 0.0;
+        }
+
+        double frameH(DesktopCapturerSource s) {
+          final f = s.frame;
+          if (f == null) return 0;
+          final h = (f['height'] ?? f['h']);
+          return h ?? 0.0;
+        }
+
+        DesktopCapturerSource? best;
+        double bestScore = double.infinity;
+        for (final s in sources) {
+          // Prefer iTerm2 windows; but allow fallback if metadata is missing.
+          final w = frameW(s);
+          final h = frameH(s);
+          if (w <= 0 || h <= 0) continue;
+          final sizeScore = (w - targetW).abs() + (h - targetH).abs();
+          final itermPenalty = isIterm(s) ? 0.0 : 5000.0;
+          final score = sizeScore + itermPenalty;
+          if (score < bestScore) {
+            bestScore = score;
+            best = s;
+          }
+        }
+        return best;
+      }
+
+      // iTerm2's `TerminalWindow.window_id` is not guaranteed to match macOS CGWindowID.
+      // If we can't find the window by ID, fall back to best match by window size.
+      selected ??= bestItermWindowBySize();
       if (selected == null) {
         for (final s in sources) {
           if ((s.appName ?? '').toLowerCase().contains('iterm')) {
