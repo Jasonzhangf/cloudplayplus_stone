@@ -604,16 +604,39 @@ class StreamingSession {
             final ct = (controller.devicetype).toString().toLowerCase();
             final isMobileController =
                 ct == 'android' || ct == 'ios' || ct == 'androidtv';
-            setPreferredCodec(
-              sdp,
-              audio: 'opus',
-              video: isMobileController ? 'h264' : 'av1',
-            );
+            final prefer = isMobileController ? 'h264' : 'av1';
+            setPreferredCodec(sdp, audio: 'opus', video: prefer);
+            if (isMobileController) {
+              // Best-effort fallback: some builds might not offer H264; use VP8 in that case.
+              try {
+                final sel = CodecCapabilitySelector(sdp.sdp ?? '');
+                final vcaps = sel.getCapabilities('video');
+                final codecs = (vcaps?.codecs ?? const [])
+                    .map((e) => (e['codec'] as String?)?.toLowerCase() ?? '')
+                    .toList(growable: false);
+                if (!codecs.any((c) => c.contains('h264'))) {
+                  setPreferredCodec(sdp, audio: 'opus', video: 'vp8');
+                }
+              } catch (_) {}
+            }
           } else {
             setPreferredCodec(sdp, audio: 'opus', video: 'h264');
           }
         } else {
           setPreferredCodec(sdp, audio: 'opus', video: settings.codec!);
+        }
+
+        if (AppPlatform.isMacos && !_loggedOfferCodecs) {
+          _loggedOfferCodecs = true;
+          try {
+            final sel = CodecCapabilitySelector(sdp.sdp ?? '');
+            final vcaps = sel.getCapabilities('video');
+            final vlist = (vcaps?.codecs ?? const [])
+                .map((e) => e['codec']?.toString())
+                .where((e) => e != null && e.isNotEmpty)
+                .toList();
+            VLOG0('[codec] offer video codecs=$vlist payloads=${vcaps?.payloads}');
+          } catch (_) {}
         }
       }
 
@@ -851,6 +874,7 @@ class StreamingSession {
   bool _pingKickoffSent = false;
   bool _pingEverReceived = false;
   bool _restoreTargetApplied = false;
+  bool _loggedOfferCodecs = false;
   final Set<int> _iterm2ModifiersDown = <int>{};
 
   void _resetPingState() {

@@ -7,20 +7,28 @@ void setPreferredCodec(RTCSessionDescription description,
   var capSel = CodecCapabilitySelector(description.sdp!);
   var acaps = capSel.getCapabilities('audio');
   if (acaps != null) {
-    acaps.codecs = acaps.codecs
-        .where((e) => (e['codec'] as String).toLowerCase() == audio)
+    final want = audio.toLowerCase();
+    final matches = acaps.codecs
+        .where((e) => (e['codec'] as String).toLowerCase().contains(want))
         .toList();
-    acaps.setCodecPreferences('audio', acaps.codecs);
-    capSel.setCapabilities(acaps);
+    if (matches.isNotEmpty) {
+      acaps.codecs = matches;
+      acaps.setCodecPreferences('audio', acaps.codecs);
+      capSel.setCapabilities(acaps);
+    }
   }
 
   var vcaps = capSel.getCapabilities('video');
   if (vcaps != null) {
-    vcaps.codecs = vcaps.codecs
-        .where((e) => (e['codec'] as String).toLowerCase() == video)
+    final want = video.toLowerCase();
+    final matches = vcaps.codecs
+        .where((e) => (e['codec'] as String).toLowerCase().contains(want))
         .toList();
-    vcaps.setCodecPreferences('video', vcaps.codecs);
-    capSel.setCapabilities(vcaps);
+    if (matches.isNotEmpty) {
+      vcaps.codecs = matches;
+      vcaps.setCodecPreferences('video', vcaps.codecs);
+      capSel.setCapabilities(vcaps);
+    }
   }
   description.sdp = capSel.sdp();
 }
