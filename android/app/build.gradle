@@ -5,6 +5,69 @@ plugins {
     id "dev.flutter.flutter-gradle-plugin"
 }
 
+import java.util.Locale
+import java.util.Properties
+
+// Auto-increment Android build number and expose a 4th version segment:
+//   versionName = 1.0.8.xxxx  (xxxx starts at 0001 and increments per build)
+//
+// The counter is stored in android/version.properties (gitignored).
+def _pubspecFile = rootProject.file("../pubspec.yaml")
+def _baseVersion = "1.0.0"
+if (_pubspecFile.exists()) {
+    def m = (_pubspecFile.getText("UTF-8") =~ /(?m)^version:\s*([0-9]+\.[0-9]+\.[0-9]+)(?:\+[0-9]+)?\s*$/)
+    if (m.find()) {
+        _baseVersion = m.group(1)
+    }
+}
+
+def _versionPropsFile = rootProject.file("version.properties")
+def _versionProps = new Properties()
+if (_versionPropsFile.exists()) {
+    _versionPropsFile.withInputStream { _versionProps.load(it) }
+}
+def _buildSeq = (_versionProps.getProperty("build") ?: "0") as int
+
+def _formatBuild = { int seq ->
+    // Always at least 4 digits; if it grows beyond 9999, it will naturally expand.
+    return String.format(Locale.US, "%04d", seq)
+}
+
+def _versionNameFor = { int seq ->
+    return "${_baseVersion}.${_formatBuild(seq)}"
+}
+
+def _versionCodeFor = { int seq ->
+    // Encode as: M mm pp bbbb  (all decimal)
+    // Example: 1.0.8.0001 -> 100080001
+    def parts = _baseVersion.tokenize('.').collect { (it ?: "0") as int }
+    int major = parts.size() > 0 ? parts[0] : 0
+    int minor = parts.size() > 1 ? parts[1] : 0
+    int patch = parts.size() > 2 ? parts[2] : 0
+    return major * 100000000 + minor * 1000000 + patch * 10000 + seq
+}
+
+def _bumpBuildSeq = {
+    _buildSeq += 1
+    _versionProps.setProperty("build", _buildSeq.toString())
+    _versionPropsFile.parentFile.mkdirs()
+    _versionPropsFile.withOutputStream { out ->
+        _versionProps.store(out, "Auto-incremented build number. Do not edit by hand.")
+    }
+    return _buildSeq
+}
+
+// Only bump the build counter for real build tasks (avoid bumping during sync).
+def _requestedTasks = gradle.startParameter.taskNames.collect { (it ?: "").toLowerCase(Locale.US) }
+def _wantsBuild = _requestedTasks.any { t ->
+    // Flutter/Gradle commonly use these entry tasks.
+    return t.contains("assemble") || t.contains("bundle") || t.contains("package") || t.contains("install")
+}
+if (_wantsBuild) {
+    def seq = _bumpBuildSeq()
+    println("[version] Android versionName=${_versionNameFor(seq)} versionCode=${_versionCodeFor(seq)}")
+}
+
 android {
     namespace = "com.cloudplayplus.cloudplayplus"
     compileSdk = flutter.compileSdkVersion
@@ -26,8 +89,8 @@ android {
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
-        versionCode = flutter.versionCode
-        versionName = flutter.versionName
+        versionCode = _versionCodeFor(_buildSeq)
+        versionName = _versionNameFor(_buildSeq)
     }
 
     packagingOptions {
