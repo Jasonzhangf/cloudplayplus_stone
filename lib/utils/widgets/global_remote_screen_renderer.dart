@@ -97,68 +97,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   Offset? _lastPinchFocalPoint;
   TwoFingerGestureType _twoFingerGestureType = TwoFingerGestureType.undecided;
 
-  Map<String, double>? _pendingAutoCropRect;
-
-  void _onCaptureCropChanged() {
-    final rect = ScreenController.captureCropRect.value;
-    if (!mounted) return;
-    if (renderBox == null) {
-      _pendingAutoCropRect = rect;
-      return;
-    }
-    _applyAutoCrop(rect);
-  }
-
-  void _applyAutoCrop(Map<String, double>? rect) {
-    if (rect == null) {
-      setState(() {
-        _videoScale = 1.0;
-        _videoOffset = Offset.zero;
-        _lastPinchFocalPoint = null;
-      });
-      return;
-    }
-    final baseW = rect['baseW'];
-    final baseH = rect['baseH'];
-    final x = rect['x'];
-    final y = rect['y'];
-    final w = rect['w'];
-    final h = rect['h'];
-    if (baseW == null ||
-        baseH == null ||
-        x == null ||
-        y == null ||
-        w == null ||
-        h == null ||
-        baseW <= 0 ||
-        baseH <= 0 ||
-        w <= 0 ||
-        h <= 0) {
-      return;
-    }
-
-    // Crop rect is in captured frame pixel coords (top-left origin).
-    final fx = x / baseW;
-    final fy = y / baseH;
-    final fw = w / baseW;
-    final fh = h / baseH;
-
-    final scale = (1.0 / (fw < fh ? fw : fh)).clamp(1.0, _maxVideoScale);
-    final viewSize = renderBox!.size;
-    final viewCenter = Offset(viewSize.width / 2, viewSize.height / 2);
-    final cropCenter = Offset(
-      (fx + fw / 2) * viewSize.width,
-      (fy + fh / 2) * viewSize.height,
-    );
-    final offset = -(cropCenter - viewCenter) * scale;
-
-    setState(() {
-      _videoScale = scale;
-      _videoOffset = offset;
-      _lastPinchFocalPoint = null;
-    });
-  }
-
   /*bool _hasAudio = false;
 
   void onAudioRenderStateChanged(bool has_audio) {
@@ -995,7 +933,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   @override
   void initState() {
     super.initState();
-    ScreenController.captureCropRect.addListener(_onCaptureCropChanged);
     _scrollController.onScroll = (dx, dy) {
       if (dx.abs() > 0 || dy.abs() > 0) {
         WebrtcService.currentRenderingSession?.inputController
@@ -1337,14 +1274,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                                       renderBox = newRenderBox;
                                                       widgetSize =
                                                           newRenderBox.size;
-                                                      if (_pendingAutoCropRect !=
-                                                          null) {
-                                                        final pending =
-                                                            _pendingAutoCropRect;
-                                                        _pendingAutoCropRect =
-                                                            null;
-                                                        _applyAutoCrop(pending);
-                                                      }
                                                     })));
                                           });
                                         })
@@ -1357,11 +1286,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                               as RenderBox;
                                           renderBox = newRenderBox;
                                           widgetSize = newRenderBox.size;
-                                          if (_pendingAutoCropRect != null) {
-                                            final pending = _pendingAutoCropRect;
-                                            _pendingAutoCropRect = null;
-                                            _applyAutoCrop(pending);
-                                          }
                                         },
                                         setAspectRatio: (newAspectRatio) {
                                           if (AppPlatform.isMobile) {
@@ -1531,7 +1455,6 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   @override
   void dispose() {
     focusNode.dispose();
-    ScreenController.captureCropRect.removeListener(_onCaptureCropChanged);
     if (AppPlatform.isWindows) {
       HardwareSimulator.putImmersiveModeEnabled(false);
       HardwareSimulator.removeKeyBlocked(_handleKeyBlocked);

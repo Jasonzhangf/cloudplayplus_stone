@@ -39,11 +39,15 @@ class PointD {
 
 @immutable
 class ContentToWindowMap {
-  /// The content area (without black bars) inside the displayed video view.
-  /// Coordinates are in the same pixel space as the user's touch input.
+  /// The content area inside the host window, expressed in the same coordinate
+  /// space as [windowRect], but relative to [windowRect]'s origin.
+  ///
+  /// - For normal window streaming, this is usually the full window content.
+  /// - For cropped streaming (e.g. iTerm2 panel), this is the cropped sub-rect.
   final RectD contentRect;
 
-  /// The target window bounds on the host screen in pixels.
+  /// The target window bounds (host-side). This can be in pixels or normalized
+  /// [0..1] window space, as long as it matches how [contentRect] is expressed.
   final RectD windowRect;
 
   /// The actual window ID on the host OS.
@@ -95,9 +99,9 @@ PointD mapContentNormalizedToWindowPixel({
   final uu = u.clamp(0.0, 1.0);
   final vv = v.clamp(0.0, 1.0);
 
-  // In the control protocol, (u,v) is normalized within the content region.
-  // Map it to host window pixels directly.
-  final x = map.windowRect.left + uu * map.windowRect.width;
-  final y = map.windowRect.top + vv * map.windowRect.height;
+  // In the control protocol, (u,v) is normalized within the *content* region,
+  // then mapped into the full window coordinate space.
+  final x = map.windowRect.left + map.contentRect.left + uu * map.contentRect.width;
+  final y = map.windowRect.top + map.contentRect.top + vv * map.contentRect.height;
   return PointD(x, y);
 }

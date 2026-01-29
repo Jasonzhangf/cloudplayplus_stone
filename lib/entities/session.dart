@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:cloudplayplus/controller/hardware_input_controller.dart';
-import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
@@ -240,7 +239,8 @@ class StreamingSession {
           UDPChannel = newchannel;
           inputController = InputController(UDPChannel!, false, screenId);
           inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
-              windowId: streamSettings?.windowId);
+              windowId: streamSettings?.windowId,
+              cropRect: streamSettings?.cropRect);
           //This channel is only used to send unsafe user input
           /*
         channel?.onMessage = (msg) {
@@ -250,7 +250,8 @@ class StreamingSession {
           if (!useUnsafeDatachannel) {
             inputController = InputController(channel!, true, screenId);
             inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
-                windowId: streamSettings?.windowId);
+                windowId: streamSettings?.windowId,
+                cropRect: streamSettings?.cropRect);
           }
           channel?.onMessage = (msg) {
             processDataChannelMessageFromHost(msg);
@@ -564,7 +565,8 @@ class StreamingSession {
       } else {
         inputController = InputController(channel!, true, screenId);
         inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
-            windowId: streamSettings?.windowId);
+            windowId: streamSettings?.windowId,
+            cropRect: streamSettings?.cropRect);
       }
 
       //For web, RTCDataChannel.readyState is not 'open', and this should only for windows
@@ -827,6 +829,7 @@ class StreamingSession {
   bool _pingKickoffSent = false;
   bool _pingEverReceived = false;
   bool _restoreTargetApplied = false;
+  final Set<int> _iterm2ModifiersDown = <int>{};
 
   void _resetPingState() {
     _pingTimeoutTimer?.cancel();
@@ -955,6 +958,20 @@ class StreamingSession {
           inputController?.handlePenMove(message);
           break;
         case LP_KEYPRESSED:
+          if (AppPlatform.isDeskTop &&
+              streamSettings?.captureTargetType == 'iterm2' &&
+              (streamSettings?.iterm2SessionId?.isNotEmpty ?? false) &&
+              message.binary.length >= 3) {
+            final byteData = ByteData.sublistView(message.binary);
+            final keyCode = byteData.getUint8(1);
+            final isDown = byteData.getUint8(2) == 1;
+            final handled = await _handleIterm2TtyKeyEvent(
+              sessionId: streamSettings!.iterm2SessionId!,
+              keyCode: keyCode,
+              isDown: isDown,
+            );
+            if (handled) break;
+          }
           inputController?.handleKeyEvent(message);
           break;
         case LP_DISCONNECT:
@@ -1145,10 +1162,10 @@ class StreamingSession {
               } else {
                 streamSettings!.cropRect = null;
               }
-              ScreenController.setCaptureCropRect(streamSettings!.cropRect);
             }
             inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
-                windowId: streamSettings?.windowId);
+                windowId: streamSettings?.windowId,
+                cropRect: streamSettings?.cropRect);
           }
           RemoteWindowService.instance
               .handleCaptureTargetChangedMessage(payload);
@@ -1170,7 +1187,19 @@ class StreamingSession {
         : true;
     final types = wantWindow ? [SourceType.Window] : [SourceType.Screen];
 
-    final sources = await desktopCapturer.getSources(types: types);
+    final wantThumbnail = (payload is Map) ? payload['thumbnail'] == true : false;
+    ThumbnailSize? thumbSize;
+    final thumbSizeAny = (payload is Map) ? payload['thumbnailSize'] : null;
+    if (wantThumbnail && thumbSizeAny is Map) {
+      final wAny = thumbSizeAny['width'];
+      final hAny = thumbSizeAny['height'];
+      if (wAny is num && hAny is num) {
+        thumbSize = ThumbnailSize(wAny.toInt(), hAny.toInt());
+      }
+    }
+
+    final sources =
+        await desktopCapturer.getSources(types: types, thumbnailSize: thumbSize);
     final list = sources
         .map((s) => <String, dynamic>{
               'id': s.id,
@@ -1180,6 +1209,14 @@ class StreamingSession {
               'appName': s.appName,
               'frame': s.frame,
               'type': desktopSourceTypeToString[s.type],
+              if (wantThumbnail && s.thumbnail != null)
+                'thumbnailB64': base64Encode(s.thumbnail!),
+              if (wantThumbnail)
+                'thumbnailSize': {
+                  'width': s.thumbnailSize.width,
+                  'height': s.thumbnailSize.height,
+                },
+              if (wantThumbnail) 'thumbnailMime': 'image/png',
             })
         .toList();
     channel?.send(
@@ -1333,6 +1370,9 @@ iterm2.run_until_complete(main)
 
     final typeAny = (payload is Map) ? payload['type'] : null;
     final type = typeAny?.toString() ?? 'window';
+    // Switching capture targets can leave modifier state "stuck" (e.g. missed key-up).
+    // Reset for safety, especially for iTerm2 TTY injection.
+    _iterm2ModifiersDown.clear();
     if (type == 'window') {
       if (streamSettings != null) {
         streamSettings!.captureTargetType = 'window';
@@ -1481,7 +1521,7 @@ iterm2.run_until_complete(main)
         }
       } catch (_) {}
 
-      Map<String, dynamic>? cropRect;
+      Map<String, double>? cropRectNorm;
       if (metaAny != null) {
         final frameAny = metaAny!['frame'];
         final windowFrameAny = metaAny!['windowFrame'];
@@ -1494,18 +1534,35 @@ iterm2.run_until_complete(main)
           final wy = (windowFrameAny['y'] is num) ? (windowFrameAny['y'] as num).toDouble() : 0.0;
           final ww = (windowFrameAny['w'] is num) ? (windowFrameAny['w'] as num).toDouble() : null;
           final wh = (windowFrameAny['h'] is num) ? (windowFrameAny['h'] as num).toDouble() : null;
-          if (fx != null && fy != null && fw != null && fh != null && ww != null && wh != null) {
-            // Convert iTerm2 session.frame (origin-bottom/visibleFrame-ish) into window-captured image coords (origin top-left).
-            final left = (fx - wx).clamp(0.0, ww);
-            final top = (wh - (fy + fh) - wy).clamp(0.0, wh);
-            cropRect = {
-              'x': left,
-              'y': top,
-              'w': fw.clamp(0.0, ww),
-              'h': fh.clamp(0.0, wh),
-              'baseW': ww,
-              'baseH': wh,
-            };
+          if (fx != null &&
+              fy != null &&
+              fw != null &&
+              fh != null &&
+              ww != null &&
+              wh != null &&
+              ww > 0 &&
+              wh > 0) {
+            // Convert iTerm2 session.frame + window.frame (screen coords, origin bottom-left)
+            // into window-captured image coords (origin top-left), then normalize to [0..1].
+            //
+            // In screen coords:
+            // - window top = wy + wh
+            // - panel top  = fy + fh
+            // => topPx (from window top) = (wy + wh) - (fy + fh)
+            final leftPx = (fx - wx).clamp(0.0, ww);
+            final topPx = ((wy + wh) - (fy + fh)).clamp(0.0, wh);
+            final maxW = (ww - leftPx).clamp(0.0, ww);
+            final maxH = (wh - topPx).clamp(0.0, wh);
+            final wPx = fw.clamp(0.0, maxW);
+            final hPx = fh.clamp(0.0, maxH);
+            if (wPx > 0 && hPx > 0) {
+              cropRectNorm = {
+                'x': (leftPx / ww).clamp(0.0, 1.0),
+                'y': (topPx / wh).clamp(0.0, 1.0),
+                'w': (wPx / ww).clamp(0.0, 1.0),
+                'h': (hPx / wh).clamp(0.0, 1.0),
+              };
+            }
           }
         }
       }
@@ -1531,16 +1588,16 @@ iterm2.run_until_complete(main)
       selected ??= sources.isNotEmpty ? sources.first : null;
       if (selected == null) return;
       if (streamSettings != null) {
-        streamSettings!.cropRect =
-            (cropRect == null) ? null : cropRect!.map((k, v) => MapEntry(k.toString(), (v as num).toDouble()));
+        streamSettings!.cropRect = cropRectNorm;
       }
       await _switchCaptureToSource(
         selected,
         extraCaptureTarget: {
           'captureTargetType': 'iterm2',
           'iterm2SessionId': sessionId,
-          'cropRect': cropRect,
+          'cropRect': cropRectNorm,
         },
+        cropRectNormalized: cropRectNorm,
       );
       return;
     }
@@ -1549,6 +1606,7 @@ iterm2.run_until_complete(main)
   Future<void> _switchCaptureToSource(
     DesktopCapturerSource source, {
     Map<String, dynamic>? extraCaptureTarget,
+    Map<String, double>? cropRectNormalized,
   }) async {
     if (pc == null || videoSender == null) return;
 
@@ -1572,6 +1630,7 @@ iterm2.run_until_complete(main)
           'hasCursor': false,
           'minWidth': minW,
           'minHeight': minH,
+          if (cropRectNormalized != null) 'cropRect': cropRectNormalized,
         }
       },
       'audio': false
@@ -1616,7 +1675,8 @@ iterm2.run_until_complete(main)
     streamSettings?.windowId = source.windowId;
     streamSettings?.windowFrame = source.frame;
     inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
-        windowId: streamSettings?.windowId);
+        windowId: streamSettings?.windowId,
+        cropRect: streamSettings?.cropRect);
 
     channel?.send(
       RTCDataChannelMessage(
@@ -1633,6 +1693,164 @@ iterm2.run_until_complete(main)
         }),
       ),
     );
+  }
+
+  Future<bool> _handleIterm2TtyKeyEvent({
+    required String sessionId,
+    required int keyCode,
+    required bool isDown,
+  }) async {
+    // Track modifiers (Windows VK codes).
+    const modifierKeys = <int>{
+      0xA0, // ShiftLeft
+      0xA1, // ShiftRight
+      0xA2, // ControlLeft
+      0xA3, // ControlRight
+      0xA4, // AltLeft
+      0xA5, // AltRight
+      0x5B, // MetaLeft
+      0x5C, // MetaRight
+    };
+
+    if (modifierKeys.contains(keyCode)) {
+      if (isDown) {
+        _iterm2ModifiersDown.add(keyCode);
+      } else {
+        _iterm2ModifiersDown.remove(keyCode);
+      }
+      return true;
+    }
+
+    // Only act on key-down for TTY injection.
+    if (!isDown) return true;
+
+    final shift = _iterm2ModifiersDown.contains(0xA0) ||
+        _iterm2ModifiersDown.contains(0xA1);
+    final ctrl = _iterm2ModifiersDown.contains(0xA2) ||
+        _iterm2ModifiersDown.contains(0xA3);
+    final alt = _iterm2ModifiersDown.contains(0xA4) ||
+        _iterm2ModifiersDown.contains(0xA5);
+    final meta = _iterm2ModifiersDown.contains(0x5B) ||
+        _iterm2ModifiersDown.contains(0x5C);
+
+    // Non-printables / navigation.
+    switch (keyCode) {
+      case 0x08: // Backspace
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x7f');
+        return true;
+      case 0x09: // Tab
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\t');
+        return true;
+      case 0x0D: // Enter
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\r');
+        return true;
+      case 0x1B: // Escape
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b');
+        return true;
+      case 0x25: // Left
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[D');
+        return true;
+      case 0x26: // Up
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[A');
+        return true;
+      case 0x27: // Right
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[C');
+        return true;
+      case 0x28: // Down
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[B');
+        return true;
+      case 0x2E: // Delete
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[3~');
+        return true;
+      case 0x24: // Home
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[H');
+        return true;
+      case 0x23: // End
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[F');
+        return true;
+      case 0x21: // PageUp
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[5~');
+        return true;
+      case 0x22: // PageDown
+        await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b[6~');
+        return true;
+      case 0x20: // Space
+        await _sendTextToIterm2Session(sessionId: sessionId, text: ' ');
+        return true;
+    }
+
+    String? ch;
+    if (keyCode >= 0x61 && keyCode <= 0x7A) {
+      // a-z (some clients may send ASCII codes instead of VK)
+      final base = String.fromCharCode(keyCode);
+      ch = shift ? base.toUpperCase() : base;
+      if (ctrl) {
+        final code = base.toUpperCase().codeUnitAt(0) & 0x1F;
+        await _sendTextToIterm2Session(
+          sessionId: sessionId,
+          text: String.fromCharCode(code),
+        );
+        return true;
+      }
+    } else if (keyCode >= 0x41 && keyCode <= 0x5A) {
+      // A-Z (Windows VK)
+      final base = String.fromCharCode(keyCode);
+      ch = shift ? base : base.toLowerCase();
+      if (ctrl) {
+        final code = keyCode & 0x1F;
+        await _sendTextToIterm2Session(
+          sessionId: sessionId,
+          text: String.fromCharCode(code),
+        );
+        return true;
+      }
+    } else if (keyCode >= 0x30 && keyCode <= 0x39) {
+      // 0-9
+      const shifted = <int, String>{
+        0x30: ')',
+        0x31: '!',
+        0x32: '@',
+        0x33: '#',
+        0x34: r'$',
+        0x35: '%',
+        0x36: '^',
+        0x37: '&',
+        0x38: '*',
+        0x39: '(',
+      };
+      ch = shift ? shifted[keyCode] : String.fromCharCode(keyCode);
+    } else {
+      // Common OEM keys (US layout).
+      const oem = <int, ({String normal, String shifted})>{
+        0xBA: (normal: ';', shifted: ':'),
+        0xBB: (normal: '=', shifted: '+'),
+        0xBC: (normal: ',', shifted: '<'),
+        0xBD: (normal: '-', shifted: '_'),
+        0xBE: (normal: '.', shifted: '>'),
+        0xBF: (normal: '/', shifted: '?'),
+        0xC0: (normal: '`', shifted: '~'),
+        0xDB: (normal: '[', shifted: '{'),
+        0xDC: (normal: '\\', shifted: '|'),
+        0xDD: (normal: ']', shifted: '}'),
+        0xDE: (normal: '\'', shifted: '"'),
+      };
+      final m = oem[keyCode];
+      if (m != null) ch = shift ? m.shifted : m.normal;
+      if (ctrl && ch != null) {
+        // A subset of ctrl+punctuation works via ASCII control mapping; keep best-effort.
+        final upper = ch.toUpperCase();
+        if (upper == '[') {
+          await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b');
+          return true;
+        }
+      }
+    }
+
+    if (ch == null || ch.isEmpty) return false;
+
+    final prefix = (alt || meta) ? '\x1b' : '';
+    await _sendTextToIterm2Session(sessionId: sessionId, text: '$prefix$ch');
+    return true;
   }
 
   Future<void> _sendTextToIterm2Session({

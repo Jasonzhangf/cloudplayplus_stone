@@ -31,10 +31,11 @@ class LocalInputInjector {
       _captureMap = null;
       return;
     }
-    final rect = RectD(left: x, top: y, width: w, height: h);
+    final windowRect = RectD(left: x, top: y, width: w, height: h);
+    final contentRect = RectD(left: 0, top: 0, width: w, height: h);
     _captureMap = ContentToWindowMap(
-      contentRect: rect,
-      windowRect: rect,
+      contentRect: contentRect,
+      windowRect: windowRect,
       windowId: windowId,
     );
   }
@@ -155,4 +156,3 @@ class LocalInputInjector {
     }
   }
 }
-

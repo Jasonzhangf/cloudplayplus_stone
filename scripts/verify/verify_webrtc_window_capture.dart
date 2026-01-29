@@ -51,15 +51,19 @@ Future<void> main() async {
     if (printed >= 12) break;
   }
 
-  final DesktopCapturerSource? target = iterm2 ??
+  if (sources.isEmpty) {
+    stderr.writeln('❌ 未获取到任何可捕获源（sources 为空）。请检查权限/环境。');
+    exit(1);
+  }
+
+  final DesktopCapturerSource target = iterm2 ??
       sources.firstWhere(
         (x) => x.type == SourceType.Window,
-        orElse: () => sources.isNotEmpty ? sources.first : throw StateError('No sources'),
+        orElse: () => sources.first,
       );
 
   stdout.writeln('\n📋 Step 3/3: 尝试 getDisplayMedia 捕获目标源...');
-  stdout.writeln(
-      '🎯 target: type=${target.type} name="${target.name}" id=${target.id}');
+  stdout.writeln('🎯 target: type=${target.type} name="${target.name}" id=${target.id}');
 
   final constraints = <String, dynamic>{
     'video': {
@@ -82,9 +86,9 @@ Future<void> main() async {
     stdout.writeln('  ✅ videoTracks=${videoTracks.length}');
     if (videoTracks.isNotEmpty) {
       final track = videoTracks.first;
-      stdout.writeln('     track.id=${track.id} enabled=${track.enabled} readyState=${track.readyState}');
+      stdout.writeln('     track.id=${track.id} kind=${track.kind} enabled=${track.enabled}');
 
-      final settings = await track.getSettings();
+      final settings = track.getSettings();
       stdout.writeln('     settings.width=${settings['width']} height=${settings['height']} fps=${settings['frameRate']}');
     }
 

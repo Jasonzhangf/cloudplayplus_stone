@@ -36,29 +36,43 @@ class InputController {
   /// Window capture metadata for host-side coordinate mapping.
   ContentToWindowMap? _captureMap;
 
-  void setCaptureMapFromFrame(Map<String, double>? frame, {int? windowId}) {
+  void setCaptureMapFromFrame(
+    Map<String, double>? frame, {
+    int? windowId,
+    Map<String, double>? cropRect,
+  }) {
     final resolvedWindowId = windowId ?? (frame?['windowId']?.toInt());
-    if (frame != null &&
-        frame['x'] != null &&
-        frame['y'] != null &&
-        frame['width'] != null &&
-        frame['height'] != null &&
-        resolvedWindowId != null) {
-      final windowRect = RectD(
-        left: frame['x']!,
-        top: frame['y']!,
-        width: frame['width']!,
-        height: frame['height']!,
-      );
-      // Host side uses full window as content rect.
-      _captureMap = ContentToWindowMap(
-        contentRect: windowRect,
-        windowRect: windowRect,
-        windowId: resolvedWindowId,
-      );
-    } else {
+    if (resolvedWindowId == null) {
       _captureMap = null;
+      return;
     }
+
+    // Use normalized window coordinates [0..1] for robust mapping across
+    // differing host coordinate systems/scales. The platform injector takes
+    // percents in window-space anyway.
+    final windowRect = const RectD(left: 0, top: 0, width: 1, height: 1);
+    RectD contentRect = windowRect;
+
+    if (cropRect != null) {
+      final x = cropRect['x'];
+      final y = cropRect['y'];
+      final w = cropRect['w'];
+      final h = cropRect['h'];
+      if (x != null && y != null && w != null && h != null && w > 0 && h > 0) {
+        contentRect = RectD(
+          left: x.clamp(0.0, 1.0),
+          top: y.clamp(0.0, 1.0),
+          width: w.clamp(0.0, 1.0),
+          height: h.clamp(0.0, 1.0),
+        );
+      }
+    }
+
+    _captureMap = ContentToWindowMap(
+      contentRect: contentRect,
+      windowRect: windowRect,
+      windowId: resolvedWindowId,
+    );
   }
 
   static StreamSubscription<GamepadEvent>? _subscription;
@@ -391,6 +405,9 @@ class InputController {
 
     if (_captureMap != null && _captureMap!.windowId != null) {
       // Ensure scroll is targeted to the captured window (not desktop).
+      // On macOS, wheel events go to the window under cursor; move cursor into
+      // the window first (atomically inside the native call) to avoid the
+      // desktop eating the scroll.
       final pixel = mapContentNormalizedToWindowPixel(
           map: _captureMap!, u: lastx, v: lasty);
       final frame = _captureMap!.windowRect;
@@ -399,19 +416,13 @@ class InputController {
       percentX = percentX.clamp(0.001, 0.999);
       percentY = percentY.clamp(0.001, 0.999);
 
-      HardwareSimulator.mouse
-          .performMouseMoveToWindow(
+      HardwareSimulator.mouse.performMouseScrollToWindow(
         windowId: _captureMap!.windowId!,
+        dx: dx,
+        dy: dy,
         percentX: percentX,
         percentY: percentY,
-      )
-          .whenComplete(() {
-        HardwareSimulator.mouse.performMouseScrollToWindow(
-          windowId: _captureMap!.windowId!,
-          dx: dx,
-          dy: dy,
-        );
-      });
+      );
       return;
     }
     HardwareSimulator.mouse.performMouseScroll(dx, dy);

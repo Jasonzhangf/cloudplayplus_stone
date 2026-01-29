@@ -64,6 +64,8 @@ class RecordingHardwareSimulatorPlatform extends HardwareSimulatorPlatform {
     required int windowId,
     required double dx,
     required double dy,
+    double? percentX,
+    double? percentY,
   }) async {
     mouseScrollToWindowCalls++;
     lastWindowId = windowId;
@@ -96,6 +98,8 @@ class UnimplementedWindowInjectionPlatform
     required int windowId,
     required double dx,
     required double dy,
+    double? percentX,
+    double? percentY,
   }) async {
     throw UnimplementedError('performMouseScrollToWindow');
   }

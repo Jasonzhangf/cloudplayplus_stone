@@ -13,6 +13,7 @@
 // Guard availability at runtime to keep compatibility.
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
 #import <CoreVideo/CoreVideo.h>
+#import <CoreImage/CoreImage.h>
 #import <QuartzCore/QuartzCore.h>
 
 @interface FlutterSCKInlineCapturer : NSObject <SCStreamOutput, SCStreamDelegate>
@@ -22,6 +23,9 @@
 @property(nonatomic, strong) dispatch_queue_t sampleQueue;
 @property(nonatomic, assign) int64_t startTimeNs;
 @property(nonatomic, assign) BOOL sentFirstFrame;
+@property(nonatomic, assign) BOOL hasCrop;
+@property(nonatomic, assign) CGRect cropRectNorm; // normalized [0..1], origin top-left
+@property(nonatomic, strong) CIContext *ciContext;
 @end
 
 @implementation FlutterSCKInlineCapturer
@@ -34,6 +38,8 @@
     _sampleQueue = dispatch_queue_create("FlutterSCKInlineCapturer.sample", DISPATCH_QUEUE_SERIAL);
     _startTimeNs = 0;
     _sentFirstFrame = NO;
+    _hasCrop = NO;
+    _cropRectNorm = CGRectZero;
   }
   return self;
 }
@@ -54,7 +60,29 @@
   return best;
 }
 
-- (void)startWithWindowId:(uint32_t)windowId windowNameFallback:(NSString *)windowName fps:(NSInteger)fps {
+- (void)startWithWindowId:(uint32_t)windowId windowNameFallback:(NSString *)windowName fps:(NSInteger)fps cropRectNormalized:(NSDictionary *)cropRect {
+  self.hasCrop = NO;
+  self.cropRectNorm = CGRectZero;
+  if (cropRect && [cropRect isKindOfClass:[NSDictionary class]]) {
+    id xAny = cropRect[@"x"];
+    id yAny = cropRect[@"y"];
+    id wAny = cropRect[@"w"];
+    id hAny = cropRect[@"h"];
+    if ([xAny isKindOfClass:[NSNumber class]] &&
+        [yAny isKindOfClass:[NSNumber class]] &&
+        [wAny isKindOfClass:[NSNumber class]] &&
+        [hAny isKindOfClass:[NSNumber class]]) {
+      CGFloat x = [xAny doubleValue];
+      CGFloat y = [yAny doubleValue];
+      CGFloat w = [wAny doubleValue];
+      CGFloat h = [hAny doubleValue];
+      if (w > 0.0 && h > 0.0) {
+        self.hasCrop = YES;
+        self.cropRectNorm = CGRectMake(x, y, w, h);
+      }
+    }
+  }
+
   __weak __typeof(self) weakSelf = self;
   [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content,
                                                                 NSError * _Nullable error) {
@@ -162,6 +190,71 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
   CVPixelBufferRef pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer);
   if (!pixelBuffer) return;
 
+  CVPixelBufferRef croppedPixelBuffer = nil;
+  if (self.hasCrop) {
+    size_t srcW = CVPixelBufferGetWidth(pixelBuffer);
+    size_t srcH = CVPixelBufferGetHeight(pixelBuffer);
+    if (srcW > 0 && srcH > 0) {
+      CGFloat nx = MAX(0.0, MIN(1.0, self.cropRectNorm.origin.x));
+      CGFloat ny = MAX(0.0, MIN(1.0, self.cropRectNorm.origin.y));
+      CGFloat nw = MAX(0.0, MIN(1.0, self.cropRectNorm.size.width));
+      CGFloat nh = MAX(0.0, MIN(1.0, self.cropRectNorm.size.height));
+
+      // Convert normalized rect (top-left origin) -> pixel rect.
+      int x = (int)llround(nx * (double)srcW);
+      int yTop = (int)llround(ny * (double)srcH);
+      int w = (int)llround(nw * (double)srcW);
+      int h = (int)llround(nh * (double)srcH);
+
+      if (w > 0 && h > 0) {
+        if (x < 0) x = 0;
+        if (yTop < 0) yTop = 0;
+        if (x + w > (int)srcW) w = (int)srcW - x;
+        if (yTop + h > (int)srcH) h = (int)srcH - yTop;
+
+        // NV12 requires even dimensions (best effort).
+        x &= ~1;
+        yTop &= ~1;
+        w &= ~1;
+        h &= ~1;
+        if (w < 2) w = 2;
+        if (h < 2) h = 2;
+        if (x + w > (int)srcW) w = ((int)srcW - x) & ~1;
+        if (yTop + h > (int)srcH) h = ((int)srcH - yTop) & ~1;
+
+        // CIImage uses bottom-left origin.
+        int yBottom = (int)srcH - (yTop + h);
+        yBottom &= ~1;
+
+        if (w >= 2 && h >= 2 && yBottom >= 0) {
+          if (!self.ciContext) {
+            self.ciContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer : @NO}];
+          }
+          CIImage *img = [CIImage imageWithCVPixelBuffer:pixelBuffer];
+          CGRect cropPx = CGRectMake(x, yBottom, w, h);
+          CIImage *cropped = [img imageByCroppingToRect:cropPx];
+
+          NSDictionary *attrs = @{(id)kCVPixelBufferIOSurfacePropertiesKey : @{}};
+          CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault, w, h,
+                                               kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+                                               (__bridge CFDictionaryRef)attrs,
+                                               &croppedPixelBuffer);
+          if (cvret == kCVReturnSuccess && croppedPixelBuffer) {
+            [self.ciContext render:cropped toCVPixelBuffer:croppedPixelBuffer];
+          } else {
+            if (croppedPixelBuffer) {
+              CVPixelBufferRelease(croppedPixelBuffer);
+              croppedPixelBuffer = nil;
+            }
+          }
+        }
+      }
+    }
+  }
+  if (croppedPixelBuffer) {
+    pixelBuffer = croppedPixelBuffer;
+  }
+
   // Debug: keep the first-frame logging, but avoid spam.
   OSType fmt = CVPixelBufferGetPixelFormatType(pixelBuffer);
 
@@ -177,6 +270,11 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
                                                   timeStampNs:tsNs];
   // Pass a real RTCVideoCapturer instance; some implementations treat nil capturer specially.
   [self.captureDelegate capturer:self.rtcCapturer didCaptureVideoFrame:frame];
+
+  if (croppedPixelBuffer) {
+    CVPixelBufferRelease(croppedPixelBuffer);
+    croppedPixelBuffer = nil;
+  }
 
   if (!self.sentFirstFrame) {
     self.sentFirstFrame = YES;
@@ -306,11 +404,12 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
   */
   NSString* sourceId = nil;
   BOOL useDefaultScreen = NO;
-  NSInteger fps = 30;
-  id videoConstraints = constraints[@"video"];
-  if ([videoConstraints isKindOfClass:[NSNumber class]] && [videoConstraints boolValue] == YES) {
-    useDefaultScreen = YES;
-  } else if ([videoConstraints isKindOfClass:[NSDictionary class]]) {
+	  NSInteger fps = 30;
+	  NSDictionary* cropRect = nil;
+	  id videoConstraints = constraints[@"video"];
+	  if ([videoConstraints isKindOfClass:[NSNumber class]] && [videoConstraints boolValue] == YES) {
+	    useDefaultScreen = YES;
+	  } else if ([videoConstraints isKindOfClass:[NSDictionary class]]) {
     NSDictionary* deviceId = videoConstraints[@"deviceId"];
     if (deviceId != nil && [deviceId isKindOfClass:[NSDictionary class]]) {
       if (deviceId[@"exact"] != nil) {
@@ -324,14 +423,18 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
       // fall back to default screen if no deviceId is specified
       useDefaultScreen = YES;
     }
-    id mandatory = videoConstraints[@"mandatory"];
-    if (mandatory != nil && [mandatory isKindOfClass:[NSDictionary class]]) {
-      id frameRate = mandatory[@"frameRate"];
-      if (frameRate != nil && [frameRate isKindOfClass:[NSNumber class]]) {
-        fps = [frameRate integerValue];
-      }
-    }
-  }
+	    id mandatory = videoConstraints[@"mandatory"];
+	    if (mandatory != nil && [mandatory isKindOfClass:[NSDictionary class]]) {
+	      id frameRate = mandatory[@"frameRate"];
+	      if (frameRate != nil && [frameRate isKindOfClass:[NSNumber class]]) {
+	        fps = [frameRate integerValue];
+	      }
+	      id cropAny = mandatory[@"cropRect"];
+	      if (cropAny != nil && [cropAny isKindOfClass:[NSDictionary class]]) {
+	        cropRect = cropAny;
+	      }
+	    }
+	  }
   RTCDesktopCapturer* desktopCapturer;
   RTCDesktopSource* source = nil;
   if (useDefaultScreen) {
@@ -344,12 +447,12 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
       return;
     }
 
-    if (source.sourceType == RTCDesktopSourceTypeWindow) {
-      if (@available(macOS 12.3, *)) {
-        _sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
-        uint32_t windowId = (uint32_t)[sourceId intValue];
-        [_sckCapturer startWithWindowId:windowId windowNameFallback:source.name fps:fps];
-        NSLog(@"start desktop capture (SCK): sourceId: %@, type: window, fps: %lu", sourceId, fps);
+	    if (source.sourceType == RTCDesktopSourceTypeWindow) {
+	      if (@available(macOS 12.3, *)) {
+	        _sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
+	        uint32_t windowId = (uint32_t)[sourceId intValue];
+	        [_sckCapturer startWithWindowId:windowId windowNameFallback:source.name fps:fps cropRectNormalized:cropRect];
+	        NSLog(@"start desktop capture (SCK): sourceId: %@, type: window, fps: %lu", sourceId, fps);
         self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
           NSLog(@"stop desktop capture (SCK): sourceId: %@, type: window, trackID %@", sourceId, trackUUID);
           [_sckCapturer stop];
