@@ -22,10 +22,19 @@ class WebrtcService {
 
   static void addStream(String deviceId, RTCTrackEvent event) {
     streams[deviceId] = event.streams[0];
+    if (currentDeviceId.isEmpty) {
+      currentDeviceId = deviceId;
+      if (StreamingManager.sessions.containsKey(currentDeviceId)) {
+        currentRenderingSession = StreamingManager.sessions[currentDeviceId];
+      }
+    }
     if (globalVideoRenderer == null) {
       globalVideoRenderer = RTCVideoRenderer();
       globalVideoRenderer?.initialize().then((data) {
-        if (currentDeviceId == deviceId) {
+        if (currentDeviceId == deviceId || currentDeviceId.isEmpty) {
+          if (currentDeviceId.isEmpty) {
+            currentDeviceId = deviceId;
+          }
           globalVideoRenderer!.srcObject = event.streams[0];
           if (StreamingManager.sessions.containsKey(currentDeviceId)) {
             currentRenderingSession =
@@ -37,7 +46,8 @@ class WebrtcService {
         VLOG0('Error: failed to create RTCVideoRenderer');
       });
     } else {
-      if (currentDeviceId == deviceId) {
+      if (currentDeviceId == deviceId || currentDeviceId.isEmpty) {
+        if (currentDeviceId.isEmpty) currentDeviceId = deviceId;
         globalVideoRenderer!.srcObject = event.streams[0];
         if (StreamingManager.sessions.containsKey(currentDeviceId)) {
           currentRenderingSession = StreamingManager.sessions[currentDeviceId];
@@ -61,10 +71,14 @@ class WebrtcService {
 
   static void addAudioStream(String deviceId, RTCTrackEvent event) {
     audioStreams[deviceId] = event.streams[0];
+    if (currentDeviceId.isEmpty) {
+      currentDeviceId = deviceId;
+    }
     if (globalAudioRenderer == null) {
       globalAudioRenderer = RTCVideoRenderer();
       globalAudioRenderer?.initialize().then((data) {
-        if (currentDeviceId == deviceId) {
+        if (currentDeviceId == deviceId || currentDeviceId.isEmpty) {
+          if (currentDeviceId.isEmpty) currentDeviceId = deviceId;
           globalAudioRenderer!.srcObject = audioStreams[deviceId];
           /*if (audioStateChanged != null) {
             audioStateChanged!(true);
@@ -75,7 +89,8 @@ class WebrtcService {
         VLOG0('Error: failed to create RTCVideoRenderer');
       });
     } else {
-      if (currentDeviceId == deviceId) {
+      if (currentDeviceId == deviceId || currentDeviceId.isEmpty) {
+        if (currentDeviceId.isEmpty) currentDeviceId = deviceId;
         globalAudioRenderer!.srcObject = event.streams[0];
         /*
         if (audioStateChanged != null) {
