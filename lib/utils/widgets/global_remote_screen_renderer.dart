@@ -531,7 +531,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       }
     }
     final speed = StreamingSettings.touchpadTwoFingerScrollSpeed;
-    _scrollController.doScroll(0, deltaY * speed);
+    final sign = StreamingSettings.touchpadTwoFingerScrollInvert ? -1.0 : 1.0;
+    _scrollController.doScroll(0, deltaY * speed * sign);
   }
 
   void _handlePinchZoom(double scaleChange) {

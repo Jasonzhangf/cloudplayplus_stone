@@ -75,6 +75,7 @@ class StreamingSettings {
   static bool touchpadTwoFingerScroll = true; // 双指滚动
   static bool touchpadTwoFingerZoom = true; // 双指缩放
   static double touchpadTwoFingerScrollSpeed = 1.0; // 双指滚动速度倍率
+  static bool touchpadTwoFingerScrollInvert = false; // 双指滚动方向反转
 
   // 指针缩放倍率
   static double cursorScale = 50.0;
@@ -182,6 +183,9 @@ class StreamingSettings {
     touchpadTwoFingerScrollSpeed =
         SharedPreferencesManager.getDouble('touchpadTwoFingerScrollSpeed') ??
             1.0;
+    touchpadTwoFingerScrollInvert =
+        SharedPreferencesManager.getBool('touchpadTwoFingerScrollInvert') ??
+            false;
 
     if (AppPlatform.isDeskTop) {
       useClipBoard = SharedPreferencesManager.getBool('useClipBoard') ?? true;

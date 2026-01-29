@@ -14,6 +14,7 @@ import 'pages/init_page.dart';
 import 'services/app_info_service.dart';
 import 'services/login_service.dart';
 import 'services/secure_storage_manager.dart';
+import 'services/quick_target_service.dart';
 import 'services/shared_preferences_manager.dart';
 import 'theme/theme_provider.dart';
 import 'dev_settings.dart/develop_settings.dart';
@@ -31,6 +32,7 @@ void main() async {
   }
   await ScreenController.initialize();
   await SharedPreferencesManager.init();
+  await QuickTargetService.instance.init();
   SecureStorageManager.init();
   //AppInitService depends on SharedPreferencesManager
   await AppInitService.init();

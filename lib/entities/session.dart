@@ -6,10 +6,12 @@ import 'package:cloudplayplus/controller/hardware_input_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
+import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/streamed_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
+import 'package:cloudplayplus/utils/host/host_command_runner.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -994,6 +996,10 @@ class StreamingSession {
           if (!AppPlatform.isDeskTop) break;
           await _handleDesktopSourcesRequest(data['desktopSourcesRequest']);
           break;
+        case "iterm2SourcesRequest":
+          if (!AppPlatform.isDeskTop) break;
+          await _handleIterm2SourcesRequest(data['iterm2SourcesRequest']);
+          break;
         case "setCaptureTarget":
           if (!AppPlatform.isDeskTop) break;
           await _handleSetCaptureTarget(data['setCaptureTarget']);
@@ -1056,6 +1062,10 @@ class StreamingSession {
         case "desktopSources":
           RemoteWindowService.instance
               .handleDesktopSourcesMessage(data['desktopSources']);
+          break;
+        case "iterm2Sources":
+          RemoteIterm2Service.instance
+              .handleIterm2SourcesMessage(data['iterm2Sources']);
           break;
         case "captureTargetChanged":
           final payload = data['captureTargetChanged'];
@@ -1126,6 +1136,136 @@ class StreamingSession {
     );
   }
 
+  Future<void> _handleIterm2SourcesRequest(dynamic payload) async {
+    if (channel == null ||
+        channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    const runner = HostCommandRunner();
+    const timeout = Duration(seconds: 2);
+
+    const script = r'''
+import json
+import sys
+
+try:
+    import iterm2
+except Exception as e:
+    print(json.dumps({"error": f"iterm2 module not available: {e}", "panels": []}, ensure_ascii=False))
+    raise SystemExit(0)
+
+async def main(connection):
+    app = await iterm2.async_get_app(connection)
+    panels = []
+    selected = None
+
+    # best-effort current session id
+    try:
+        w = app.current_terminal_window
+        if w and w.current_tab and w.current_tab.current_session:
+            selected = w.current_tab.current_session.session_id
+    except Exception:
+        selected = None
+
+    win_idx = 0
+    for win in app.terminal_windows:
+        win_idx += 1
+        tab_idx = 0
+        for tab in win.tabs:
+            tab_idx += 1
+            sess_idx = 0
+            for sess in tab.sessions:
+                sess_idx += 1
+                try:
+                    tab_title = await sess.async_get_variable('tab.title')
+                except Exception:
+                    tab_title = ''
+                name = getattr(sess, 'name', '') or ''
+                title = f"{win_idx}.{tab_idx}.{sess_idx}"
+                detail = ' · '.join([p for p in [tab_title, name] if p])
+                item = {
+                    "id": sess.session_id,
+                    "title": title,
+                    "detail": detail,
+                    "index": len(panels),
+                    # include extra metadata for future use
+                    "windowId": getattr(win, 'window_id', None),
+                }
+                try:
+                    f = sess.frame
+                    wf = win.frame
+                    item["frame"] = {
+                        "x": int(f.origin.x),
+                        "y": int(f.origin.y),
+                        "w": int(f.size.width),
+                        "h": int(f.size.height),
+                    }
+                    item["windowFrame"] = {
+                        "x": int(wf.origin.x),
+                        "y": int(wf.origin.y),
+                        "w": int(wf.size.width),
+                        "h": int(wf.size.height),
+                    }
+                except Exception:
+                    pass
+                panels.append(item)
+
+    print(json.dumps({"panels": panels, "selectedSessionId": selected}, ensure_ascii=False))
+
+iterm2.run_until_complete(main)
+''';
+
+    HostCommandResult result;
+    try {
+      result = await runner.run('python3', ['-c', script], timeout: timeout);
+    } catch (e) {
+      channel?.send(
+        RTCDataChannelMessage(
+          jsonEncode({
+            'iterm2Sources': {
+              'error': '运行 iTerm2 查询脚本失败: $e',
+              'panels': const [],
+            }
+          }),
+        ),
+      );
+      return;
+    }
+
+    Map<String, dynamic> payloadOut = {'panels': const []};
+    if (result.exitCode != 0) {
+      payloadOut = {
+        'error': 'python3 exit=${result.exitCode}: ${result.stderrText}',
+        'panels': const [],
+      };
+    } else {
+      try {
+        final any = jsonDecode(result.stdoutText.trim());
+        if (any is Map) {
+          payloadOut = any.map((k, v) => MapEntry(k.toString(), v));
+        } else {
+          payloadOut = {
+            'error': 'unexpected stdout json',
+            'panels': const [],
+          };
+        }
+      } catch (e) {
+        payloadOut = {
+          'error': '解析 iTerm2 stdout 失败: $e',
+          'stdout': result.stdoutText,
+          'stderr': result.stderrText,
+          'panels': const [],
+        };
+      }
+    }
+
+    channel?.send(
+      RTCDataChannelMessage(
+        jsonEncode({'iterm2Sources': payloadOut}),
+      ),
+    );
+  }
+
   Future<void> _handleSetCaptureTarget(dynamic payload) async {
     if (channel == null ||
         channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
@@ -1161,6 +1301,116 @@ class StreamingSession {
       final idx = streamSettings?.screenId ?? 0;
       final selected =
           (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
+      await _switchCaptureToSource(selected);
+      return;
+    }
+
+    if (type == 'iterm2') {
+      final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
+      final sessionId = sessionIdAny?.toString() ?? '';
+      if (sessionId.isEmpty) return;
+
+      const runner = HostCommandRunner();
+      const timeout = Duration(seconds: 2);
+      const script = r'''
+import json
+import sys
+
+try:
+    import iterm2
+except Exception as e:
+    print(json.dumps({"error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
+    raise SystemExit(0)
+
+SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
+
+async def main(connection):
+    app = await iterm2.async_get_app(connection)
+    target = None
+    target_win = None
+    target_tab = None
+
+    for win in app.terminal_windows:
+        for tab in win.tabs:
+            for sess in tab.sessions:
+                if sess.session_id == SESSION_ID:
+                    target = sess
+                    target_win = win
+                    target_tab = tab
+                    break
+            if target:
+                break
+        if target:
+            break
+
+    if not target:
+        print(json.dumps({"error": f"session not found: {SESSION_ID}"}, ensure_ascii=False))
+        return
+
+    # best-effort: activate session/window
+    try:
+        await target.async_activate()
+    except Exception:
+        pass
+    try:
+        await target_win.async_activate()
+    except Exception:
+        pass
+
+    out = {
+        "sessionId": target.session_id,
+        "windowId": getattr(target_win, 'window_id', None),
+    }
+    try:
+        f = target.frame
+        wf = target_win.frame
+        out["frame"] = {"x": int(f.origin.x), "y": int(f.origin.y), "w": int(f.size.width), "h": int(f.size.height)}
+        out["windowFrame"] = {"x": int(wf.origin.x), "y": int(wf.origin.y), "w": int(wf.size.width), "h": int(wf.size.height)}
+    except Exception:
+        pass
+
+    print(json.dumps(out, ensure_ascii=False))
+
+iterm2.run_until_complete(main)
+''';
+
+      HostCommandResult meta;
+      try {
+        meta = await runner.run('python3', ['-c', script, sessionId],
+            timeout: timeout);
+      } catch (e) {
+        return;
+      }
+      if (meta.exitCode != 0) return;
+
+      int? windowId;
+      try {
+        final any = jsonDecode(meta.stdoutText.trim());
+        if (any is Map && any['windowId'] is num) {
+          windowId = (any['windowId'] as num).toInt();
+        }
+      } catch (_) {}
+
+      final sources = await desktopCapturer.getSources(types: [SourceType.Window]);
+      DesktopCapturerSource? selected;
+      if (windowId != null) {
+        for (final s in sources) {
+          if (s.windowId == windowId) {
+            selected = s;
+            break;
+          }
+        }
+      }
+      if (selected == null) {
+        for (final s in sources) {
+          if ((s.appName ?? '').toLowerCase().contains('iterm')) {
+            selected = s;
+            break;
+          }
+        }
+      }
+      selected ??= sources.isNotEmpty ? sources.first : null;
+      if (selected == null) return;
       await _switchCaptureToSource(selected);
       return;
     }

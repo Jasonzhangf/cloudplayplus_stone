@@ -1072,6 +1072,7 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
   bool _touchpadTwoFingerScroll = true; // 双指滚动
   bool _touchpadTwoFingerZoom = true; // 双指缩放
   double _touchpadTwoFingerScrollSpeed = 1.0; // 双指滚动速度倍率
+  bool _touchpadTwoFingerScrollInvert = false; // 双指滚动方向反转
   double _cursorScale = 50.0;
   final List<double> _scaleValues = [
     12.5,
@@ -1231,6 +1232,8 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
     _touchpadTwoFingerZoom = StreamingSettings.touchpadTwoFingerZoom;
     final savedTwoFingerScrollSpeed =
         StreamingSettings.touchpadTwoFingerScrollSpeed;
+    _touchpadTwoFingerScrollInvert =
+        StreamingSettings.touchpadTwoFingerScrollInvert;
     _touchpadTwoFingerScrollSpeed = _twoFingerScrollSpeedValues.reduce(
       (a, b) => (a - savedTwoFingerScrollSpeed).abs() <
               (b - savedTwoFingerScrollSpeed).abs()
@@ -1551,6 +1554,20 @@ class _CursorSettingsScreenState extends State<CursorSettingsScreen> {
                         SharedPreferencesManager.setBool(
                             'touchpadTwoFingerScroll', value);
                         StreamingSettings.touchpadTwoFingerScroll = value;
+                      });
+                    },
+                  ),
+                  SettingsTile.switchTile(
+                    title: const Text('反转滚动方向'),
+                    description: const Text('将双指滚动方向反转（自然滚动）'),
+                    leading: const Icon(Icons.swap_vert),
+                    initialValue: _touchpadTwoFingerScrollInvert,
+                    onToggle: (bool value) {
+                      setState(() {
+                        _touchpadTwoFingerScrollInvert = value;
+                        SharedPreferencesManager.setBool(
+                            'touchpadTwoFingerScrollInvert', value);
+                        StreamingSettings.touchpadTwoFingerScrollInvert = value;
                       });
                     },
                   ),

@@ -3,10 +3,14 @@ import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../models/shortcut.dart';
+import '../../models/quick_stream_target.dart';
+import '../../models/stream_mode.dart';
+import '../../pages/remote_window_select_page.dart';
+import '../../pages/stream_target_select_page.dart';
+import '../../services/quick_target_service.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
 import '../../controller/screen_controller.dart';
-import '../../pages/remote_window_select_page.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/system_keyboard_delta.dart';
 import '../../utils/input/input_debug.dart';
@@ -22,6 +26,7 @@ class FloatingShortcutButton extends StatefulWidget {
 
 class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   final ShortcutService _shortcutService = ShortcutService();
+  final QuickTargetService _quick = QuickTargetService.instance;
   late ShortcutSettings _settings;
   bool _isPanelVisible = false;
   bool _useSystemKeyboard = true;
@@ -246,7 +251,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
         SystemChannels.textInput.invokeMethod('TextInput.show');
       }
-      final inset = _isPanelVisible ? 60.0 : 0.0;
+      // Keep this roughly in sync with the toolbar height to lift the remote video.
+      final inset = _isPanelVisible ? 86.0 : 0.0;
       ScreenController.setShortcutOverlayHeight(inset);
     });
     return ValueListenableBuilder<double>(
@@ -430,156 +436,565 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       shortcuts:
           _settings.shortcuts.where((s) => !_arrowIds.contains(s.id)).toList(),
     );
-    return Material(
-      elevation: 8,
-      borderRadius: BorderRadius.circular(16),
-      clipBehavior: Clip.none,
-      child: Container(
-        height: 52,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.7),
+    final channel = WebrtcService.currentRenderingSession?.channel;
+    final channelOpen = channel != null &&
+        channel.state == RTCDataChannelState.RTCDataChannelOpen;
+
+    return ValueListenableBuilder<double>(
+      valueListenable: _quick.toolbarOpacity,
+      builder: (context, opacity, _) {
+        final bg = Colors.black.withValues(alpha: opacity);
+        return Material(
+          elevation: 8,
           borderRadius: BorderRadius.circular(16),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.2),
-              blurRadius: 16,
-              offset: const Offset(0, 4),
-            ),
-          ],
-        ),
-        child: Stack(
           clipBehavior: Clip.none,
-          children: [
-            Row(
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.settings),
-                  onPressed: () {
-                    showModalBottomSheet(
-                      context: context,
-                      isScrollControlled: true,
-                      builder: (_) => _ShortcutSettingsSheet(
-                        settings: _settings,
-                        onSettingsChanged: _handleSettingsChanged,
-                        sendComposingText: _sendComposingText,
-                        onSendComposingTextChanged: (v) =>
-                            setState(() => _sendComposingText = v),
-                      ),
-                    );
-                  },
-                  iconSize: 18,
-                  padding: const EdgeInsets.all(4),
-                  constraints:
-                      const BoxConstraints.tightFor(width: 30, height: 30),
-                  color: Colors.white.withValues(alpha: 0.92),
+          child: Container(
+            height: 86,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            decoration: BoxDecoration(
+              color: bg,
+              borderRadius: BorderRadius.circular(16),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.2),
+                  blurRadius: 16,
+                  offset: const Offset(0, 4),
                 ),
-                const SizedBox(width: 4),
-                Expanded(
-                  child: SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    physics: const BouncingScrollPhysics(),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        _ArrowRow(
-                          left: left,
-                          up: up,
-                          down: down,
-                          right: right,
-                          onShortcutPressed: _handleShortcutPressed,
-                        ),
-                        const SizedBox(width: 8),
-                        ShortcutBar(
-                          settings: settingsWithoutArrows,
-                          onSettingsChanged: _handleSettingsChanged,
-                          onShortcutPressed: _handleShortcutPressed,
-                          showSettingsButton: false,
-                          showBackground: false,
-                          padding: EdgeInsets.zero,
-                          scrollable: false,
-                        ),
-                        // End spacer so last buttons can be scrolled out from under the floating controls.
-                        const SizedBox(width: 48),
-                      ],
+              ],
+            ),
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Column(
+                  children: [
+                    _StreamControlRow(
+                      enabled: channelOpen,
+                      onPickMode: () => _showStreamModePicker(context, channel),
+                      onPickTarget: () => _openTargetPicker(context),
+                      onPickModeAndTarget: () =>
+                          _showStreamModePicker(context, channel, openTarget: true),
+                      onApplyFavorite: (target) {
+                        _applyQuickTarget(target);
+                      },
+                      onFavoriteAction: (slot, action) {
+                        _handleFavoriteAction(context, slot, action);
+                      },
                     ),
+                    const SizedBox(height: 6),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.settings),
+                            onPressed: () {
+                              showModalBottomSheet(
+                                context: context,
+                                isScrollControlled: true,
+                                builder: (_) => _ShortcutSettingsSheet(
+                                  settings: _settings,
+                                  onSettingsChanged: _handleSettingsChanged,
+                                  sendComposingText: _sendComposingText,
+                                  onSendComposingTextChanged: (v) =>
+                                      setState(() => _sendComposingText = v),
+                                  quickTargetService: _quick,
+                                ),
+                              );
+                            },
+                            iconSize: 18,
+                            padding: const EdgeInsets.all(4),
+                            constraints: const BoxConstraints.tightFor(
+                                width: 30, height: 30),
+                            color: Colors.white.withValues(alpha: 0.92),
+                          ),
+                          const SizedBox(width: 4),
+                          Expanded(
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              physics: const BouncingScrollPhysics(),
+                              child: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  _ArrowRow(
+                                    left: left,
+                                    up: up,
+                                    down: down,
+                                    right: right,
+                                    onShortcutPressed: _handleShortcutPressed,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  ShortcutBar(
+                                    settings: settingsWithoutArrows,
+                                    onSettingsChanged: _handleSettingsChanged,
+                                    onShortcutPressed: _handleShortcutPressed,
+                                    showSettingsButton: false,
+                                    showBackground: false,
+                                    padding: EdgeInsets.zero,
+                                    scrollable: false,
+                                  ),
+                                  const SizedBox(width: 56),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                Positioned(
+                  right: 6,
+                  top: 6,
+                  child: _TopRightActions(
+                    useSystemKeyboard: _useSystemKeyboard,
+                    onToggleKeyboard: () {
+                      setState(() => _useSystemKeyboard = !_useSystemKeyboard);
+                      if (_useSystemKeyboard) {
+                        ScreenController.setShowVirtualKeyboard(false);
+                        FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                          SystemChannels.textInput.invokeMethod('TextInput.show');
+                        });
+                      } else {
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        FocusScope.of(context).unfocus();
+                        ScreenController.setShowVirtualKeyboard(true);
+                      }
+                    },
+                    onClose: () {
+                      setState(() => _isPanelVisible = false);
+                      ScreenController.setShowVirtualKeyboard(false);
+                      ScreenController.setShortcutOverlayHeight(0);
+                      FocusScope.of(context).unfocus();
+                      SystemChannels.textInput.invokeMethod('TextInput.hide');
+                    },
                   ),
                 ),
               ],
             ),
-            Positioned(
-              right: 4,
-              top: 11,
-              child: Material(
-                color: Colors.black.withValues(alpha: 0.78),
-                borderRadius: BorderRadius.circular(12),
-                child: Container(
-                  height: 30,
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(
-                      color: Colors.white.withValues(alpha: 0.14),
-                      width: 1,
-                    ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _showStreamModePicker(
+    BuildContext context,
+    RTCDataChannel? channel, {
+    bool openTarget = false,
+  }) async {
+    final picked = await showModalBottomSheet<StreamMode>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const ListTile(
+                title: Text('串流模式'),
+                subtitle: Text('选择桌面 / 窗口 / iTerm2'),
+              ),
+              for (final mode in StreamMode.values)
+                ListTile(
+                  leading: Icon(
+                    mode == StreamMode.desktop
+                        ? Icons.desktop_windows
+                        : mode == StreamMode.window
+                            ? Icons.window
+                            : Icons.terminal,
                   ),
+                  title: Text(streamModeLabel(mode)),
+                  trailing: _quick.mode.value == mode
+                      ? const Icon(Icons.check, color: Colors.green)
+                      : null,
+                  onTap: () => Navigator.pop(context, mode),
+                ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null) return;
+    await _quick.setMode(picked);
+
+    if (!mounted) return;
+    if (picked == StreamMode.desktop) {
+      if (channel != null &&
+          channel.state == RTCDataChannelState.RTCDataChannelOpen) {
+        await _quick.applyTarget(
+          channel,
+          const QuickStreamTarget(
+            mode: StreamMode.desktop,
+            id: 'screen',
+            label: '整个桌面',
+          ),
+        );
+      }
+      return;
+    }
+    if (openTarget) {
+      _openTargetPicker(context);
+    }
+  }
+
+  void _openTargetPicker(BuildContext context) {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const StreamTargetSelectPage()),
+    );
+  }
+
+  Future<void> _applyQuickTarget(QuickStreamTarget target) async {
+    final channel = WebrtcService.currentRenderingSession?.channel;
+    if (channel == null || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    await _quick.applyTarget(channel, target);
+  }
+
+  Future<void> _handleFavoriteAction(
+    BuildContext context,
+    int slot,
+    _FavoriteAction action,
+  ) async {
+    switch (action) {
+      case _FavoriteAction.rename:
+        final current = _quick.favorites.value[slot];
+        if (current == null) return;
+        final controller =
+            TextEditingController(text: current.alias ?? current.label);
+        final alias = await showDialog<String>(
+          context: context,
+          builder: (context) {
+            return AlertDialog(
+              title: const Text('编辑名称'),
+              content: TextField(
+                controller: controller,
+                decoration: const InputDecoration(hintText: '显示名称'),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('取消'),
+                ),
+                ElevatedButton(
+                  onPressed: () =>
+                      Navigator.pop(context, controller.text.trim()),
+                  child: const Text('保存'),
+                ),
+              ],
+            );
+          },
+        );
+        if (alias == null) return;
+        await _quick.renameFavorite(slot, alias);
+        break;
+      case _FavoriteAction.delete:
+        await _quick.deleteFavorite(slot);
+        break;
+    }
+  }
+}
+
+enum _FavoriteAction { rename, delete }
+
+class _TopRightActions extends StatelessWidget {
+  final bool useSystemKeyboard;
+  final VoidCallback onToggleKeyboard;
+  final VoidCallback onClose;
+
+  const _TopRightActions({
+    required this.useSystemKeyboard,
+    required this.onToggleKeyboard,
+    required this.onClose,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.black.withValues(alpha: 0.78),
+      borderRadius: BorderRadius.circular(12),
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.14),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: Icon(
+                useSystemKeyboard
+                    ? Icons.keyboard_alt_outlined
+                    : Icons.keyboard_outlined,
+              ),
+              tooltip: useSystemKeyboard ? '手机键盘' : '电脑键盘',
+              onPressed: onToggleKeyboard,
+              iconSize: 18,
+              padding: const EdgeInsets.all(0),
+              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+            const SizedBox(width: 2),
+            IconButton(
+              icon: const Icon(Icons.close),
+              tooltip: '关闭快捷栏',
+              onPressed: onClose,
+              iconSize: 18,
+              padding: const EdgeInsets.all(0),
+              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+              color: Colors.white.withValues(alpha: 0.92),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _StreamControlRow extends StatelessWidget {
+  final bool enabled;
+  final VoidCallback onPickMode;
+  final VoidCallback onPickModeAndTarget;
+  final VoidCallback onPickTarget;
+  final ValueChanged<QuickStreamTarget> onApplyFavorite;
+  final void Function(int slot, _FavoriteAction action) onFavoriteAction;
+
+  const _StreamControlRow({
+    required this.enabled,
+    required this.onPickMode,
+    required this.onPickModeAndTarget,
+    required this.onPickTarget,
+    required this.onApplyFavorite,
+    required this.onFavoriteAction,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final quick = QuickTargetService.instance;
+    return SizedBox(
+      height: 32,
+      child: Row(
+        children: [
+          _PillButton(
+            icon: Icons.movie_filter,
+            label: '模式',
+            enabled: enabled,
+            onTap: onPickMode,
+          ),
+          const SizedBox(width: 6),
+          ValueListenableBuilder<StreamMode>(
+            valueListenable: quick.mode,
+            builder: (context, mode, _) {
+              final label = mode == StreamMode.desktop
+                  ? '桌面'
+                  : mode == StreamMode.window
+                      ? '窗口'
+                      : 'iTerm2';
+              return _PillButton(
+                icon: mode == StreamMode.desktop
+                    ? Icons.desktop_windows
+                    : mode == StreamMode.window
+                        ? Icons.window
+                        : Icons.terminal,
+                label: label,
+                enabled: enabled,
+                onTap: onPickModeAndTarget,
+              );
+            },
+          ),
+          const SizedBox(width: 6),
+          _PillButton(
+            icon: Icons.list_alt,
+            label: '选择',
+            enabled: enabled,
+            onTap: onPickTarget,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: ValueListenableBuilder<List<QuickStreamTarget?>>(
+              valueListenable: quick.favorites,
+              builder: (context, favorites, _) {
+                return SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  physics: const BouncingScrollPhysics(),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
                     children: [
-                      IconButton(
-                        icon: Icon(
-                          _useSystemKeyboard
-                              ? Icons.keyboard_alt_outlined
-                              : Icons.keyboard_outlined,
+                      for (int i = 0; i < favorites.length; i++) ...[
+                        _FavoriteButton(
+                          slot: i,
+                          target: favorites[i],
+                          enabled: enabled,
+                          onTap: favorites[i] == null
+                              ? null
+                              : () => onApplyFavorite(favorites[i]!),
+                          onLongPress: favorites[i] == null
+                              ? null
+                              : () => _showFavoriteMenu(
+                                    context,
+                                    slot: i,
+                                    onAction: onFavoriteAction,
+                                  ),
                         ),
-                        tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
-                        onPressed: () {
-                          setState(
-                            () => _useSystemKeyboard = !_useSystemKeyboard,
-                          );
-                          if (_useSystemKeyboard) {
-                            ScreenController.setShowVirtualKeyboard(false);
-                            FocusScope.of(context)
-                                .requestFocus(_systemKeyboardFocusNode);
-                            WidgetsBinding.instance.addPostFrameCallback((_) {
-                              SystemChannels.textInput
-                                  .invokeMethod('TextInput.show');
-                            });
-                          } else {
-                            SystemChannels.textInput
-                                .invokeMethod('TextInput.hide');
-                            FocusScope.of(context).unfocus();
-                            ScreenController.setShowVirtualKeyboard(true);
-                          }
-                        },
-                        iconSize: 18,
-                        padding: const EdgeInsets.all(0),
-                        constraints: const BoxConstraints.tightFor(
-                            width: 26, height: 26),
-                        color: Colors.white.withValues(alpha: 0.92),
-                      ),
-                      const SizedBox(width: 2),
-                      IconButton(
-                        icon: const Icon(Icons.close),
-                        tooltip: '关闭快捷栏',
-                        onPressed: () {
-                          setState(() {
-                            _isPanelVisible = false;
-                          });
-                          ScreenController.setShowVirtualKeyboard(false);
-                          ScreenController.setShortcutOverlayHeight(0);
-                          FocusScope.of(context).unfocus();
-                          SystemChannels.textInput
-                              .invokeMethod('TextInput.hide');
-                        },
-                        iconSize: 18,
-                        padding: const EdgeInsets.all(0),
-                        constraints: const BoxConstraints.tightFor(
-                            width: 26, height: 26),
-                        color: Colors.white.withValues(alpha: 0.92),
-                      ),
+                        const SizedBox(width: 6),
+                      ],
+                      const SizedBox(width: 64),
                     ],
                   ),
+                );
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static void _showFavoriteMenu(
+    BuildContext context, {
+    required int slot,
+    required void Function(int slot, _FavoriteAction action) onAction,
+  }) {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit),
+                title: const Text('编辑名称'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onAction(slot, _FavoriteAction.rename);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline),
+                title: const Text('删除快捷'),
+                onTap: () {
+                  Navigator.pop(context);
+                  onAction(slot, _FavoriteAction.delete);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _PillButton extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool enabled;
+  final VoidCallback? onTap;
+
+  const _PillButton({
+    required this.icon,
+    required this.label,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.white.withValues(alpha: enabled ? 0.10 : 0.06),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.14),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.92)),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w700,
+                color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _FavoriteButton extends StatelessWidget {
+  final int slot;
+  final QuickStreamTarget? target;
+  final bool enabled;
+  final VoidCallback? onTap;
+  final VoidCallback? onLongPress;
+
+  const _FavoriteButton({
+    required this.slot,
+    required this.target,
+    required this.enabled,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = target?.displayLabel ?? '快捷 ${slot + 1}';
+    return InkWell(
+      onTap: enabled ? onTap : null,
+      onLongPress: enabled ? onLongPress : null,
+      borderRadius: BorderRadius.circular(10),
+      child: Container(
+        height: 30,
+        constraints: const BoxConstraints(minWidth: 60),
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.25),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: Colors.white.withValues(alpha: 0.14),
+            width: 1,
+          ),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              target == null ? Icons.star_border : Icons.star,
+              size: 14,
+              color: target == null
+                  ? Colors.white.withValues(alpha: 0.35)
+                  : Colors.amber,
+            ),
+            const SizedBox(width: 6),
+            SizedBox(
+              width: 96,
+              child: Text(
+                label,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.white.withValues(alpha: target == null ? 0.45 : 0.92),
                 ),
               ),
             ),
@@ -658,6 +1073,7 @@ class _ShortcutSettingsSheet extends StatefulWidget {
   final ValueChanged<ShortcutSettings> onSettingsChanged;
   final bool sendComposingText;
   final ValueChanged<bool> onSendComposingTextChanged;
+  final QuickTargetService quickTargetService;
 
   const _ShortcutSettingsSheet({
     super.key,
@@ -665,6 +1081,7 @@ class _ShortcutSettingsSheet extends StatefulWidget {
     required this.onSettingsChanged,
     required this.sendComposingText,
     required this.onSendComposingTextChanged,
+    required this.quickTargetService,
   });
 
   @override
@@ -727,6 +1144,29 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Column(
               children: [
+                ValueListenableBuilder<double>(
+                  valueListenable: widget.quickTargetService.toolbarOpacity,
+                  builder: (context, v, _) {
+                    return Column(
+                      children: [
+                        Row(
+                          children: [
+                            const Expanded(child: Text('快捷栏透明度')),
+                            Text('${(v * 100).round()}%'),
+                          ],
+                        ),
+                        Slider(
+                          value: v,
+                          min: 0.2,
+                          max: 0.95,
+                          divisions: 15,
+                          onChanged: (nv) =>
+                              widget.quickTargetService.setToolbarOpacity(nv),
+                        ),
+                      ],
+                    );
+                  },
+                ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('发送预编辑文本（中文输入时可能发送拼音）'),
