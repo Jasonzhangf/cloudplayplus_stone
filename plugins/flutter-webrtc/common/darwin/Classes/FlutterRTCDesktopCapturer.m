@@ -40,14 +40,18 @@
 
 - (CGFloat)_bestEffortBackingScaleForWindowFrame:(CGRect)frame {
   // ScreenCaptureKit window.frame is in logical points (not physical pixels).
-  // To avoid blurry capture on Retina, multiply by the screen's backingScaleFactor.
-  CGPoint center = CGPointMake(CGRectGetMidX(frame), CGRectGetMidY(frame));
+  // To avoid blurry capture on Retina, multiply by a reasonable backingScaleFactor.
+  //
+  // Note: SCWindow.frame coordinates may not match NSScreen.frame coordinates in all setups
+  // (multi-display / differing coordinate spaces). Use the maximum backing scale as a safe
+  // default, falling back to mainScreen if needed.
+  CGFloat best = 1.0;
   for (NSScreen *screen in NSScreen.screens) {
-    if (CGRectContainsPoint(screen.frame, center)) {
-      return screen.backingScaleFactor > 0 ? screen.backingScaleFactor : 1.0;
-    }
+    if (screen.backingScaleFactor > best) best = screen.backingScaleFactor;
   }
-  return NSScreen.mainScreen.backingScaleFactor > 0 ? NSScreen.mainScreen.backingScaleFactor : 1.0;
+  if (best <= 0) best = NSScreen.mainScreen.backingScaleFactor;
+  if (best <= 0) best = 1.0;
+  return best;
 }
 
 - (void)startWithWindowId:(uint32_t)windowId windowNameFallback:(NSString *)windowName fps:(NSInteger)fps {

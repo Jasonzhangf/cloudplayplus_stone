@@ -275,16 +275,10 @@ class StreamedManager {
           };
         } else {
           if (AppPlatform.isDeskTop) {
-            final hostSourceId = StreamingSettings.desktopSourceId;
-            final hostSourceType = StreamingSettings.sourceType;
-            if (hostSourceId != null &&
-                hostSourceId.isNotEmpty &&
-                hostSourceType == 'window') {
-              settings.desktopSourceId = hostSourceId;
-              settings.sourceType = hostSourceType;
-            } else {
-              settings.sourceType = 'screen';
-            }
+            // Default policy: always start with full desktop (screen) capture.
+            // Window capture (if needed) is switched at runtime via datachannel from controller.
+            settings.desktopSourceId = null;
+            settings.sourceType = 'screen';
           }
           var sources = await desktopCapturer
               .getSources(types: [SourceType.Screen, SourceType.Window]);

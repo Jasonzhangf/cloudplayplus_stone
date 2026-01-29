@@ -509,7 +509,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
             ),
             Positioned(
               right: 4,
-              top: -18,
+              top: 11,
               child: Material(
                 color: Colors.black.withValues(alpha: 0.78),
                 borderRadius: BorderRadius.circular(12),
@@ -535,13 +535,16 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                         tooltip: _useSystemKeyboard ? '手机键盘' : '电脑键盘',
                         onPressed: () {
                           setState(
-                              () => _useSystemKeyboard = !_useSystemKeyboard);
+                            () => _useSystemKeyboard = !_useSystemKeyboard,
+                          );
                           if (_useSystemKeyboard) {
                             ScreenController.setShowVirtualKeyboard(false);
                             FocusScope.of(context)
                                 .requestFocus(_systemKeyboardFocusNode);
-                            SystemChannels.textInput
-                                .invokeMethod('TextInput.show');
+                            WidgetsBinding.instance.addPostFrameCallback((_) {
+                              SystemChannels.textInput
+                                  .invokeMethod('TextInput.show');
+                            });
                           } else {
                             SystemChannels.textInput
                                 .invokeMethod('TextInput.hide');
