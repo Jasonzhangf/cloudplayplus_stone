@@ -1629,26 +1629,74 @@ iterm2.run_until_complete(main)
               wh != null &&
               ww > 0 &&
               wh > 0) {
-            // Convert iTerm2 session.frame + window.frame (screen coords, origin bottom-left)
-            // into window-captured image coords (origin top-left), then normalize to [0..1].
+            // iTerm2's coordinate system is not the same as CGWindow/SCK; however
+            // session.frame and window.frame are in the same coordinate space.
+            // We only need the *relative* rectangle of session inside window.
             //
-            // In screen coords:
-            // - window top = wy + wh
-            // - panel top  = fy + fh
-            // => topPx (from window top) = (wy + wh) - (fy + fh)
-            final leftPx = (fx - wx).clamp(0.0, ww);
-            final topPx = ((wy + wh) - (fy + fh)).clamp(0.0, wh);
+            // The docs are confusing about origin and axis direction, so compute
+            // robustly by trying common interpretations and picking the one that
+            // best fits within the window bounds.
+            double clamp01(double v) => v.clamp(0.0, 1.0);
+
+            double scoreRect({
+              required double left,
+              required double top,
+              required double width,
+              required double height,
+            }) {
+              // Lower is better; penalize out-of-bounds.
+              double penalty = 0;
+              if (width <= 0 || height <= 0) return 1e9;
+              if (left < 0) penalty += -left;
+              if (top < 0) penalty += -top;
+              if (left + width > ww) penalty += (left + width - ww);
+              if (top + height > wh) penalty += (top + height - wh);
+              // Prefer tighter fit (less clamping).
+              return penalty;
+            }
+
+            // Two candidates for X: x grows to the right vs to the left.
+            final leftCandidates = <double>[
+              fx - wx,
+              wx - fx,
+            ];
+            // Two candidates for Y: y grows downward vs upward (origin is "top").
+            final topCandidates = <double>[
+              fy - wy,
+              wy - fy,
+            ];
+
+            double bestLeft = 0;
+            double bestTop = 0;
+            double bestScore = 1e9;
+            for (final l in leftCandidates) {
+              for (final t in topCandidates) {
+                final sc = scoreRect(left: l, top: t, width: fw, height: fh);
+                if (sc < bestScore) {
+                  bestScore = sc;
+                  bestLeft = l;
+                  bestTop = t;
+                }
+              }
+            }
+
+            final leftPx = bestLeft.clamp(0.0, ww);
+            final topPx = bestTop.clamp(0.0, wh);
             final maxW = (ww - leftPx).clamp(0.0, ww);
             final maxH = (wh - topPx).clamp(0.0, wh);
             final wPx = fw.clamp(0.0, maxW);
             final hPx = fh.clamp(0.0, maxH);
+
             if (wPx > 0 && hPx > 0) {
               cropRectNorm = {
-                'x': (leftPx / ww).clamp(0.0, 1.0),
-                'y': (topPx / wh).clamp(0.0, 1.0),
-                'w': (wPx / ww).clamp(0.0, 1.0),
-                'h': (hPx / wh).clamp(0.0, 1.0),
+                'x': clamp01(leftPx / ww),
+                'y': clamp01(topPx / wh),
+                'w': clamp01(wPx / ww),
+                'h': clamp01(hPx / wh),
               };
+              VLOG0('[iTerm2] cropRectNorm=$cropRectNorm frame=$frameAny windowFrame=$windowFrameAny');
+            } else {
+              VLOG0('[iTerm2] cropRectNorm unavailable: frame=$frameAny windowFrame=$windowFrameAny');
             }
           }
         }

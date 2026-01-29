@@ -82,6 +82,9 @@
       }
     }
   }
+  if (self.hasCrop) {
+    NSLog(@"[SCK] cropRectNorm=(%.4f,%.4f %.4fx%.4f)", self.cropRectNorm.origin.x, self.cropRectNorm.origin.y, self.cropRectNorm.size.width, self.cropRectNorm.size.height);
+  }
 
   __weak __typeof(self) weakSelf = self;
   [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent * _Nullable content,
