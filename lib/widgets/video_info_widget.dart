@@ -4,6 +4,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/webrtc_service.dart';
 import '../controller/screen_controller.dart';
 import '../base/logging.dart';
+import '../services/video_frame_size_event_bus.dart';
 
 class VideoInfoWidget extends StatelessWidget {
   const VideoInfoWidget({super.key});
@@ -40,18 +41,27 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
   Timer? _refreshTimer;
   Map<String, dynamic> _videoInfo = {};
   Map<String, dynamic> _previousVideoInfo = {};
+  StreamSubscription<Map<String, dynamic>>? _hostFrameSizeSub;
+  Map<String, dynamic>? _hostFrameSize;
 
   @override
   void initState() {
     super.initState();
     VLOG0('VideoInfoContentState: initState called');
     _startRefreshTimer();
+    _hostFrameSizeSub = VideoFrameSizeEventBus.instance.stream.listen((p) {
+      if (!mounted) return;
+      setState(() {
+        _hostFrameSize = p;
+      });
+    });
   }
 
   @override
   void dispose() {
     VLOG0('VideoInfoContentState: dispose called');
     _refreshTimer?.cancel();
+    _hostFrameSizeSub?.cancel();
     super.dispose();
   }
 
@@ -111,6 +121,26 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
               _buildInfoItem('往返时延', '${((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0)} ms'),
               _buildInfoItem('解码时间', '${(_videoInfo['avgDecodeTimeMs'] as num).toStringAsFixed(1)} ms'),
               _buildInfoItem('抖动', '${((_videoInfo['jitter'] as num) * 1000).toStringAsFixed(1)} ms'),
+              if (_hostFrameSize != null) ...[
+                _buildInfoItem(
+                  'Host',
+                  '${_hostFrameSize!['width']}×${_hostFrameSize!['height']} (src ${_hostFrameSize!['srcWidth']}×${_hostFrameSize!['srcHeight']})',
+                ),
+                if (_hostFrameSize!['hasCrop'] == true)
+                  _buildInfoItem(
+                    'Crop',
+                    _hostFrameSize!['cropRect'] is Map
+                        ? () {
+                            final c = _hostFrameSize!['cropRect'] as Map;
+                            final x = c['x'];
+                            final y = c['y'];
+                            final w = c['w'];
+                            final h = c['h'];
+                            return 'x=$x y=$y w=$w h=$h';
+                          }()
+                        : 'true',
+                  ),
+              ],
             ],
           ),
         ],

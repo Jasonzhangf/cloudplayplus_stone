@@ -1063,6 +1063,8 @@ class StreamingSession {
           final text =
               (payload is Map) ? (payload['text']?.toString() ?? '') : '';
           if (text.isEmpty) break;
+          VLOG0(
+              '[INPUT] textInput len=${text.length} captureType=${streamSettings?.captureTargetType} windowId=${streamSettings?.windowId} iterm2=${streamSettings?.iterm2SessionId}');
           final captureType = streamSettings?.captureTargetType;
           final iterm2SessionId = streamSettings?.iterm2SessionId;
           if (captureType == 'iterm2' &&
@@ -1897,13 +1899,26 @@ iterm2.run_until_complete(main)
             double bestTop = rawTopPx;
             String bestTag = 'doc: wx-fx, wy-fy';
 
-            for (final c in candidates) {
-              final p = overflowPenalty(
-                left: c.left,
-                top: c.top,
-                width: fw,
-                height: fh,
+            final wPx = fw.clamp(1.0, ww);
+            final hPx = fh.clamp(1.0, wh);
+
+            double scoreCandidate(double left, double top) {
+              final overflow = overflowPenalty(
+                left: left,
+                top: top,
+                width: wPx,
+                height: hPx,
               );
+              // Penalize heavy clamping (often indicates wrong coordinate space).
+              final clampedLeft = left.clamp(0.0, ww - wPx);
+              final clampedTop = top.clamp(0.0, wh - hPx);
+              final clampPenalty =
+                  (left - clampedLeft).abs() + (top - clampedTop).abs();
+              return overflow + clampPenalty * 2.0;
+            }
+
+            for (final c in candidates) {
+              final p = scoreCandidate(c.left, c.top);
               if (p < bestPenalty) {
                 bestPenalty = p;
                 bestLeft = c.left;
@@ -1913,8 +1928,6 @@ iterm2.run_until_complete(main)
             }
 
             // Always emit a crop rect (clamped). Even if slightly off, it's better than no cropping.
-            final wPx = fw.clamp(1.0, ww);
-            final hPx = fh.clamp(1.0, wh);
             final leftPx = bestLeft.clamp(0.0, ww - wPx);
             final topPx = bestTop.clamp(0.0, wh - hPx);
 
