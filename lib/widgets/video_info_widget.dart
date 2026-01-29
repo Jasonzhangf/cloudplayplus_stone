@@ -140,6 +140,18 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
                           }()
                         : 'true',
                   ),
+                if (_hostFrameSize!['streamCropRect'] is Map)
+                  _buildInfoItem(
+                    'ReqCrop',
+                    () {
+                      final c = _hostFrameSize!['streamCropRect'] as Map;
+                      final x = c['x'];
+                      final y = c['y'];
+                      final w = c['w'];
+                      final h = c['h'];
+                      return 'x=$x y=$y w=$w h=$h';
+                    }(),
+                  ),
               ],
             ],
           ),

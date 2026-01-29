@@ -1285,7 +1285,9 @@ class StreamingSession {
           'sourceType': streamSettings?.sourceType,
           'captureTargetType': streamSettings?.captureTargetType,
           'iterm2SessionId': streamSettings?.iterm2SessionId,
-          'cropRect': streamSettings?.cropRect,
+          // Keep native-reported cropRect (post-crop) if present in `payload`.
+          // Also attach the streamSettings crop rect (requested crop) separately for debugging.
+          'streamCropRect': streamSettings?.cropRect,
           'sentAtMs': nowMs,
         };
         dc.send(
