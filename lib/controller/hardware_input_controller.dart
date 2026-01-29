@@ -36,6 +36,9 @@ class InputController {
   /// Window capture metadata for host-side coordinate mapping.
   ContentToWindowMap? _captureMap;
 
+  @visibleForTesting
+  ContentToWindowMap? get debugCaptureMap => _captureMap;
+
   void setCaptureMapFromFrame(
     Map<String, double>? frame, {
     int? windowId,
