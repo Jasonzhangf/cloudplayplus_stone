@@ -378,7 +378,6 @@ static NSDictionary* _Nullable flutter_sck_lookup_window_meta(NSString* sourceId
 RTCDesktopMediaList* _screen = nil;
 RTCDesktopMediaList* _window = nil;
 NSArray<RTCDesktopSource*>* _captureSources;
-FlutterSCKInlineCapturer* _sckCapturer = nil;
 #endif
 
 @implementation FlutterWebRTCPlugin (DesktopCapturer)
@@ -494,16 +493,15 @@ FlutterSCKInlineCapturer* _sckCapturer = nil;
 
 	    if (source.sourceType == RTCDesktopSourceTypeWindow) {
 	      if (@available(macOS 12.3, *)) {
-	        _sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
-          _sckCapturer.eventSink = self.eventSink;
-          _sckCapturer.sourceId = sourceId ?: @"";
+	        FlutterSCKInlineCapturer* sckCapturer = [[FlutterSCKInlineCapturer alloc] initWithCaptureDelegate:videoSource];
+          sckCapturer.eventSink = self.eventSink;
+          sckCapturer.sourceId = sourceId ?: @"";
 	        uint32_t windowId = (uint32_t)[sourceId intValue];
-	        [_sckCapturer startWithWindowId:windowId windowNameFallback:source.name fps:fps cropRectNormalized:cropRect];
+	        [sckCapturer startWithWindowId:windowId windowNameFallback:source.name fps:fps cropRectNormalized:cropRect];
 	        NSLog(@"start desktop capture (SCK): sourceId: %@, type: window, fps: %lu", sourceId, fps);
         self.videoCapturerStopHandlers[trackUUID] = ^(CompletionHandler handler) {
           NSLog(@"stop desktop capture (SCK): sourceId: %@, type: window, trackID %@", sourceId, trackUUID);
-          [_sckCapturer stop];
-          _sckCapturer = nil;
+          [sckCapturer stop];
           handler();
         };
         desktopCapturer = nil;

@@ -113,6 +113,7 @@ class StreamingSession {
   int audioBitrate = 32;
 
   final _lock = Lock();
+  final _captureSwitchLock = Lock();
 
   Timer? _clipboardTimer;
   String _lastClipboardContent = '';
@@ -1467,12 +1468,39 @@ iterm2.run_until_complete(main)
     }
     if (videoSender == null) return;
 
-    final typeAny = (payload is Map) ? payload['type'] : null;
-    final type = typeAny?.toString() ?? 'window';
-    // Switching capture targets can leave modifier state "stuck" (e.g. missed key-up).
-    // Reset for safety, especially for iTerm2 TTY injection.
-    _iterm2ModifiersDown.clear();
-    if (type == 'window') {
+    await _captureSwitchLock.synchronized(() async {
+      final typeAny = (payload is Map) ? payload['type'] : null;
+      final type = typeAny?.toString() ?? 'window';
+
+      // Switching capture targets can leave modifier state "stuck" (e.g. missed key-up).
+      // Reset for safety, especially for iTerm2 TTY injection.
+      _iterm2ModifiersDown.clear();
+
+      // Idempotency: ignore repeated target requests (e.g. reconnect restore + UI tap).
+      if (streamSettings != null) {
+        if (type == 'screen' && streamSettings!.captureTargetType == 'screen') {
+          return;
+        }
+        if (type == 'window') {
+          final windowIdAny = (payload is Map) ? payload['windowId'] : null;
+          if (streamSettings!.captureTargetType == 'window' &&
+              windowIdAny is num &&
+              streamSettings!.windowId == windowIdAny.toInt()) {
+            return;
+          }
+        }
+        if (type == 'iterm2') {
+          final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
+          final sessionId = sessionIdAny?.toString() ?? '';
+          if (sessionId.isNotEmpty &&
+              streamSettings!.captureTargetType == 'iterm2' &&
+              streamSettings!.iterm2SessionId == sessionId) {
+            return;
+          }
+        }
+      }
+
+      if (type == 'window') {
       if (streamSettings != null) {
         streamSettings!.captureTargetType = 'window';
         streamSettings!.iterm2SessionId = null;
@@ -1592,9 +1620,9 @@ iterm2.run_until_complete(main)
         },
       );
       return;
-    }
+      }
 
-    if (type == 'screen') {
+      if (type == 'screen') {
       if (streamSettings != null) {
         streamSettings!.captureTargetType = 'screen';
         streamSettings!.iterm2SessionId = null;
@@ -1615,9 +1643,9 @@ iterm2.run_until_complete(main)
         },
       );
       return;
-    }
+      }
 
-    if (type == 'iterm2') {
+      if (type == 'iterm2') {
       final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
       final sessionId = sessionIdAny?.toString() ?? '';
       if (sessionId.isEmpty) return;
@@ -1896,7 +1924,8 @@ iterm2.run_until_complete(main)
         minHeightConstraint: iterm2MinHeight,
       );
       return;
-    }
+      }
+    });
   }
 
   Future<void> _switchCaptureToSource(
