@@ -1187,7 +1187,8 @@ class StreamingSession {
         : true;
     final types = wantWindow ? [SourceType.Window] : [SourceType.Screen];
 
-    final wantThumbnail = (payload is Map) ? payload['thumbnail'] == true : false;
+    final wantThumbnail =
+        (payload is Map) ? payload['thumbnail'] == true : false;
     ThumbnailSize? thumbSize;
     final thumbSizeAny = (payload is Map) ? payload['thumbnailSize'] : null;
     if (wantThumbnail && thumbSizeAny is Map) {
@@ -1198,8 +1199,8 @@ class StreamingSession {
       }
     }
 
-    final sources =
-        await desktopCapturer.getSources(types: types, thumbnailSize: thumbSize);
+    final sources = await desktopCapturer.getSources(
+        types: types, thumbnailSize: thumbSize);
     final list = sources
         .map((s) => <String, dynamic>{
               'id': s.id,
@@ -1254,6 +1255,18 @@ async def main(connection):
     panels = []
     selected = None
 
+    async def get_frame(obj):
+        try:
+            fn = getattr(obj, "async_get_frame", None)
+            if fn:
+                return await fn()
+        except Exception:
+            pass
+        try:
+            return obj.frame
+        except Exception:
+            return None
+
     # best-effort current session id
     try:
         w = app.current_terminal_window
@@ -1287,20 +1300,21 @@ async def main(connection):
                     "windowId": getattr(win, 'window_id', None),
                 }
                 try:
-                    f = sess.frame
-                    wf = win.frame
-                    item["frame"] = {
-                        "x": int(f.origin.x),
-                        "y": int(f.origin.y),
-                        "w": int(f.size.width),
-                        "h": int(f.size.height),
-                    }
-                    item["windowFrame"] = {
-                        "x": int(wf.origin.x),
-                        "y": int(wf.origin.y),
-                        "w": int(wf.size.width),
-                        "h": int(wf.size.height),
-                    }
+                    f = await get_frame(sess)
+                    wf = await get_frame(win)
+                    if f and wf:
+                        item["frame"] = {
+                            "x": float(f.origin.x),
+                            "y": float(f.origin.y),
+                            "w": float(f.size.width),
+                            "h": float(f.size.height),
+                        }
+                        item["windowFrame"] = {
+                            "x": float(wf.origin.x),
+                            "y": float(wf.origin.y),
+                            "w": float(wf.size.width),
+                            "h": float(wf.size.height),
+                        }
                 except Exception:
                     pass
                 panels.append(item)
@@ -1380,9 +1394,12 @@ iterm2.run_until_complete(main)
         streamSettings!.cropRect = null;
       }
       final windowIdAny = (payload is Map) ? payload['windowId'] : null;
-      final expectedTitleAny = (payload is Map) ? payload['expectedTitle'] : null;
-      final expectedAppIdAny = (payload is Map) ? payload['expectedAppId'] : null;
-      final expectedAppNameAny = (payload is Map) ? payload['expectedAppName'] : null;
+      final expectedTitleAny =
+          (payload is Map) ? payload['expectedTitle'] : null;
+      final expectedAppIdAny =
+          (payload is Map) ? payload['expectedAppId'] : null;
+      final expectedAppNameAny =
+          (payload is Map) ? payload['expectedAppName'] : null;
       final expectedTitle = expectedTitleAny?.toString() ?? '';
       final expectedAppId = expectedAppIdAny?.toString() ?? '';
       final expectedAppName = expectedAppNameAny?.toString() ?? '';
@@ -1453,7 +1470,8 @@ iterm2.run_until_complete(main)
               score += 6;
             } else if (titleL == expTitleL) {
               score += 5;
-            } else if (titleL.contains(expTitleL) || expTitleL.contains(titleL)) {
+            } else if (titleL.contains(expTitleL) ||
+                expTitleL.contains(titleL)) {
               score += 3;
             }
           }
@@ -1537,6 +1555,18 @@ except Exception as e:
 
 SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
 
+async def get_frame(obj):
+    try:
+        fn = getattr(obj, "async_get_frame", None)
+        if fn:
+            return await fn()
+    except Exception:
+        pass
+    try:
+        return obj.frame
+    except Exception:
+        return None
+
 async def main(connection):
     app = await iterm2.async_get_app(connection)
     target = None
@@ -1575,10 +1605,11 @@ async def main(connection):
         "windowId": getattr(target_win, 'window_id', None),
     }
     try:
-        f = target.frame
-        wf = target_win.frame
-        out["frame"] = {"x": int(f.origin.x), "y": int(f.origin.y), "w": int(f.size.width), "h": int(f.size.height)}
-        out["windowFrame"] = {"x": int(wf.origin.x), "y": int(wf.origin.y), "w": int(wf.size.width), "h": int(wf.size.height)}
+        f = await get_frame(target)
+        wf = await get_frame(target_win)
+        if f and wf:
+            out["frame"] = {"x": float(f.origin.x), "y": float(f.origin.y), "w": float(f.size.width), "h": float(f.size.height)}
+            out["windowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
     except Exception:
         pass
 
@@ -1609,18 +1640,32 @@ iterm2.run_until_complete(main)
       } catch (_) {}
 
       Map<String, double>? cropRectNorm;
+      int? iterm2MinWidth;
+      int? iterm2MinHeight;
       if (metaAny != null) {
         final frameAny = metaAny!['frame'];
         final windowFrameAny = metaAny!['windowFrame'];
         if (frameAny is Map && windowFrameAny is Map) {
-          final fx = (frameAny['x'] is num) ? (frameAny['x'] as num).toDouble() : null;
-          final fy = (frameAny['y'] is num) ? (frameAny['y'] as num).toDouble() : null;
-          final fw = (frameAny['w'] is num) ? (frameAny['w'] as num).toDouble() : null;
-          final fh = (frameAny['h'] is num) ? (frameAny['h'] as num).toDouble() : null;
-          final wx = (windowFrameAny['x'] is num) ? (windowFrameAny['x'] as num).toDouble() : 0.0;
-          final wy = (windowFrameAny['y'] is num) ? (windowFrameAny['y'] as num).toDouble() : 0.0;
-          final ww = (windowFrameAny['w'] is num) ? (windowFrameAny['w'] as num).toDouble() : null;
-          final wh = (windowFrameAny['h'] is num) ? (windowFrameAny['h'] as num).toDouble() : null;
+          final fx =
+              (frameAny['x'] is num) ? (frameAny['x'] as num).toDouble() : null;
+          final fy =
+              (frameAny['y'] is num) ? (frameAny['y'] as num).toDouble() : null;
+          final fw =
+              (frameAny['w'] is num) ? (frameAny['w'] as num).toDouble() : null;
+          final fh =
+              (frameAny['h'] is num) ? (frameAny['h'] as num).toDouble() : null;
+          final wx = (windowFrameAny['x'] is num)
+              ? (windowFrameAny['x'] as num).toDouble()
+              : 0.0;
+          final wy = (windowFrameAny['y'] is num)
+              ? (windowFrameAny['y'] as num).toDouble()
+              : 0.0;
+          final ww = (windowFrameAny['w'] is num)
+              ? (windowFrameAny['w'] as num).toDouble()
+              : null;
+          final wh = (windowFrameAny['h'] is num)
+              ? (windowFrameAny['h'] as num).toDouble()
+              : null;
           if (fx != null &&
               fy != null &&
               fw != null &&
@@ -1629,94 +1674,92 @@ iterm2.run_until_complete(main)
               wh != null &&
               ww > 0 &&
               wh > 0) {
-            // iTerm2 window/session frames use a non-standard coordinate system
-            // (docs: origin is bottom-right of the main screen). This means:
-            // - X axis may be reversed (distance from the right edge).
-            // - Y axis is typically from the bottom (increasing upward).
+            iterm2MinWidth = ww.round();
+            iterm2MinHeight = wh.round();
+            // iTerm2 Window.async_get_frame() docs:
+            // "The origin (0,0) is the bottom right of the main screen."
+            // Frame.origin is the *top-left* coordinate in that coordinate system.
             //
-            // We only need a crop rectangle *within the window*, expressed in
-            // top-left normalized coords for the capture pipeline. Compute a
-            // few plausible transforms and pick the best fitting one.
+            // In that system, positive X goes left and positive Y goes up, so to
+            // convert to a standard "top-left origin, X right, Y down" coordinate
+            // space within the window:
+            //   leftPx = window.x - session.x
+            //   topPx  = window.y - session.y
+            //
+            // This gives offsets from window top-left to session top-left.
             double clamp01(double v) => v.clamp(0.0, 1.0);
 
-            double penaltyFor({
-              required double left,
-              required double top,
-              required double width,
-              required double height,
-            }) {
-              if (width <= 0 || height <= 0) return 1e9;
-              double p = 0;
-              if (left < 0) p += -left;
-              if (top < 0) p += -top;
-              if (left + width > ww) p += (left + width - ww);
-              if (top + height > wh) p += (top + height - wh);
-              return p;
+            final rawLeftPx = wx - fx;
+            final rawTopPx = wy - fy;
+
+            bool looksValid(double left, double top, double w, double h) {
+              if (w <= 0 || h <= 0) return false;
+              // Require the rect to be mostly inside the window without heavy clamping.
+              final outLeft = left < 0 ? -left : 0.0;
+              final outTop = top < 0 ? -top : 0.0;
+              final outRight = (left + w > ww) ? (left + w - ww) : 0.0;
+              final outBottom = (top + h > wh) ? (top + h - wh) : 0.0;
+              final overflow = outLeft + outTop + outRight + outBottom;
+              // Allow a small tolerance (title bar/tab bar discrepancies).
+              return overflow <= 12.0;
             }
 
-            double area(double w, double h) => (w <= 0 || h <= 0) ? 1e18 : w * h;
+            double leftPx = rawLeftPx;
+            double topPx = rawTopPx;
 
-            final relX = fx - wx;
-            final relY = fy - wy;
-            final candidates = <({double left, double top, String tag})>[
-              // X: normal (from left). Y: bottom-origin -> convert to top-origin.
-              (left: relX, top: wh - (relY + fh), tag: 'x=fx-wx,y=topFromBottom'),
-              // X: iTerm2 window docs suggest origin at bottom-right; if x is from right edge,
-              // convert to left-origin within window.
-              (left: (wx - fx) + (ww - fw), top: wh - (relY + fh), tag: 'x=fromRight,y=topFromBottom'),
-              // If Y is already top-origin.
-              (left: relX, top: relY, tag: 'x=fx-wx,y=fy-wy'),
-              (left: (wx - fx) + (ww - fw), top: relY, tag: 'x=fromRight,y=fy-wy'),
-              // If session frame is already relative to window (wx/wy effectively 0).
-              (left: fx, top: wh - (fy + fh), tag: 'rel: x=fx,y=topFromBottom'),
-              (left: (ww - fw - fx), top: wh - (fy + fh), tag: 'rel: x=fromRight,y=topFromBottom'),
-              (left: fx, top: fy, tag: 'rel: x=fx,y=fy'),
-              (left: (ww - fw - fx), top: fy, tag: 'rel: x=fromRight,y=fy'),
-            ];
-
-            double bestPenalty = 1e18;
-            double bestArea = 1e18;
-            double bestLeft = 0;
-            double bestTop = 0;
-            String bestTag = 'none';
-
-            for (final c in candidates) {
-              final p = penaltyFor(left: c.left, top: c.top, width: fw, height: fh);
-              // Tie-breaker: prefer smaller crop area (more likely a pane) when equally valid.
-              final a = area(fw, fh);
-              if (p < bestPenalty - 1e-6 || (p <= bestPenalty + 1e-6 && a < bestArea - 1e-6)) {
-                bestPenalty = p;
-                bestArea = a;
-                bestLeft = c.left;
-                bestTop = c.top;
-                bestTag = c.tag;
+            String tag = 'doc: wx-fx, wy-fy';
+            if (!looksValid(leftPx, topPx, fw, fh)) {
+              // Fallbacks for older iTerm2 / summary.frame inconsistencies.
+              final candidates = <({double left, double top, String tag})>[
+                (left: fx - wx, top: fy - wy, tag: 'rel: fx-wx, fy-wy'),
+                (
+                  left: fx - wx,
+                  top: (wy + wh) - (fy + fh),
+                  tag: 'rel: fx-wx, topFromBottom'
+                ),
+                (
+                  left: wx - fx,
+                  top: (wy + wh) - (fy + fh),
+                  tag: 'alt: wx-fx, topFromBottom'
+                ),
+              ];
+              for (final c in candidates) {
+                if (looksValid(c.left, c.top, fw, fh)) {
+                  leftPx = c.left;
+                  topPx = c.top;
+                  tag = c.tag;
+                  break;
+                }
               }
             }
 
-            final leftPx = bestLeft.clamp(0.0, ww);
-            final topPx = bestTop.clamp(0.0, wh);
-            final maxW = (ww - leftPx).clamp(0.0, ww);
-            final maxH = (wh - topPx).clamp(0.0, wh);
+            final clampedLeft = leftPx.clamp(0.0, ww);
+            final clampedTop = topPx.clamp(0.0, wh);
+            final maxW = (ww - clampedLeft).clamp(0.0, ww);
+            final maxH = (wh - clampedTop).clamp(0.0, wh);
             final wPx = fw.clamp(0.0, maxW);
             final hPx = fh.clamp(0.0, maxH);
 
             if (wPx > 0 && hPx > 0) {
               cropRectNorm = {
-                'x': clamp01(leftPx / ww),
-                'y': clamp01(topPx / wh),
+                'x': clamp01(clampedLeft / ww),
+                'y': clamp01(clampedTop / wh),
                 'w': clamp01(wPx / ww),
                 'h': clamp01(hPx / wh),
               };
               VLOG0(
-                  '[iTerm2] cropRectNorm=$cropRectNorm tag=$bestTag penalty=${bestPenalty.toStringAsFixed(2)} frame=$frameAny windowFrame=$windowFrameAny');
+                  '[iTerm2] cropRectNorm=$cropRectNorm tag=$tag raw=(${rawLeftPx.toStringAsFixed(1)},${rawTopPx.toStringAsFixed(1)}) frame=$frameAny windowFrame=$windowFrameAny');
             } else {
-              VLOG0('[iTerm2] cropRectNorm unavailable tag=$bestTag frame=$frameAny windowFrame=$windowFrameAny');
+              cropRectNorm = null;
+              VLOG0(
+                  '[iTerm2] cropRectNorm unavailable tag=$tag frame=$frameAny windowFrame=$windowFrameAny');
             }
           }
         }
       }
 
-      final sources = await desktopCapturer.getSources(types: [SourceType.Window]);
+      final sources =
+          await desktopCapturer.getSources(types: [SourceType.Window]);
       DesktopCapturerSource? selected;
       if (windowId != null) {
         for (final s in sources) {
@@ -1747,6 +1790,8 @@ iterm2.run_until_complete(main)
           'cropRect': cropRectNorm,
         },
         cropRectNormalized: cropRectNorm,
+        minWidthConstraint: iterm2MinWidth,
+        minHeightConstraint: iterm2MinHeight,
       );
       return;
     }
@@ -1756,6 +1801,8 @@ iterm2.run_until_complete(main)
     DesktopCapturerSource source, {
     Map<String, dynamic>? extraCaptureTarget,
     Map<String, double>? cropRectNormalized,
+    int? minWidthConstraint,
+    int? minHeightConstraint,
   }) async {
     if (pc == null || videoSender == null) return;
 
@@ -1764,13 +1811,21 @@ iterm2.run_until_complete(main)
     int? minW;
     int? minH;
     if (frameAny != null) {
-      final wAny = frameAny['width'];
-      final hAny = frameAny['height'];
+      final wAny = frameAny['width'] ?? frameAny['w'];
+      final hAny = frameAny['height'] ?? frameAny['h'];
       if (wAny != null) minW = wAny.round();
       if (hAny != null) minH = hAny.round();
     }
-    minW ??= 1280;
-    minH ??= 720;
+    minW ??= 1920;
+    minH ??= 1080;
+    if (minWidthConstraint != null && minWidthConstraint > minW) {
+      minW = minWidthConstraint;
+    }
+    if (minHeightConstraint != null && minHeightConstraint > minH) {
+      minH = minHeightConstraint;
+    }
+    VLOG0(
+        '[CAPTURE] switch sourceId=${source.id} type=${desktopSourceTypeToString[source.type]} windowId=${source.windowId} min=${minW}x$minH crop=${cropRectNormalized ?? "none"} frame=$frameAny');
     final mediaConstraints = <String, dynamic>{
       'video': {
         'deviceId': {'exact': source.id},
@@ -1824,8 +1879,7 @@ iterm2.run_until_complete(main)
     streamSettings?.windowId = source.windowId;
     streamSettings?.windowFrame = source.frame;
     inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
-        windowId: streamSettings?.windowId,
-        cropRect: streamSettings?.cropRect);
+        windowId: streamSettings?.windowId, cropRect: streamSettings?.cropRect);
 
     channel?.send(
       RTCDataChannelMessage(

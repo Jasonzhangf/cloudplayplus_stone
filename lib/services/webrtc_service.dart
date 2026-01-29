@@ -1,4 +1,5 @@
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:flutter/foundation.dart';
 
 import '../base/logging.dart';
 import '../entities/session.dart';
@@ -11,6 +12,8 @@ class WebrtcService {
   static Map<String, MediaStream> streams = {};
   static Map<String, MediaStream> audioStreams = {};
   static String currentDeviceId = "";
+  static final ValueNotifier<int> videoRevision = ValueNotifier<int>(0);
+  static final ValueNotifier<int> audioRevision = ValueNotifier<int>(0);
 
   //seems we dont need to actually render audio on page.
   /*static Function(bool)? audioStateChanged;*/
@@ -29,6 +32,7 @@ class WebrtcService {
                 StreamingManager.sessions[currentDeviceId];
           }
         }
+        videoRevision.value++;
       }).catchError((error) {
         VLOG0('Error: failed to create RTCVideoRenderer');
       });
@@ -39,6 +43,7 @@ class WebrtcService {
           currentRenderingSession = StreamingManager.sessions[currentDeviceId];
         }
       }
+      videoRevision.value++;
     }
   }
 
@@ -49,6 +54,7 @@ class WebrtcService {
       if (currentDeviceId == deviceId) {
         globalVideoRenderer!.srcObject = null;
         currentRenderingSession = null;
+        videoRevision.value++;
       }
     }
   }
@@ -64,6 +70,7 @@ class WebrtcService {
             audioStateChanged!(true);
           }*/
         }
+        audioRevision.value++;
       }).catchError((error) {
         VLOG0('Error: failed to create RTCVideoRenderer');
       });
@@ -76,6 +83,7 @@ class WebrtcService {
         }
         */
       }
+      audioRevision.value++;
     }
   }
 
@@ -88,6 +96,7 @@ class WebrtcService {
         audioStateChanged!(false);
         audioStateChanged = null;
       }*/
+      audioRevision.value++;
     }
   }
 
@@ -103,10 +112,12 @@ class WebrtcService {
       } else {
         currentRenderingSession = null;
       }
+      videoRevision.value++;
     }
 
     if (audioStreams.containsKey(deviceId)) {
       globalAudioRenderer?.srcObject = audioStreams[deviceId];
+      audioRevision.value++;
     }
   }
 }
