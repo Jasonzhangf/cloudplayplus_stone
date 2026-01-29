@@ -1380,6 +1380,12 @@ iterm2.run_until_complete(main)
         streamSettings!.cropRect = null;
       }
       final windowIdAny = (payload is Map) ? payload['windowId'] : null;
+      final expectedTitleAny = (payload is Map) ? payload['expectedTitle'] : null;
+      final expectedAppIdAny = (payload is Map) ? payload['expectedAppId'] : null;
+      final expectedAppNameAny = (payload is Map) ? payload['expectedAppName'] : null;
+      final expectedTitle = expectedTitleAny?.toString() ?? '';
+      final expectedAppId = expectedAppIdAny?.toString() ?? '';
+      final expectedAppName = expectedAppNameAny?.toString() ?? '';
       final sources =
           await desktopCapturer.getSources(types: [SourceType.Window]);
       DesktopCapturerSource? selected;
@@ -1390,6 +1396,87 @@ iterm2.run_until_complete(main)
             selected = s;
             break;
           }
+        }
+      }
+      bool mismatch = false;
+      if (selected != null) {
+        if (expectedTitle.isNotEmpty) {
+          final t = (selected!.name).trim();
+          if (t != expectedTitle.trim() &&
+              !t.toLowerCase().contains(expectedTitle.trim().toLowerCase())) {
+            mismatch = true;
+          }
+        }
+        if (!mismatch && expectedAppId.isNotEmpty) {
+          final aid = (selected!.appId ?? '').trim();
+          if (aid.isNotEmpty && aid != expectedAppId.trim()) {
+            mismatch = true;
+          }
+        }
+        if (!mismatch && expectedAppName.isNotEmpty) {
+          final an = (selected!.appName ?? '').trim().toLowerCase();
+          final en = expectedAppName.trim().toLowerCase();
+          if (an.isNotEmpty && an != en && !an.contains(en)) {
+            mismatch = true;
+          }
+        }
+      }
+
+      DesktopCapturerSource? bestMatchByHint() {
+        if (expectedTitle.isEmpty &&
+            expectedAppId.isEmpty &&
+            expectedAppName.isEmpty) {
+          return null;
+        }
+        int scoreFor(DesktopCapturerSource s) {
+          int score = 0;
+          final title = s.name.trim();
+          final titleL = title.toLowerCase();
+          final expTitle = expectedTitle.trim();
+          final expTitleL = expTitle.toLowerCase();
+          final aid = (s.appId ?? '').trim();
+          final an = (s.appName ?? '').trim();
+          final anL = an.toLowerCase();
+          final expAid = expectedAppId.trim();
+          final expAn = expectedAppName.trim();
+          final expAnL = expAn.toLowerCase();
+          if (expAid.isNotEmpty && aid.isNotEmpty && aid == expAid) score += 5;
+          if (expAnL.isNotEmpty && anL.isNotEmpty) {
+            if (anL == expAnL) {
+              score += 4;
+            } else if (anL.contains(expAnL)) {
+              score += 2;
+            }
+          }
+          if (expTitleL.isNotEmpty && titleL.isNotEmpty) {
+            if (title == expTitle) {
+              score += 6;
+            } else if (titleL == expTitleL) {
+              score += 5;
+            } else if (titleL.contains(expTitleL) || expTitleL.contains(titleL)) {
+              score += 3;
+            }
+          }
+          return score;
+        }
+
+        DesktopCapturerSource? best;
+        int bestScore = 0;
+        for (final s in sources) {
+          final sc = scoreFor(s);
+          if (sc > bestScore) {
+            bestScore = sc;
+            best = s;
+          }
+        }
+        if (bestScore <= 0) return null;
+        return best;
+      }
+
+      if (selected == null || mismatch) {
+        final hint = bestMatchByHint();
+        if (hint != null) {
+          selected = hint;
         }
       }
       if (selected == null) return;

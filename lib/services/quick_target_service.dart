@@ -113,7 +113,10 @@ class QuickTargetService {
       case StreamMode.window:
         if (target.windowId != null) {
           await RemoteWindowService.instance
-              .selectWindow(channel, windowId: target.windowId!);
+              .selectWindow(channel, windowId: target.windowId!,
+                  expectedTitle: target.label,
+                  expectedAppId: target.appId,
+                  expectedAppName: target.appName);
         }
         break;
       case StreamMode.iterm2:

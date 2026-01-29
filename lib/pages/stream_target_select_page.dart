@@ -189,6 +189,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
                       id: s.id,
                       label: s.title,
                       windowId: s.windowId,
+                      appId: s.appId,
+                      appName: s.appName,
                     );
                     return ListTile(
                       title: Text(
@@ -265,4 +267,3 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
     );
   }
 }
-

@@ -72,7 +72,10 @@ class RemoteWindowService {
   }
 
   Future<void> selectWindow(RTCDataChannel? channel,
-      {required int windowId}) async {
+      {required int windowId,
+      String? expectedTitle,
+      String? expectedAppId,
+      String? expectedAppName}) async {
     if (channel == null ||
         channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       error.value = 'DataChannel 未连接';
@@ -84,6 +87,12 @@ class RemoteWindowService {
           'setCaptureTarget': {
             'type': 'window',
             'windowId': windowId,
+            if (expectedTitle != null && expectedTitle.isNotEmpty)
+              'expectedTitle': expectedTitle,
+            if (expectedAppId != null && expectedAppId.isNotEmpty)
+              'expectedAppId': expectedAppId,
+            if (expectedAppName != null && expectedAppName.isNotEmpty)
+              'expectedAppName': expectedAppName,
           }
         }),
       ),

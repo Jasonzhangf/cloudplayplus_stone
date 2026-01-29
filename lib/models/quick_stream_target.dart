@@ -7,6 +7,8 @@ class QuickStreamTarget {
   final String id;
   final String label;
   final int? windowId;
+  final String? appId;
+  final String? appName;
 
   /// Optional custom label displayed on favorite button.
   final String? alias;
@@ -16,6 +18,8 @@ class QuickStreamTarget {
     required this.id,
     required this.label,
     this.windowId,
+    this.appId,
+    this.appName,
     this.alias,
   });
 
@@ -28,6 +32,8 @@ class QuickStreamTarget {
         'id': id,
         'label': label,
         if (windowId != null) 'windowId': windowId,
+        if (appId != null) 'appId': appId,
+        if (appName != null) 'appName': appName,
         if (alias != null) 'alias': alias,
       };
 
@@ -37,6 +43,8 @@ class QuickStreamTarget {
       id: json['id']?.toString() ?? '',
       label: json['label']?.toString() ?? '',
       windowId: (json['windowId'] is num) ? (json['windowId'] as num).toInt() : null,
+      appId: json['appId']?.toString(),
+      appName: json['appName']?.toString(),
       alias: json['alias']?.toString(),
     );
   }
@@ -63,8 +71,9 @@ class QuickStreamTarget {
       id: id,
       label: label,
       windowId: windowId,
+      appId: appId,
+      appName: appName,
       alias: alias ?? this.alias,
     );
   }
 }
-
