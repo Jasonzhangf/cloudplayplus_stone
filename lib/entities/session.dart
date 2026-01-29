@@ -1692,67 +1692,84 @@ iterm2.run_until_complete(main)
             final rawLeftPx = wx - fx;
             final rawTopPx = wy - fy;
 
-            bool looksValid(double left, double top, double w, double h) {
-              if (w <= 0 || h <= 0) return false;
-              // Require the rect to be mostly inside the window without heavy clamping.
-              final outLeft = left < 0 ? -left : 0.0;
-              final outTop = top < 0 ? -top : 0.0;
-              final outRight = (left + w > ww) ? (left + w - ww) : 0.0;
-              final outBottom = (top + h > wh) ? (top + h - wh) : 0.0;
-              final overflow = outLeft + outTop + outRight + outBottom;
-              // Allow a small tolerance (title bar/tab bar discrepancies).
-              return overflow <= 12.0;
+            double overflowPenalty({
+              required double left,
+              required double top,
+              required double width,
+              required double height,
+            }) {
+              if (width <= 1 || height <= 1) return 1e18;
+              double p = 0;
+              if (left < 0) p += -left;
+              if (top < 0) p += -top;
+              if (left + width > ww) p += (left + width - ww);
+              if (top + height > wh) p += (top + height - wh);
+              return p;
             }
 
-            double leftPx = rawLeftPx;
-            double topPx = rawTopPx;
+            final candidates = <({double left, double top, String tag})>[
+              // Doc-based: origin bottom-right, X left, Y up => window - session.
+              (left: wx - fx, top: wy - fy, tag: 'doc: wx-fx, wy-fy'),
+              // Standard top-left coords: session - window.
+              (left: fx - wx, top: fy - wy, tag: 'rel: fx-wx, fy-wy'),
+              // Y from bottom.
+              (
+                left: fx - wx,
+                top: (wy + wh) - (fy + fh),
+                tag: 'rel: fx-wx, topFromBottom'
+              ),
+              // X from right edge.
+              (
+                left: (wx + ww) - (fx + fw),
+                top: fy - wy,
+                tag: 'alt: leftFromRight, fy-wy'
+              ),
+              (
+                left: (wx + ww) - (fx + fw),
+                top: (wy + wh) - (fy + fh),
+                tag: 'alt: leftFromRight, topFromBottom'
+              ),
+            ];
 
-            String tag = 'doc: wx-fx, wy-fy';
-            if (!looksValid(leftPx, topPx, fw, fh)) {
-              // Fallbacks for older iTerm2 / summary.frame inconsistencies.
-              final candidates = <({double left, double top, String tag})>[
-                (left: fx - wx, top: fy - wy, tag: 'rel: fx-wx, fy-wy'),
-                (
-                  left: fx - wx,
-                  top: (wy + wh) - (fy + fh),
-                  tag: 'rel: fx-wx, topFromBottom'
-                ),
-                (
-                  left: wx - fx,
-                  top: (wy + wh) - (fy + fh),
-                  tag: 'alt: wx-fx, topFromBottom'
-                ),
-              ];
-              for (final c in candidates) {
-                if (looksValid(c.left, c.top, fw, fh)) {
-                  leftPx = c.left;
-                  topPx = c.top;
-                  tag = c.tag;
-                  break;
-                }
+            double bestPenalty = 1e18;
+            double bestLeft = rawLeftPx;
+            double bestTop = rawTopPx;
+            String bestTag = 'doc: wx-fx, wy-fy';
+
+            for (final c in candidates) {
+              final p = overflowPenalty(
+                left: c.left,
+                top: c.top,
+                width: fw,
+                height: fh,
+              );
+              if (p < bestPenalty) {
+                bestPenalty = p;
+                bestLeft = c.left;
+                bestTop = c.top;
+                bestTag = c.tag;
               }
             }
 
-            final clampedLeft = leftPx.clamp(0.0, ww);
-            final clampedTop = topPx.clamp(0.0, wh);
-            final maxW = (ww - clampedLeft).clamp(0.0, ww);
-            final maxH = (wh - clampedTop).clamp(0.0, wh);
-            final wPx = fw.clamp(0.0, maxW);
-            final hPx = fh.clamp(0.0, maxH);
+            // Always emit a crop rect (clamped). Even if slightly off, it's better than no cropping.
+            final wPx = fw.clamp(1.0, ww);
+            final hPx = fh.clamp(1.0, wh);
+            final leftPx = bestLeft.clamp(0.0, ww - wPx);
+            final topPx = bestTop.clamp(0.0, wh - hPx);
 
             if (wPx > 0 && hPx > 0) {
               cropRectNorm = {
-                'x': clamp01(clampedLeft / ww),
-                'y': clamp01(clampedTop / wh),
+                'x': clamp01(leftPx / ww),
+                'y': clamp01(topPx / wh),
                 'w': clamp01(wPx / ww),
                 'h': clamp01(hPx / wh),
               };
               VLOG0(
-                  '[iTerm2] cropRectNorm=$cropRectNorm tag=$tag raw=(${rawLeftPx.toStringAsFixed(1)},${rawTopPx.toStringAsFixed(1)}) frame=$frameAny windowFrame=$windowFrameAny');
+                  '[iTerm2] cropRectNorm=$cropRectNorm tag=$bestTag penalty=${bestPenalty.toStringAsFixed(1)} raw=(${rawLeftPx.toStringAsFixed(1)},${rawTopPx.toStringAsFixed(1)}) frame=$frameAny windowFrame=$windowFrameAny');
             } else {
               cropRectNorm = null;
               VLOG0(
-                  '[iTerm2] cropRectNorm unavailable tag=$tag frame=$frameAny windowFrame=$windowFrameAny');
+                  '[iTerm2] cropRectNorm unavailable tag=$bestTag frame=$frameAny windowFrame=$windowFrameAny');
             }
           }
         }
