@@ -1210,6 +1210,18 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                     );
                   },
                 ),
+                ValueListenableBuilder<bool>(
+                  valueListenable: ScreenController.showVideoInfo,
+                  builder: (context, enabled, _) {
+                    return SwitchListTile(
+                      contentPadding: EdgeInsets.zero,
+                      title: const Text('显示视频信息（分辨率/编码/解码器）'),
+                      subtitle: const Text('显示在画面顶部，用于排查绿屏/花屏/分辨率切换'),
+                      value: enabled,
+                      onChanged: (v) => ScreenController.setShowVideoInfo(v),
+                    );
+                  },
+                ),
                 Row(
                   children: [
                     Expanded(

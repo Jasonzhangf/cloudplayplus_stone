@@ -105,6 +105,7 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
             children: [
               _buildInfoItem('分辨率', '${_videoInfo['width']}×${_videoInfo['height']}'),
               _buildInfoItem('帧率', '${(_videoInfo['fps'] as num).toStringAsFixed(1)} fps'),
+              _buildInfoItem('编码', _videoInfo['codecType']?.toString() ?? '未知'),
               _buildInfoItem('解码器', _getDecoderDisplayName(_videoInfo['decoderImplementation'], _videoInfo)),
               _buildInfoItem('丢包率', '${_calculatePacketLossRate(_videoInfo).toStringAsFixed(1)}%'),
               _buildInfoItem('往返时延', '${((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0)} ms'),

@@ -52,108 +52,127 @@ class _RemoteWindowSelectPageState extends State<RemoteWindowSelectPage> {
                 );
               }
               return ValueListenableBuilder<List<RemoteDesktopSource>>(
-                valueListenable: _service.windowSources,
-                builder: (context, sources, ___) {
-                  final screens = _service.screenSources.value;
-                  if (sources.isEmpty && screens.isEmpty) {
-                    return const Center(child: Text('没有收到屏幕/窗口列表'));
-                  }
-                  return ValueListenableBuilder<int?>(
-                    valueListenable: _service.selectedWindowId,
-                    builder: (context, selectedId, ____) {
-                      final items = <Widget>[];
-
-                      if (screens.isNotEmpty) {
-                        items.add(
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-                            child: Text('屏幕',
-                                style: TextStyle(
-                                    fontSize: 12, fontWeight: FontWeight.w600)),
-                          ),
-                        );
-                        items.addAll(
-                          screens.map((s) {
-                            final selected =
-                                _service.selectedScreenSourceId.value == s.id;
-                            return ListTile(
-                              title: Text(
-                                s.title.isEmpty ? '(屏幕)' : s.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              subtitle: Text('sourceId=${s.id}',
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis),
-                              trailing: selected
-                                  ? const Icon(Icons.check,
-                                      color: Colors.green)
-                                  : null,
-                              onTap: () async {
-                                await _service.selectScreen(
-                                  widget.channel,
-                                  sourceId: s.id,
-                                );
-                                if (context.mounted) Navigator.pop(context);
-                              },
-                            );
-                          }),
-                        );
-                        items.add(const Divider(height: 1, thickness: 0.5));
+                valueListenable: _service.screenSources,
+                builder: (context, screens, __) {
+                  return ValueListenableBuilder<List<RemoteDesktopSource>>(
+                    valueListenable: _service.windowSources,
+                    builder: (context, sources, ___) {
+                      if (sources.isEmpty && screens.isEmpty) {
+                        return const Center(child: Text('没有收到屏幕/窗口列表'));
                       }
+                      return ValueListenableBuilder<int?>(
+                        valueListenable: _service.selectedWindowId,
+                        builder: (context, selectedId, ____) {
+                          return ValueListenableBuilder<String?>(
+                            valueListenable: _service.selectedScreenSourceId,
+                            builder: (context, selectedScreenId, _____) {
+                              final items = <Widget>[];
 
-                      items.add(
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 12, 16, 8),
-                          child: Text('窗口',
-                              style: TextStyle(
-                                  fontSize: 12, fontWeight: FontWeight.w600)),
-                        ),
-                      );
-
-                      items.addAll(
-                        sources.map((s) {
-                          final selected = s.windowId != null &&
-                              selectedId != null &&
-                              s.windowId == selectedId;
-                          return ListTile(
-                            title: Text(
-                              s.title.isEmpty ? '(无标题窗口)' : s.title,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            subtitle: Text(
-                              [
-                                if (s.appName != null && s.appName!.isNotEmpty)
-                                  s.appName!,
-                                if (s.windowId != null)
-                                  'windowId=${s.windowId}',
-                              ].join(' · '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: selected
-                                ? const Icon(Icons.check, color: Colors.green)
-                                : null,
-                            onTap: s.windowId == null
-                                ? null
-                                : () async {
-                                    await _service.selectWindow(
-                                      widget.channel,
-                                      windowId: s.windowId!,
+                              if (screens.isNotEmpty) {
+                                items.add(
+                                  const Padding(
+                                    padding:
+                                        EdgeInsets.fromLTRB(16, 12, 16, 8),
+                                    child: Text('屏幕',
+                                        style: TextStyle(
+                                            fontSize: 12,
+                                            fontWeight: FontWeight.w600)),
+                                  ),
+                                );
+                                items.addAll(
+                                  screens.map((s) {
+                                    final selected = selectedScreenId == s.id;
+                                    return ListTile(
+                                      title: Text(
+                                        s.title.isEmpty ? '(屏幕)' : s.title,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      subtitle: Text('sourceId=${s.id}',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis),
+                                      trailing: selected
+                                          ? const Icon(Icons.check,
+                                              color: Colors.green)
+                                          : null,
+                                      onTap: () async {
+                                        await _service.selectScreen(
+                                          widget.channel,
+                                          sourceId: s.id,
+                                        );
+                                        if (context.mounted) {
+                                          Navigator.pop(context);
+                                        }
+                                      },
                                     );
-                                    if (context.mounted) Navigator.pop(context);
-                                  },
-                          );
-                        }),
-                      );
+                                  }),
+                                );
+                                items.add(const Divider(
+                                    height: 1, thickness: 0.5));
+                              }
 
-                      return ListView.separated(
-                        itemCount: items.length,
-                        separatorBuilder: (_, __) =>
-                            const Divider(height: 1, thickness: 0.5),
-                        itemBuilder: (context, index) {
-                          return items[index];
+                              items.add(
+                                const Padding(
+                                  padding:
+                                      EdgeInsets.fromLTRB(16, 12, 16, 8),
+                                  child: Text('窗口',
+                                      style: TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600)),
+                                ),
+                              );
+
+                              items.addAll(
+                                sources.map((s) {
+                                  final selected = s.windowId != null &&
+                                      selectedId != null &&
+                                      s.windowId == selectedId;
+                                  return ListTile(
+                                    title: Text(
+                                      s.title.isEmpty ? '(无标题窗口)' : s.title,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    subtitle: Text(
+                                      [
+                                        if (s.appName != null &&
+                                            s.appName!.isNotEmpty)
+                                          s.appName!,
+                                        if (s.windowId != null)
+                                          'windowId=${s.windowId}',
+                                      ].join(' · '),
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                    ),
+                                    trailing: selected
+                                        ? const Icon(Icons.check,
+                                            color: Colors.green)
+                                        : null,
+                                    onTap: s.windowId == null
+                                        ? null
+                                        : () async {
+                                            await _service.selectWindow(
+                                              widget.channel,
+                                              windowId: s.windowId!,
+                                            );
+                                            if (context.mounted) {
+                                              Navigator.pop(context);
+                                            }
+                                          },
+                                  );
+                                }),
+                              );
+
+                              return ListView.separated(
+                                itemCount: items.length,
+                                separatorBuilder: (_, __) =>
+                                    const Divider(height: 1, thickness: 0.5),
+                                itemBuilder: (context, index) {
+                                  return items[index];
+                                },
+                              );
+                            },
+                          );
                         },
                       );
                     },
