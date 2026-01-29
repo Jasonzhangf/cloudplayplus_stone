@@ -531,7 +531,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                                     padding: EdgeInsets.zero,
                                     scrollable: false,
                                   ),
-                                  const SizedBox(width: 56),
+                                  const SizedBox(width: 72),
                                 ],
                               ),
                             ),
@@ -543,7 +543,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ),
                 Positioned(
                   right: 6,
-                  top: 6,
+                  // Avoid overlapping the top stream-mode row ("模式/窗口/选择").
+                  // Place actions aligned with the shortcut row instead.
+                  top: 38,
                   child: _TopRightActions(
                     useSystemKeyboard: _useSystemKeyboard,
                     onToggleKeyboard: () {
@@ -842,7 +844,6 @@ class _StreamControlRow extends StatelessWidget {
                         ),
                         const SizedBox(width: 6),
                       ],
-                      const SizedBox(width: 64),
                     ],
                   ),
                 );

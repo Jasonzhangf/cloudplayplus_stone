@@ -1629,54 +1629,67 @@ iterm2.run_until_complete(main)
               wh != null &&
               ww > 0 &&
               wh > 0) {
-            // iTerm2's coordinate system is not the same as CGWindow/SCK; however
-            // session.frame and window.frame are in the same coordinate space.
-            // We only need the *relative* rectangle of session inside window.
+            // iTerm2 window/session frames use a non-standard coordinate system
+            // (docs: origin is bottom-right of the main screen). This means:
+            // - X axis may be reversed (distance from the right edge).
+            // - Y axis is typically from the bottom (increasing upward).
             //
-            // The docs are confusing about origin and axis direction, so compute
-            // robustly by trying common interpretations and picking the one that
-            // best fits within the window bounds.
+            // We only need a crop rectangle *within the window*, expressed in
+            // top-left normalized coords for the capture pipeline. Compute a
+            // few plausible transforms and pick the best fitting one.
             double clamp01(double v) => v.clamp(0.0, 1.0);
 
-            double scoreRect({
+            double penaltyFor({
               required double left,
               required double top,
               required double width,
               required double height,
             }) {
-              // Lower is better; penalize out-of-bounds.
-              double penalty = 0;
               if (width <= 0 || height <= 0) return 1e9;
-              if (left < 0) penalty += -left;
-              if (top < 0) penalty += -top;
-              if (left + width > ww) penalty += (left + width - ww);
-              if (top + height > wh) penalty += (top + height - wh);
-              // Prefer tighter fit (less clamping).
-              return penalty;
+              double p = 0;
+              if (left < 0) p += -left;
+              if (top < 0) p += -top;
+              if (left + width > ww) p += (left + width - ww);
+              if (top + height > wh) p += (top + height - wh);
+              return p;
             }
 
-            // Two candidates for X: x grows to the right vs to the left.
-            final leftCandidates = <double>[
-              fx - wx,
-              wx - fx,
-            ];
-            // Two candidates for Y: y grows downward vs upward (origin is "top").
-            final topCandidates = <double>[
-              fy - wy,
-              wy - fy,
+            double area(double w, double h) => (w <= 0 || h <= 0) ? 1e18 : w * h;
+
+            final relX = fx - wx;
+            final relY = fy - wy;
+            final candidates = <({double left, double top, String tag})>[
+              // X: normal (from left). Y: bottom-origin -> convert to top-origin.
+              (left: relX, top: wh - (relY + fh), tag: 'x=fx-wx,y=topFromBottom'),
+              // X: iTerm2 window docs suggest origin at bottom-right; if x is from right edge,
+              // convert to left-origin within window.
+              (left: (wx - fx) + (ww - fw), top: wh - (relY + fh), tag: 'x=fromRight,y=topFromBottom'),
+              // If Y is already top-origin.
+              (left: relX, top: relY, tag: 'x=fx-wx,y=fy-wy'),
+              (left: (wx - fx) + (ww - fw), top: relY, tag: 'x=fromRight,y=fy-wy'),
+              // If session frame is already relative to window (wx/wy effectively 0).
+              (left: fx, top: wh - (fy + fh), tag: 'rel: x=fx,y=topFromBottom'),
+              (left: (ww - fw - fx), top: wh - (fy + fh), tag: 'rel: x=fromRight,y=topFromBottom'),
+              (left: fx, top: fy, tag: 'rel: x=fx,y=fy'),
+              (left: (ww - fw - fx), top: fy, tag: 'rel: x=fromRight,y=fy'),
             ];
 
+            double bestPenalty = 1e18;
+            double bestArea = 1e18;
             double bestLeft = 0;
             double bestTop = 0;
-            double bestScore = 1e9;
-            for (final l in leftCandidates) {
-              for (final t in topCandidates) {
-                final sc = scoreRect(left: l, top: t, width: fw, height: fh);
-                if (sc < bestScore) {
-                  bestScore = sc;
-                  bestLeft = l;
-                  bestTop = t;
-                }
+            String bestTag = 'none';
+
+            for (final c in candidates) {
+              final p = penaltyFor(left: c.left, top: c.top, width: fw, height: fh);
+              // Tie-breaker: prefer smaller crop area (more likely a pane) when equally valid.
+              final a = area(fw, fh);
+              if (p < bestPenalty - 1e-6 || (p <= bestPenalty + 1e-6 && a < bestArea - 1e-6)) {
+                bestPenalty = p;
+                bestArea = a;
+                bestLeft = c.left;
+                bestTop = c.top;
+                bestTag = c.tag;
               }
             }
 
@@ -1694,9 +1707,10 @@ iterm2.run_until_complete(main)
                 'w': clamp01(wPx / ww),
                 'h': clamp01(hPx / wh),
               };
-              VLOG0('[iTerm2] cropRectNorm=$cropRectNorm frame=$frameAny windowFrame=$windowFrameAny');
+              VLOG0(
+                  '[iTerm2] cropRectNorm=$cropRectNorm tag=$bestTag penalty=${bestPenalty.toStringAsFixed(2)} frame=$frameAny windowFrame=$windowFrameAny');
             } else {
-              VLOG0('[iTerm2] cropRectNorm unavailable: frame=$frameAny windowFrame=$windowFrameAny');
+              VLOG0('[iTerm2] cropRectNorm unavailable tag=$bestTag frame=$frameAny windowFrame=$windowFrameAny');
             }
           }
         }
