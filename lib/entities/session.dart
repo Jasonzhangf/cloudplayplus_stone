@@ -598,15 +598,16 @@ class StreamingSession {
             //TODO(haichao):h264 encoder is slow for my m3 mac max. check other platforms.
             //setPreferredCodec(sdp, audio: 'opus', video: 'vp8');
             //Mac上网页版的vp9更好 app版本av1稍微好一些 h264编码器都非常垃圾 不知道原因
-            // AV1 on some Android decoders can produce green frames (especially on non-standard
-            // capture sizes). Prefer VP8 for mobile controllers for maximum compatibility.
+            // Some Android decoders can show green frames on AV1/VP8 (especially with frequent
+            // resolution changes / cropped sizes). Prefer H264 for mobile controllers for
+            // maximum compatibility.
             final ct = (controller.devicetype).toString().toLowerCase();
             final isMobileController =
                 ct == 'android' || ct == 'ios' || ct == 'androidtv';
             setPreferredCodec(
               sdp,
               audio: 'opus',
-              video: isMobileController ? 'vp8' : 'av1',
+              video: isMobileController ? 'h264' : 'av1',
             );
           } else {
             setPreferredCodec(sdp, audio: 'opus', video: 'h264');
