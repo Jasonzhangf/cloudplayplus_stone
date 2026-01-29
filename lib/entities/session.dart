@@ -598,7 +598,16 @@ class StreamingSession {
             //TODO(haichao):h264 encoder is slow for my m3 mac max. check other platforms.
             //setPreferredCodec(sdp, audio: 'opus', video: 'vp8');
             //Mac上网页版的vp9更好 app版本av1稍微好一些 h264编码器都非常垃圾 不知道原因
-            setPreferredCodec(sdp, audio: 'opus', video: 'av1');
+            // AV1 on some Android decoders can produce green frames (especially on non-standard
+            // capture sizes). Prefer VP8 for mobile controllers for maximum compatibility.
+            final ct = (controller.devicetype).toString().toLowerCase();
+            final isMobileController =
+                ct == 'android' || ct == 'ios' || ct == 'androidtv';
+            setPreferredCodec(
+              sdp,
+              audio: 'opus',
+              video: isMobileController ? 'vp8' : 'av1',
+            );
           } else {
             setPreferredCodec(sdp, audio: 'opus', video: 'h264');
           }
@@ -1312,6 +1321,8 @@ class StreamingSession {
           'desktopSources': {
             'sources': list,
             'selectedWindowId': streamSettings?.windowId,
+            'selectedDesktopSourceId': streamSettings?.desktopSourceId,
+            'selectedCaptureTargetType': streamSettings?.captureTargetType,
           }
         }),
       ),
@@ -1623,17 +1634,29 @@ iterm2.run_until_complete(main)
       }
 
       if (type == 'screen') {
-      if (streamSettings != null) {
-        streamSettings!.captureTargetType = 'screen';
-        streamSettings!.iterm2SessionId = null;
-        streamSettings!.cropRect = null;
+        if (streamSettings != null) {
+          streamSettings!.captureTargetType = 'screen';
+          streamSettings!.iterm2SessionId = null;
+          streamSettings!.cropRect = null;
+        }
+        final screens =
+            await desktopCapturer.getSources(types: [SourceType.Screen]);
+        if (screens.isEmpty) return;
+      DesktopCapturerSource? selected;
+      final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
+      final sourceId = sourceIdAny?.toString() ?? '';
+      if (sourceId.isNotEmpty) {
+        for (final s in screens) {
+          if (s.id == sourceId) {
+            selected = s;
+            break;
+          }
+        }
       }
-      final screens =
-          await desktopCapturer.getSources(types: [SourceType.Screen]);
-      if (screens.isEmpty) return;
-      final idx = streamSettings?.screenId ?? 0;
-      final selected =
-          (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
+      selected ??= () {
+        final idx = streamSettings?.screenId ?? 0;
+        return (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
+      }();
       await _switchCaptureToSource(
         selected,
         extraCaptureTarget: const {

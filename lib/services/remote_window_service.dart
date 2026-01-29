@@ -45,9 +45,13 @@ class RemoteWindowService {
 
   static final RemoteWindowService instance = RemoteWindowService._();
 
+  final ValueNotifier<List<RemoteDesktopSource>> screenSources =
+      ValueNotifier<List<RemoteDesktopSource>>(const []);
   final ValueNotifier<List<RemoteDesktopSource>> windowSources =
       ValueNotifier<List<RemoteDesktopSource>>(const []);
   final ValueNotifier<int?> selectedWindowId = ValueNotifier<int?>(null);
+  final ValueNotifier<String?> selectedScreenSourceId =
+      ValueNotifier<String?>(null);
   final ValueNotifier<bool> loading = ValueNotifier<bool>(false);
   final ValueNotifier<String?> error = ValueNotifier<String?>(null);
 
@@ -99,7 +103,30 @@ class RemoteWindowService {
     );
   }
 
-  Future<void> selectScreen(RTCDataChannel? channel) async {
+  Future<void> requestScreenSources(RTCDataChannel? channel) async {
+    if (channel == null ||
+        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      error.value = 'DataChannel 未连接';
+      return;
+    }
+    loading.value = true;
+    error.value = null;
+    channel.send(
+      RTCDataChannelMessage(
+        jsonEncode({
+          'desktopSourcesRequest': {
+            'types': ['screen'],
+            'thumbnail': false,
+          }
+        }),
+      ),
+    );
+  }
+
+  Future<void> selectScreen(
+    RTCDataChannel? channel, {
+    String? sourceId,
+  }) async {
     if (channel == null ||
         channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       error.value = 'DataChannel 未连接';
@@ -110,6 +137,7 @@ class RemoteWindowService {
         jsonEncode({
           'setCaptureTarget': {
             'type': 'screen',
+            if (sourceId != null && sourceId.isNotEmpty) 'sourceId': sourceId,
           }
         }),
       ),
@@ -120,19 +148,37 @@ class RemoteWindowService {
     try {
       final sourcesAny = (payload is Map) ? payload['sources'] : null;
       final selectedAny = (payload is Map) ? payload['selectedWindowId'] : null;
+      final selectedSourceIdAny =
+          (payload is Map) ? payload['selectedDesktopSourceId'] : null;
       if (selectedAny is num) {
         selectedWindowId.value = selectedAny.toInt();
       }
+      if (selectedSourceIdAny != null) {
+        selectedScreenSourceId.value = selectedSourceIdAny.toString();
+      }
       if (sourcesAny is List) {
-        final parsed = <RemoteDesktopSource>[];
+        final windows = <RemoteDesktopSource>[];
+        final screens = <RemoteDesktopSource>[];
         for (final item in sourcesAny) {
           if (item is Map) {
-            parsed.add(RemoteDesktopSource.fromJson(
+            final m = item.map((k, v) => MapEntry(k.toString(), v));
+            final type = m['type']?.toString().toLowerCase() ?? 'window';
+            final s = RemoteDesktopSource.fromJson(
               item.map((k, v) => MapEntry(k.toString(), v)),
-            ));
+            );
+            if (type == 'screen') {
+              screens.add(s);
+            } else {
+              windows.add(s);
+            }
           }
         }
-        windowSources.value = parsed;
+        if (windows.isNotEmpty) {
+          windowSources.value = windows;
+        }
+        if (screens.isNotEmpty) {
+          screenSources.value = screens;
+        }
       }
       loading.value = false;
       error.value = null;

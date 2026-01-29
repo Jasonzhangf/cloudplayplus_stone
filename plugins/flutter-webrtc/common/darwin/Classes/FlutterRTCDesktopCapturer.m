@@ -228,21 +228,37 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
         if (x + w > (int)srcW) w = (int)srcW - x;
         if (yTop + h > (int)srcH) h = (int)srcH - yTop;
 
-        // NV12 requires even dimensions (best effort).
+        // Align crop to encoder-friendly dimensions.
+        // Many hardware paths behave better when width/height are multiples of 16.
+        // We use a best-effort "round to nearest 16" with clamping.
+        int align = 16;
         x &= ~1;
         yTop &= ~1;
-        w &= ~1;
-        h &= ~1;
-        if (w < 2) w = 2;
-        if (h < 2) h = 2;
-        if (x + w > (int)srcW) w = ((int)srcW - x) & ~1;
-        if (yTop + h > (int)srcH) h = ((int)srcH - yTop) & ~1;
+        if (w < align) w = align;
+        if (h < align) h = align;
+        // Round to nearest 16.
+        w = ((w + (align / 2)) / align) * align;
+        h = ((h + (align / 2)) / align) * align;
+        if (x + w > (int)srcW) w = (int)srcW - x;
+        if (yTop + h > (int)srcH) h = (int)srcH - yTop;
+        // Final clamp + align down.
+        w = (w / align) * align;
+        h = (h / align) * align;
+        if (w < align) w = align;
+        if (h < align) h = align;
+        if (x + w > (int)srcW) w = ((int)srcW - x) / align * align;
+        if (yTop + h > (int)srcH) h = ((int)srcH - yTop) / align * align;
+        if (w < align || h < align) {
+          // Give up on crop for pathological cases.
+          w = 0;
+          h = 0;
+        }
 
         // CIImage uses bottom-left origin.
         int yBottom = (int)srcH - (yTop + h);
         yBottom &= ~1;
 
-        if (w >= 2 && h >= 2 && yBottom >= 0) {
+        if (w >= 16 && h >= 16 && yBottom >= 0) {
           if (!self.ciContext) {
             self.ciContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer : @NO}];
           }
