@@ -31,6 +31,7 @@ import '../webrtctest/rtc_service_impl.dart';
 import '../utils/rtc_utils.dart';
 import '../utils/input/input_trace.dart';
 import '../utils/input/input_debug.dart';
+import '../utils/iterm2/iterm2_crop.dart';
 import 'messages.dart';
 
 /*
@@ -1901,113 +1902,22 @@ iterm2.run_until_complete(main)
               wh != null &&
               ww > 0 &&
               wh > 0) {
-            iterm2MinWidth = ww.round();
-            iterm2MinHeight = wh.round();
-            // iTerm2 Window.async_get_frame() docs:
-            // "The origin (0,0) is the bottom right of the main screen."
-            // Frame.origin is the *top-left* coordinate in that coordinate system.
-            //
-            // In that system, positive X goes left and positive Y goes up, so to
-            // convert to a standard "top-left origin, X right, Y down" coordinate
-            // space within the window:
-            //   leftPx = window.x - session.x
-            //   topPx  = window.y - session.y
-            //
-            // This gives offsets from window top-left to session top-left.
-            double clamp01(double v) => v.clamp(0.0, 1.0);
-
-            final rawLeftPx = wx - fx;
-            final rawTopPx = wy - fy;
-
-            double overflowPenalty({
-              required double left,
-              required double top,
-              required double width,
-              required double height,
-            }) {
-              if (width <= 1 || height <= 1) return 1e18;
-              double p = 0;
-              if (left < 0) p += -left;
-              if (top < 0) p += -top;
-              if (left + width > ww) p += (left + width - ww);
-              if (top + height > wh) p += (top + height - wh);
-              return p;
-            }
-
-            final candidates = <({double left, double top, String tag})>[
-              // Doc-based: origin bottom-right, X left, Y up => window - session.
-              (left: wx - fx, top: wy - fy, tag: 'doc: wx-fx, wy-fy'),
-              // Standard top-left coords: session - window.
-              (left: fx - wx, top: fy - wy, tag: 'rel: fx-wx, fy-wy'),
-              // Y from bottom.
-              (
-                left: fx - wx,
-                top: (wy + wh) - (fy + fh),
-                tag: 'rel: fx-wx, topFromBottom'
-              ),
-              // X from right edge.
-              (
-                left: (wx + ww) - (fx + fw),
-                top: fy - wy,
-                tag: 'alt: leftFromRight, fy-wy'
-              ),
-              (
-                left: (wx + ww) - (fx + fw),
-                top: (wy + wh) - (fy + fh),
-                tag: 'alt: leftFromRight, topFromBottom'
-              ),
-            ];
-
-            double bestPenalty = 1e18;
-            double bestLeft = rawLeftPx;
-            double bestTop = rawTopPx;
-            String bestTag = 'doc: wx-fx, wy-fy';
-
-            final wPx = fw.clamp(1.0, ww);
-            final hPx = fh.clamp(1.0, wh);
-
-            double scoreCandidate(double left, double top) {
-              final overflow = overflowPenalty(
-                left: left,
-                top: top,
-                width: wPx,
-                height: hPx,
-              );
-              // Penalize heavy clamping (often indicates wrong coordinate space).
-              final clampedLeft = left.clamp(0.0, ww - wPx);
-              final clampedTop = top.clamp(0.0, wh - hPx);
-              final clampPenalty =
-                  (left - clampedLeft).abs() + (top - clampedTop).abs();
-              return overflow + clampPenalty * 2.0;
-            }
-
-            for (final c in candidates) {
-              final p = scoreCandidate(c.left, c.top);
-              if (p < bestPenalty) {
-                bestPenalty = p;
-                bestLeft = c.left;
-                bestTop = c.top;
-                bestTag = c.tag;
-              }
-            }
-
-            // Always emit a crop rect (clamped). Even if slightly off, it's better than no cropping.
-            final leftPx = bestLeft.clamp(0.0, ww - wPx);
-            final topPx = bestTop.clamp(0.0, wh - hPx);
-
-            if (wPx > 0 && hPx > 0) {
-              cropRectNorm = {
-                'x': clamp01(leftPx / ww),
-                'y': clamp01(topPx / wh),
-                'w': clamp01(wPx / ww),
-                'h': clamp01(hPx / wh),
-              };
+            final res = computeIterm2CropRectNorm(
+              fx: fx,
+              fy: fy,
+              fw: fw,
+              fh: fh,
+              wx: wx,
+              wy: wy,
+              ww: ww,
+              wh: wh,
+            );
+            if (res != null) {
+              iterm2MinWidth = res.windowMinWidth;
+              iterm2MinHeight = res.windowMinHeight;
+              cropRectNorm = res.cropRectNorm;
               VLOG0(
-                  '[iTerm2] cropRectNorm=$cropRectNorm tag=$bestTag penalty=${bestPenalty.toStringAsFixed(1)} raw=(${rawLeftPx.toStringAsFixed(1)},${rawTopPx.toStringAsFixed(1)}) frame=$frameAny windowFrame=$windowFrameAny');
-            } else {
-              cropRectNorm = null;
-              VLOG0(
-                  '[iTerm2] cropRectNorm unavailable tag=$bestTag frame=$frameAny windowFrame=$windowFrameAny');
+                  '[iTerm2] cropRectNorm=$cropRectNorm tag=${res.tag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny');
             }
           }
         }

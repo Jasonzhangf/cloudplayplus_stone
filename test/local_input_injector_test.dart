@@ -10,6 +10,7 @@ class RecordingPlatform extends HardwareSimulatorPlatform {
   int mouseClickToWindowCalls = 0;
   int textInputToWindowCalls = 0;
   int keyEventToWindowCalls = 0;
+  int mouseScrollToWindowCalls = 0;
 
   int? lastWindowId;
   double? lastPercentX;
@@ -18,6 +19,8 @@ class RecordingPlatform extends HardwareSimulatorPlatform {
   bool? lastIsDown;
   String? lastText;
   int? lastKeyCode;
+  double? lastDx;
+  double? lastDy;
 
   @override
   Future<void> performMouseClickToWindow({
@@ -57,6 +60,22 @@ class RecordingPlatform extends HardwareSimulatorPlatform {
     lastKeyCode = keyCode;
     lastIsDown = isDown;
   }
+
+  @override
+  Future<void> performMouseScrollToWindow({
+    required int windowId,
+    required double dx,
+    required double dy,
+    double? percentX,
+    double? percentY,
+  }) async {
+    mouseScrollToWindowCalls++;
+    lastWindowId = windowId;
+    lastDx = dx;
+    lastDy = dy;
+    lastPercentX = percentX;
+    lastPercentY = percentY;
+  }
 }
 
 void main() {
@@ -95,5 +114,37 @@ void main() {
     expect(platform.lastIsDown, true);
     expect(platform.lastPercentX, closeTo(0.25, 1e-6));
     expect(platform.lastPercentY, closeTo(0.75, 1e-6));
+  });
+
+  test('LocalInputInjector maps anchored scroll to window percents', () async {
+    final original = HardwareSimulatorPlatform.instance;
+    final platform = RecordingPlatform();
+    HardwareSimulatorPlatform.instance = platform;
+    addTearDown(() => HardwareSimulatorPlatform.instance = original);
+
+    final injector = LocalInputInjector();
+    injector.applyMeta({
+      'windowId': 64,
+      'windowFrame': {'x': 100, 'y': 200, 'width': 300, 'height': 400},
+    });
+
+    // Anchored scroll packet includes (u,v) in [0..1] relative to content.
+    final payload = ByteData(16)
+      ..setFloat32(0, 0.0, Endian.little) // dx
+      ..setFloat32(4, -120.0, Endian.little) // dy
+      ..setFloat32(8, 0.10, Endian.little) // anchorX (u)
+      ..setFloat32(12, 0.20, Endian.little); // anchorY (v)
+    final scroll = RTCDataChannelMessage.fromBinary(Uint8List.fromList([
+      LP_MOUSE_SCROLL,
+      ...payload.buffer.asUint8List(),
+    ]));
+    await injector.handleMessage(scroll);
+
+    expect(platform.mouseScrollToWindowCalls, 1);
+    expect(platform.lastWindowId, 64);
+    expect(platform.lastDx, 0.0);
+    expect(platform.lastDy, -120.0);
+    expect(platform.lastPercentX, closeTo(0.10, 1e-6));
+    expect(platform.lastPercentY, closeTo(0.20, 1e-6));
   });
 }
