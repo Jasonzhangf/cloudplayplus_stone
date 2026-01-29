@@ -984,6 +984,18 @@ class StreamingSession {
           final text =
               (payload is Map) ? (payload['text']?.toString() ?? '') : '';
           if (text.isEmpty) break;
+          final captureType = streamSettings?.captureTargetType;
+          final iterm2SessionId = streamSettings?.iterm2SessionId;
+          if (captureType == 'iterm2' &&
+              iterm2SessionId != null &&
+              iterm2SessionId.isNotEmpty) {
+            // iTerm2 is a TTY: prefer session-level write to avoid IME/keyboard quirks.
+            await _sendTextToIterm2Session(
+              sessionId: iterm2SessionId,
+              text: text,
+            );
+            break;
+          }
           final windowId = streamSettings?.windowId;
           if (windowId != null) {
             await HardwareSimulator.keyboard
@@ -1087,6 +1099,14 @@ class StreamingSession {
               }
               if (sourceTypeAny != null) {
                 streamSettings!.sourceType = sourceTypeAny.toString();
+              }
+              final captureTypeAny = payload['captureTargetType'];
+              if (captureTypeAny != null) {
+                streamSettings!.captureTargetType = captureTypeAny.toString();
+              }
+              final iterm2SessionIdAny = payload['iterm2SessionId'];
+              if (iterm2SessionIdAny != null) {
+                streamSettings!.iterm2SessionId = iterm2SessionIdAny.toString();
               }
             }
             inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
@@ -1276,6 +1296,10 @@ iterm2.run_until_complete(main)
     final typeAny = (payload is Map) ? payload['type'] : null;
     final type = typeAny?.toString() ?? 'window';
     if (type == 'window') {
+      if (streamSettings != null) {
+        streamSettings!.captureTargetType = 'window';
+        streamSettings!.iterm2SessionId = null;
+      }
       final windowIdAny = (payload is Map) ? payload['windowId'] : null;
       final sources =
           await desktopCapturer.getSources(types: [SourceType.Window]);
@@ -1290,18 +1314,28 @@ iterm2.run_until_complete(main)
         }
       }
       if (selected == null) return;
-      await _switchCaptureToSource(selected);
+      await _switchCaptureToSource(
+        selected,
+        extraCaptureTarget: const {'captureTargetType': 'window'},
+      );
       return;
     }
 
     if (type == 'screen') {
+      if (streamSettings != null) {
+        streamSettings!.captureTargetType = 'screen';
+        streamSettings!.iterm2SessionId = null;
+      }
       final screens =
           await desktopCapturer.getSources(types: [SourceType.Screen]);
       if (screens.isEmpty) return;
       final idx = streamSettings?.screenId ?? 0;
       final selected =
           (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
-      await _switchCaptureToSource(selected);
+      await _switchCaptureToSource(
+        selected,
+        extraCaptureTarget: const {'captureTargetType': 'screen'},
+      );
       return;
     }
 
@@ -1309,6 +1343,10 @@ iterm2.run_until_complete(main)
       final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
       final sessionId = sessionIdAny?.toString() ?? '';
       if (sessionId.isEmpty) return;
+      if (streamSettings != null) {
+        streamSettings!.captureTargetType = 'iterm2';
+        streamSettings!.iterm2SessionId = sessionId;
+      }
 
       const runner = HostCommandRunner();
       const timeout = Duration(seconds: 2);
@@ -1411,12 +1449,21 @@ iterm2.run_until_complete(main)
       }
       selected ??= sources.isNotEmpty ? sources.first : null;
       if (selected == null) return;
-      await _switchCaptureToSource(selected);
+      await _switchCaptureToSource(
+        selected,
+        extraCaptureTarget: {
+          'captureTargetType': 'iterm2',
+          'iterm2SessionId': sessionId,
+        },
+      );
       return;
     }
   }
 
-  Future<void> _switchCaptureToSource(DesktopCapturerSource source) async {
+  Future<void> _switchCaptureToSource(
+    DesktopCapturerSource source, {
+    Map<String, dynamic>? extraCaptureTarget,
+  }) async {
     if (pc == null || videoSender == null) return;
 
     final int fps = streamSettings?.framerate ?? 30;
@@ -1482,10 +1529,79 @@ iterm2.run_until_complete(main)
             'frame': source.frame,
             'title': source.name,
             'appName': source.appName,
+            ...?extraCaptureTarget,
           }
         }),
       ),
     );
+  }
+
+  Future<void> _sendTextToIterm2Session({
+    required String sessionId,
+    required String text,
+  }) async {
+    // NOTE: Using argv for raw text is brittle (newlines/control chars), so pass base64.
+    final textB64 = base64Encode(utf8.encode(text));
+    const runner = HostCommandRunner();
+    const timeout = Duration(seconds: 2);
+
+    const script = r'''
+import base64
+import json
+import sys
+
+try:
+    import iterm2
+except Exception as e:
+    print(json.dumps({"error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
+    raise SystemExit(0)
+
+SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
+TEXT_B64 = sys.argv[2] if len(sys.argv) > 2 else ""
+
+def decode_text(b64: str) -> str:
+    try:
+        raw = base64.b64decode(b64.encode("ascii"), validate=False)
+        return raw.decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+text = decode_text(TEXT_B64)
+if not text:
+    raise SystemExit(0)
+
+# TTY compatibility:
+# - Enter is usually carriage return.
+# - Backspace is usually DEL (0x7f).
+text = text.replace("\r\n", "\r").replace("\n", "\r")
+text = text.replace("\b", "\x7f")
+
+async def main(connection):
+    app = await iterm2.async_get_app(connection)
+    target = None
+    for win in app.terminal_windows:
+        for tab in win.tabs:
+            for sess in tab.sessions:
+                if sess.session_id == SESSION_ID:
+                    target = sess
+                    break
+            if target:
+                break
+        if target:
+            break
+    if not target:
+        return
+    await target.async_send_text(text)
+
+iterm2.run_until_complete(main)
+''';
+
+    try {
+      await runner.run('python3', ['-c', script, sessionId, textB64],
+          timeout: timeout);
+    } catch (_) {
+      // Best effort: ignore.
+    }
   }
 
   void startClipboardSync() {
