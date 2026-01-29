@@ -1934,7 +1934,7 @@ iterm2.run_until_complete(main)
           }
         }
       }
-      DesktopCapturerSource? bestItermWindowBySize() {
+      DesktopCapturerSource? bestItermWindowByFrameMatch() {
         if (iterm2MinWidth == null || iterm2MinHeight == null) return null;
         final targetW = iterm2MinWidth!.toDouble();
         final targetH = iterm2MinHeight!.toDouble();
@@ -1966,7 +1966,23 @@ iterm2.run_until_complete(main)
           final w = frameW(s);
           final h = frameH(s);
           if (w <= 0 || h <= 0) continue;
-          final sizeScore = (w - targetW).abs() + (h - targetH).abs();
+          // iTerm2 frame sizes may be in a different scale space (points vs pixels).
+          // Try a small set of scale factors and pick the best match.
+          const scales = <double>[1.0, 2.0, 0.5];
+          double bestSizeScore = double.infinity;
+          for (final scale in scales) {
+            final tw = targetW * scale;
+            final th = targetH * scale;
+            final score = (w - tw).abs() + (h - th).abs();
+            if (score < bestSizeScore) bestSizeScore = score;
+          }
+
+          // Additional soft constraint: aspect ratio similarity.
+          final aspect = w / h;
+          final targetAspect = targetW / targetH;
+          final aspectPenalty = ((aspect - targetAspect).abs() * 1200.0);
+
+          final sizeScore = bestSizeScore + aspectPenalty;
           final itermPenalty = isIterm(s) ? 0.0 : 5000.0;
           final score = sizeScore + itermPenalty;
           if (score < bestScore) {
@@ -1979,7 +1995,7 @@ iterm2.run_until_complete(main)
 
       // iTerm2's `TerminalWindow.window_id` is not guaranteed to match macOS CGWindowID.
       // If we can't find the window by ID, fall back to best match by window size.
-      selected ??= bestItermWindowBySize();
+      selected ??= bestItermWindowByFrameMatch();
       if (selected == null) {
         for (final s in sources) {
           if ((s.appName ?? '').toLowerCase().contains('iterm')) {
@@ -1993,12 +2009,23 @@ iterm2.run_until_complete(main)
       if (streamSettings != null) {
         streamSettings!.cropRect = cropRectNorm;
       }
+      final selectionDebug = <String, dynamic>{
+        'iterm2MetaWindowId': windowId,
+        'iterm2WindowFrame': metaAny?['windowFrame'],
+        'iterm2SessionFrame': metaAny?['frame'],
+        'matchedWindowId': selected.windowId,
+        'matchedTitle': selected.name,
+        'matchedAppId': selected.appId,
+        'matchedAppName': selected.appName,
+        'matchedFrame': selected.frame,
+      };
       await _switchCaptureToSource(
         selected,
         extraCaptureTarget: {
           'captureTargetType': 'iterm2',
           'iterm2SessionId': sessionId,
           'cropRect': cropRectNorm,
+          'iterm2WindowSelection': selectionDebug,
         },
         cropRectNormalized: cropRectNorm,
         minWidthConstraint: iterm2MinWidth,
