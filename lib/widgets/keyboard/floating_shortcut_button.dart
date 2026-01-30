@@ -799,51 +799,52 @@ class _StreamControlRow extends StatelessWidget {
       child: Padding(
         // Leave room for the top-right keyboard/close actions.
         padding: const EdgeInsets.only(right: 64),
-        child: Row(
-          children: [
-          _PillButton(
-            icon: Icons.movie_filter,
-            label: '模式',
-            enabled: enabled,
-            onTap: onPickMode,
-          ),
-          const SizedBox(width: 6),
-          ValueListenableBuilder<StreamMode>(
-            valueListenable: quick.mode,
-            builder: (context, mode, _) {
-              final label = mode == StreamMode.desktop
-                  ? '桌面'
-                  : mode == StreamMode.window
-                      ? '窗口'
-                      : 'iTerm2';
-              return _PillButton(
-                icon: mode == StreamMode.desktop
-                    ? Icons.desktop_windows
-                    : mode == StreamMode.window
-                        ? Icons.window
-                        : Icons.terminal,
-                label: label,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          physics: const BouncingScrollPhysics(),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _PillButton(
+                icon: Icons.movie_filter,
+                label: '模式',
                 enabled: enabled,
-                onTap: onPickModeAndTarget,
-              );
-            },
-          ),
-          const SizedBox(width: 6),
-          _PillButton(
-            icon: Icons.list_alt,
-            label: '选择',
-            enabled: enabled,
-            onTap: onPickTarget,
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: ValueListenableBuilder<List<QuickStreamTarget?>>(
-              valueListenable: quick.favorites,
-              builder: (context, favorites, _) {
-                return SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  physics: const BouncingScrollPhysics(),
-                  child: Row(
+                onTap: onPickMode,
+              ),
+              const SizedBox(width: 6),
+              ValueListenableBuilder<StreamMode>(
+                valueListenable: quick.mode,
+                builder: (context, mode, _) {
+                  final label = mode == StreamMode.desktop
+                      ? '桌面'
+                      : mode == StreamMode.window
+                          ? '窗口'
+                          : 'iTerm2';
+                  return _PillButton(
+                    icon: mode == StreamMode.desktop
+                        ? Icons.desktop_windows
+                        : mode == StreamMode.window
+                            ? Icons.window
+                            : Icons.terminal,
+                    label: label,
+                    enabled: enabled,
+                    onTap: onPickModeAndTarget,
+                  );
+                },
+              ),
+              const SizedBox(width: 6),
+              _PillButton(
+                icon: Icons.list_alt,
+                label: '选择',
+                enabled: enabled,
+                onTap: onPickTarget,
+              ),
+              const SizedBox(width: 6),
+              ValueListenableBuilder<List<QuickStreamTarget?>>(
+                valueListenable: quick.favorites,
+                builder: (context, favorites, _) {
+                  return Row(
+                    mainAxisSize: MainAxisSize.min,
                     children: [
                       for (int i = 0; i < favorites.length; i++) ...[
                         _FavoriteButton(
@@ -864,12 +865,11 @@ class _StreamControlRow extends StatelessWidget {
                         const SizedBox(width: 6),
                       ],
                     ],
-                  ),
-                );
-              },
-            ),
+                  );
+                },
+              ),
+            ],
           ),
-          ],
         ),
       ),
     );
