@@ -24,13 +24,14 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:hardware_simulator/hardware_simulator.dart';
 import 'package:wakelock_plus/wakelock_plus.dart';
 
-import '../../controller/hardware_input_controller.dart';
-import '../../controller/platform_key_map.dart';
-import '../../controller/screen_controller.dart';
-import '../../utils/input/two_finger_gesture.dart';
-import 'cursor_change_widget.dart';
-import 'on_screen_remote_mouse.dart';
-import 'virtual_gamepad/control_event.dart';
+    import '../../controller/hardware_input_controller.dart';
+    import '../../controller/platform_key_map.dart';
+    import '../../controller/screen_controller.dart';
+    import '../../utils/input/ime_inset.dart';
+    import '../../utils/input/two_finger_gesture.dart';
+    import 'cursor_change_widget.dart';
+    import 'on_screen_remote_mouse.dart';
+    import 'virtual_gamepad/control_event.dart';
 
 class GlobalRemoteScreenRenderer extends StatefulWidget {
   const GlobalRemoteScreenRenderer({super.key});
@@ -114,6 +115,25 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   int _adaptivePrevPacketsReceived = 0;
   int _adaptivePrevPacketsLost = 0;
   int _adaptivePrevBytesReceived = 0;
+
+  void _resetTouchpadGestureState({bool lockSingleFinger = false}) {
+    _touchpadPointers.clear();
+    _touchpadPointerDownTime.clear();
+    _touchpadPointerDownPosition.clear();
+    _lastTouchpadPosition = null;
+    _lastPinchDistance = null;
+    _initialPinchDistance = null;
+    _initialTwoFingerCenter = null;
+    _pinchFocalPoint = null;
+    _lastPinchFocalPoint = null;
+    _twoFingerGestureType = TwoFingerGestureType.undecided;
+    _twoFingerStartTime = null;
+    _twoFingerScrollActivated = false;
+    _twoFingerScrollActivationDistance = 0.0;
+    _isTwoFingerScrolling = false;
+    _lastScrollAnchor = null;
+    _lockSingleFingerAfterTwoFinger = lockSingleFinger;
+  }
 
   void _startAdaptiveEncodingFeedbackLoop() {
     _adaptiveEncodingTimer?.cancel();
@@ -1223,7 +1243,12 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   builder: (context, overlayInset, child) {
                     return LayoutBuilder(
                       builder: (context, constraints) {
-                        final rawBottomPad = keyboardInset + overlayInset;
+                        final rawBottomPad = computeEffectiveKeyboardInset(
+                              mediaHeight: MediaQuery.of(context).size.height,
+                              constraintsHeight: constraints.maxHeight,
+                              keyboardInset: keyboardInset,
+                            ) +
+                            overlayInset;
                         // Overflow protection: never shrink the video area to 0.
                         // Keep a minimal viewport so rendering/mapping remains stable.
                         const minViewport = 120.0;
@@ -1578,6 +1603,15 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                                                       newSize.height)
                                                                   .abs() >
                                                               0.5)) {
+                                                    // Layout shifts (especially IME show/hide) can cancel
+                                                    // pointer sequences without delivering pointer-up.
+                                                    // Reset local gesture state to avoid "one finger acts
+                                                    // like pinch zoom" due to stale pointers.
+                                                    if (_touchpadPointers.isNotEmpty) {
+                                                      _resetTouchpadGestureState(
+                                                        lockSingleFinger: true,
+                                                      );
+                                                    }
                                                     if (_videoScale != 1.0 ||
                                                         _videoOffset !=
                                                             Offset.zero) {
