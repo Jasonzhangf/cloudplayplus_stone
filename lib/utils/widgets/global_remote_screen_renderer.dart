@@ -1,4 +1,7 @@
 //render the global remote screen in an infinite vertical scroll view.
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:cloudplayplus/base/logging.dart';
 import 'package:cloudplayplus/controller/gamepad_controller.dart';
 import 'package:cloudplayplus/controller/smooth_scroll_controller.dart';
@@ -24,53 +27,10 @@ import 'package:wakelock_plus/wakelock_plus.dart';
 import '../../controller/hardware_input_controller.dart';
 import '../../controller/platform_key_map.dart';
 import '../../controller/screen_controller.dart';
+import '../../utils/input/two_finger_gesture.dart';
 import 'cursor_change_widget.dart';
 import 'on_screen_remote_mouse.dart';
 import 'virtual_gamepad/control_event.dart';
-
-enum TwoFingerGestureType { undecided, zoom, scroll }
-
-@visibleForTesting
-TwoFingerGestureType decideTwoFingerGestureType({
-  required bool isMobile,
-  required double cumulativeDistanceChangeRatio,
-  required double cumulativeCenterMovement,
-  required double cumulativeCenterDeltaX,
-  required double cumulativeCenterDeltaY,
-}) {
-  // “先本地判定、再发送”：
-  // - 两指缩放（pinch）在移动端经常伴随中心轻微漂移，所以优先根据 distance 变化判定 zoom；
-  // - 仅当 distance 基本不变且移动方向明显为垂直时，才判定为 scroll（否则会把缩放误发成滚轮）。
-  final zoomRatioThreshold = isMobile ? 0.04 : 0.02;
-  final scrollMoveThreshold = isMobile ? 16.0 : 15.0;
-  final scrollDistanceMaxRatio = isMobile ? 0.02 : 0.01;
-
-  if (cumulativeDistanceChangeRatio >= zoomRatioThreshold) {
-    return TwoFingerGestureType.zoom;
-  }
-
-  final verticalDominant =
-      cumulativeCenterDeltaY >= (cumulativeCenterDeltaX * 1.2);
-  if (verticalDominant &&
-      cumulativeCenterMovement >= scrollMoveThreshold &&
-      cumulativeDistanceChangeRatio <= scrollDistanceMaxRatio) {
-    return TwoFingerGestureType.scroll;
-  }
-
-  return TwoFingerGestureType.undecided;
-}
-
-@visibleForTesting
-bool shouldActivateTwoFingerScroll({
-  required bool isMobile,
-  required Duration sinceStart,
-  required double accumulatedScrollDistance,
-  required Duration decisionDebounce,
-}) {
-  final activateDistance = isMobile ? 14.0 : 6.0;
-  return sinceStart >= decisionDebounce &&
-      accumulatedScrollDistance >= activateDistance;
-}
 
 class GlobalRemoteScreenRenderer extends StatefulWidget {
   const GlobalRemoteScreenRenderer({super.key});
@@ -136,6 +96,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   double _videoScale = 1.0;
   Offset _videoOffset = Offset.zero;
+  Size? _lastRenderSize;
   Offset? _pinchFocalPoint;
   Offset? _lastPinchFocalPoint;
   TwoFingerGestureType _twoFingerGestureType = TwoFingerGestureType.undecided;
@@ -145,6 +106,10 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   static const Duration _twoFingerDecisionDebounce = Duration(milliseconds: 90);
   static const double _twoFingerScrollActivateDistanceMobile = 10.0;
+
+  Timer? _adaptiveEncodingTimer;
+  int _adaptivePrevFramesDecoded = 0;
+  int _adaptivePrevAtMs = 0;
 
   Widget _buildNoVideoPlaceholder([String? message]) {
     return Container(
@@ -551,6 +516,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         double cumulativeDistanceChangeRatio =
             (currentDistance - _initialPinchDistance!).abs() /
                 _initialPinchDistance!;
+        final cumulativeDistanceChangePx =
+            (currentDistance - _initialPinchDistance!).abs();
         final centerDelta = center - _initialTwoFingerCenter!;
         final cumulativeCenterMovement = centerDelta.distance;
         final cumulativeCenterDeltaX = centerDelta.dx.abs();
@@ -560,6 +527,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         _twoFingerGestureType = decideTwoFingerGestureType(
           isMobile: AppPlatform.isMobile,
           cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
+          cumulativeDistanceChangePx: cumulativeDistanceChangePx,
           cumulativeCenterMovement: cumulativeCenterMovement,
           cumulativeCenterDeltaX: cumulativeCenterDeltaX,
           cumulativeCenterDeltaY: cumulativeCenterDeltaY,
@@ -1154,7 +1122,13 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                   }
                                 },
                                 onPointerDown: (PointerDownEvent event) {
-                                  focusNode.requestFocus();
+                                  // When the user explicitly keeps the system IME open,
+                                  // do not steal focus to the remote screen; otherwise
+                                  // Android/iOS will auto-hide the keyboard.
+                                  if (!(AppPlatform.isMobile &&
+                                      ScreenController.systemImeActive.value)) {
+                                    focusNode.requestFocus();
+                                  }
                                   if (WebrtcService.currentRenderingSession ==
                                       null) return;
 
@@ -1428,12 +1402,48 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                                 offset: _videoOffset,
                                                 onRenderBoxUpdated:
                                                     (newRenderBox) {
+                                                  if (!mounted) return;
                                                   parentBox =
                                                       context.findRenderObject()
                                                           as RenderBox;
-                                                  renderBox = newRenderBox;
-                                                  widgetSize =
+                                                  final newSize =
                                                       newRenderBox.size;
+                                                  final oldSize =
+                                                      _lastRenderSize;
+                                                  renderBox = newRenderBox;
+                                                  widgetSize = newSize;
+                                                  _lastRenderSize = newSize;
+
+                                                  // Keep zoom/pan stable across layout size changes
+                                                  // (e.g. IME insets). Without this, the content
+                                                  // will "jump" and touch mapping will drift.
+                                                  if (oldSize != null &&
+                                                      ((oldSize.width - newSize.width)
+                                                                  .abs() >
+                                                              0.5 ||
+                                                          (oldSize.height -
+                                                                      newSize.height)
+                                                                  .abs() >
+                                                              0.5)) {
+                                                    if (_videoScale != 1.0 ||
+                                                        _videoOffset !=
+                                                            Offset.zero) {
+                                                      final adjusted =
+                                                          adjustVideoOffsetForRenderSizeChange(
+                                                        oldSize: oldSize,
+                                                        newSize: newSize,
+                                                        scale: _videoScale,
+                                                        oldOffset: _videoOffset,
+                                                      );
+                                                      if (adjusted !=
+                                                          _videoOffset) {
+                                                        setState(() {
+                                                          _videoOffset =
+                                                              adjusted;
+                                                        });
+                                                      }
+                                                    }
+                                                  }
                                                 },
                                                 setAspectRatio:
                                                     (newAspectRatio) {

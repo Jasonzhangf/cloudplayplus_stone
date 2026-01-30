@@ -33,6 +33,7 @@ import '../utils/input/input_trace.dart';
 import '../utils/input/input_debug.dart';
 import '../utils/iterm2/iterm2_crop.dart';
 import '../utils/iterm2/iterm2_sources_python_script.dart';
+import '../utils/adaptive_encoding/adaptive_encoding.dart';
 import 'messages.dart';
 
 /*
@@ -125,6 +126,18 @@ class StreamingSession {
   String? _lastDesktopCaptureFrameSizeSig;
   int _lastDesktopCaptureFrameSizeSentAtMs = 0;
   int _lastRenegotiateAtMs = 0;
+
+  // Cached constraints for iTerm2 crop capture to avoid regressing to full-window
+  // sizes when re-applying capture (e.g. adaptive FPS changes).
+  int? _iterm2MinWidthConstraint;
+  int? _iterm2MinHeightConstraint;
+
+  // Adaptive encoding state (controller -> host feedback loop).
+  int _adaptiveLastFpsChangeAtMs = 0;
+  int _adaptiveLastBitrateChangeAtMs = 0;
+  double _adaptiveRenderFpsEwma = 0.0;
+  double _adaptiveRttEwma = 0.0;
+  int? _adaptiveFullBitrateKbps;
 
   // 添加生命周期监听器
   static final _lifecycleObserver = _AppLifecycleObserver();
@@ -1140,6 +1153,10 @@ class StreamingSession {
           if (!AppPlatform.isDeskTop) break;
           await _handleSetCaptureTarget(data['setCaptureTarget']);
           break;
+        case "adaptiveEncoding":
+          if (!AppPlatform.isDeskTop) break;
+          await _handleAdaptiveEncodingFeedback(data['adaptiveEncoding']);
+          break;
         default:
           VLOG0("unhandled message from client.please debug");
       }
@@ -1524,6 +1541,8 @@ class StreamingSession {
       }
 
       if (type == 'window') {
+        _iterm2MinWidthConstraint = null;
+        _iterm2MinHeightConstraint = null;
         if (streamSettings != null) {
           streamSettings!.captureTargetType = 'window';
           streamSettings!.iterm2SessionId = null;
@@ -1647,6 +1666,8 @@ class StreamingSession {
       }
 
       if (type == 'screen') {
+        _iterm2MinWidthConstraint = null;
+        _iterm2MinHeightConstraint = null;
         if (streamSettings != null) {
           streamSettings!.captureTargetType = 'screen';
           streamSettings!.iterm2SessionId = null;
@@ -2086,6 +2107,8 @@ iterm2.run_until_complete(main)
           minWidthConstraint: iterm2MinWidth,
           minHeightConstraint: iterm2MinHeight,
         );
+        _iterm2MinWidthConstraint = iterm2MinWidth;
+        _iterm2MinHeightConstraint = iterm2MinHeight;
         return;
       }
     });
@@ -2218,6 +2241,128 @@ iterm2.run_until_complete(main)
         }),
       ),
     );
+  }
+
+  Future<DesktopCapturerSource?> _findCurrentCaptureSource() async {
+    if (streamSettings?.desktopSourceId == null ||
+        streamSettings!.desktopSourceId!.isEmpty) {
+      return null;
+    }
+    final sourceType = (streamSettings?.sourceType ?? '').toString().toLowerCase();
+    final types =
+        sourceType == 'screen' ? [SourceType.Screen] : [SourceType.Window];
+    final sources = await desktopCapturer.getSources(types: types);
+    for (final s in sources) {
+      if (s.id == streamSettings!.desktopSourceId) return s;
+    }
+    return sources.isNotEmpty ? sources.first : null;
+  }
+
+  Future<void> _reapplyCurrentCaptureForAdaptiveFps() async {
+    final source = await _findCurrentCaptureSource();
+    if (source == null) return;
+    final captureType =
+        (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
+            ?.toString()
+            .trim();
+    final extra = <String, dynamic>{
+      'captureTargetType': captureType,
+      'iterm2SessionId': streamSettings?.iterm2SessionId,
+      'cropRect': streamSettings?.cropRect,
+    };
+    final cropRect = streamSettings?.cropRect;
+    await _switchCaptureToSource(
+      source,
+      extraCaptureTarget: extra,
+      cropRectNormalized: cropRect,
+      minWidthConstraint:
+          captureType == 'iterm2' ? _iterm2MinWidthConstraint : null,
+      minHeightConstraint:
+          captureType == 'iterm2' ? _iterm2MinHeightConstraint : null,
+    );
+  }
+
+  Future<void> _handleAdaptiveEncodingFeedback(dynamic payload) async {
+    if (selfSessionType != SelfSessionType.controlled) return;
+    if (!AppPlatform.isDeskTop) return;
+    if (pc == null || streamSettings == null) return;
+    if (payload is! Map) return;
+
+    final renderFpsAny = payload['renderFps'];
+    final widthAny = payload['width'];
+    final heightAny = payload['height'];
+    final rttAny = payload['rttMs'];
+
+    final renderFps =
+        (renderFpsAny is num) ? renderFpsAny.toDouble() : 0.0;
+    final width = (widthAny is num) ? widthAny.toInt() : 0;
+    final height = (heightAny is num) ? heightAny.toInt() : 0;
+    final rttMs = (rttAny is num) ? rttAny.toDouble() : 0.0;
+
+    if (renderFps <= 0 || width <= 0 || height <= 0) return;
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    // Smooth to avoid oscillations.
+    _adaptiveRenderFpsEwma = _adaptiveRenderFpsEwma <= 0
+        ? renderFps
+        : (_adaptiveRenderFpsEwma * 0.65 + renderFps * 0.35);
+    _adaptiveRttEwma =
+        _adaptiveRttEwma <= 0 ? rttMs : (_adaptiveRttEwma * 0.80 + rttMs * 0.20);
+
+    final currentFps = streamSettings!.framerate ?? 30;
+    final wantFps = pickAdaptiveTargetFps(
+      renderFps: _adaptiveRenderFpsEwma,
+      currentFps: currentFps,
+      minFps: 15,
+    );
+
+    // Step 1: align capture FPS down to avoid encoding above render capability.
+    if (wantFps < currentFps && (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
+      streamSettings!.framerate = wantFps;
+      _adaptiveLastFpsChangeAtMs = nowMs;
+      InputDebugService.instance.log(
+          '[adaptive] fps $currentFps -> $wantFps (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms)');
+      await _reapplyCurrentCaptureForAdaptiveFps();
+    }
+
+    // Compute full bitrate baseline from rendered resolution.
+    final computedFull =
+        computeHighQualityBitrateKbps(width: width, height: height);
+    _adaptiveFullBitrateKbps = _adaptiveFullBitrateKbps == null
+        ? computedFull
+        : ((_adaptiveFullBitrateKbps! * 0.70) + (computedFull * 0.30)).round();
+    final full = _adaptiveFullBitrateKbps!;
+
+    // If we came from legacy huge bitrate settings (e.g. 80000kbps), reset to a sane baseline.
+    final curBitrate = streamSettings!.bitrate;
+    if ((curBitrate == null || curBitrate > 50000) &&
+        (nowMs - _adaptiveLastBitrateChangeAtMs) > 3000) {
+      streamSettings!.bitrate = full;
+      _adaptiveLastBitrateChangeAtMs = nowMs;
+      InputDebugService.instance.log('[adaptive] init bitrate -> ${full}kbps');
+      await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-init-bitrate');
+      return;
+    }
+
+    // Step 2: if already at 15fps but still struggling, adjust bitrate dynamically.
+    final encFps = streamSettings!.framerate ?? currentFps;
+    if (encFps <= 15) {
+      final target = computeDynamicBitrateKbps(
+        fullBitrateKbps: full,
+        renderFps: _adaptiveRenderFpsEwma,
+        targetFps: encFps <= 0 ? 15 : encFps,
+        rttMs: _adaptiveRttEwma,
+      );
+      final cur = (streamSettings!.bitrate ?? full).clamp(250, 20000);
+      final diffRatio = (target - cur).abs() / cur;
+      if (diffRatio >= 0.12 && (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
+        streamSettings!.bitrate = target;
+        _adaptiveLastBitrateChangeAtMs = nowMs;
+        InputDebugService.instance
+            .log('[adaptive] bitrate $cur -> ${target}kbps (full=$full)');
+        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate');
+      }
+    }
   }
 
   Future<void> _maybeRenegotiateAfterCaptureSwitch({

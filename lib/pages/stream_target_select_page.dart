@@ -22,10 +22,12 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   final RemoteWindowService _windows = RemoteWindowService.instance;
   final RemoteIterm2Service _iterm2 = RemoteIterm2Service.instance;
 
-  RTCDataChannel? get _channel => WebrtcService.currentRenderingSession?.channel;
+  RTCDataChannel? get _channel =>
+      WebrtcService.currentRenderingSession?.channel;
 
   bool get _channelOpen =>
-      _channel != null && _channel!.state == RTCDataChannelState.RTCDataChannelOpen;
+      _channel != null &&
+      _channel!.state == RTCDataChannelState.RTCDataChannelOpen;
 
   @override
   void initState() {
@@ -76,7 +78,7 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
                   ),
                   title: Text('快捷 ${i + 1}'),
                   subtitle: Text(
-                    list[i]?.displayLabel ?? '空',
+                    list[i]?.shortDisplayLabel() ?? '空',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                   ),
@@ -94,7 +96,38 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   Future<void> _saveAsFavorite(QuickStreamTarget target) async {
     final slot = await _pickFavoriteSlot(context);
     if (slot == null) return;
-    await _quick.setFavorite(slot, target);
+    final controller = TextEditingController(
+        text: _quick.favorites.value[slot]?.alias ?? target.displayLabel);
+    final alias = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('设置快捷名称'),
+          content: TextField(
+            controller: controller,
+            decoration: const InputDecoration(
+              hintText: '最多5个汉字（可留空使用默认标题）',
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('保存'),
+            ),
+          ],
+        );
+      },
+    );
+    if (alias == null) return;
+    final trimmed = alias.trim();
+    await _quick.setFavorite(
+      slot,
+      target.copyWith(alias: trimmed.isEmpty ? null : trimmed),
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('已保存到快捷 ${slot + 1}')),
@@ -172,7 +205,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
             return ValueListenableBuilder<List<RemoteDesktopSource>>(
               valueListenable: _windows.windowSources,
               builder: (context, sources, ___) {
-                if (sources.isEmpty) return const Center(child: Text('没有收到窗口列表'));
+                if (sources.isEmpty)
+                  return const Center(child: Text('没有收到窗口列表'));
                 return ListView.separated(
                   itemCount: sources.length + 1,
                   separatorBuilder: (_, __) =>
@@ -217,8 +251,9 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
                         overflow: TextOverflow.ellipsis,
                       ),
                       onTap: s.windowId == null ? null : () => _apply(target),
-                      onLongPress:
-                          s.windowId == null ? null : () => _saveAsFavorite(target),
+                      onLongPress: s.windowId == null
+                          ? null
+                          : () => _saveAsFavorite(target),
                     );
                   },
                 );

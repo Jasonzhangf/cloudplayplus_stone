@@ -1,4 +1,4 @@
-import 'package:cloudplayplus/utils/widgets/global_remote_screen_renderer.dart';
+import 'package:cloudplayplus/utils/input/two_finger_gesture.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
@@ -7,6 +7,7 @@ void main() {
       final type = decideTwoFingerGestureType(
         isMobile: true,
         cumulativeDistanceChangeRatio: 0.12,
+        cumulativeDistanceChangePx: 24,
         cumulativeCenterMovement: 24,
         cumulativeCenterDeltaX: 6,
         cumulativeCenterDeltaY: 18,
@@ -20,6 +21,7 @@ void main() {
       final type = decideTwoFingerGestureType(
         isMobile: true,
         cumulativeDistanceChangeRatio: 0.01,
+        cumulativeDistanceChangePx: 2,
         cumulativeCenterMovement: 30,
         cumulativeCenterDeltaX: 2,
         cumulativeCenterDeltaY: 28,
@@ -31,6 +33,7 @@ void main() {
       final type = decideTwoFingerGestureType(
         isMobile: true,
         cumulativeDistanceChangeRatio: 0.01,
+        cumulativeDistanceChangePx: 2,
         cumulativeCenterMovement: 40,
         cumulativeCenterDeltaX: 30,
         cumulativeCenterDeltaY: 10,
@@ -63,7 +66,7 @@ void main() {
         shouldActivateTwoFingerScroll(
           isMobile: true,
           sinceStart: const Duration(milliseconds: 120),
-          accumulatedScrollDistance: 12,
+          accumulatedScrollDistance: 9,
           decisionDebounce: const Duration(milliseconds: 90),
         ),
         isFalse,
@@ -73,7 +76,7 @@ void main() {
         shouldActivateTwoFingerScroll(
           isMobile: true,
           sinceStart: const Duration(milliseconds: 120),
-          accumulatedScrollDistance: 14,
+          accumulatedScrollDistance: 10,
           decisionDebounce: const Duration(milliseconds: 90),
         ),
         isTrue,

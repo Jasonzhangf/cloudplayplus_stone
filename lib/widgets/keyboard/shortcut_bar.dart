@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/shortcut.dart';
@@ -174,10 +176,21 @@ class _ShortcutBarState extends State<ShortcutBar> {
 
   /// 构建快捷键按钮
   Widget _buildShortcutButton(ShortcutItem shortcut) {
+    final repeatableSingleKeys = {
+      'Backspace',
+      'Delete',
+      'ArrowUp',
+      'ArrowDown',
+      'ArrowLeft',
+      'ArrowRight',
+    };
+    final repeatable = shortcut.keys.length == 1 &&
+        repeatableSingleKeys.contains(shortcut.keys.first.keyCode);
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: _ShortcutButton(
         keysText: formatShortcutKeys(shortcut.keys),
+        repeatable: repeatable,
         onPressed: () => widget.onShortcutPressed(shortcut),
       ),
     );
@@ -189,12 +202,14 @@ class _ShortcutButton extends StatefulWidget {
   final String? label;
   final String? keysText;
   final bool isSettings;
+  final bool repeatable;
   final VoidCallback onPressed;
 
   const _ShortcutButton({
     this.label,
     this.keysText,
     this.isSettings = false,
+    this.repeatable = false,
     required this.onPressed,
   });
 
@@ -204,19 +219,48 @@ class _ShortcutButton extends StatefulWidget {
 
 class _ShortcutButtonState extends State<_ShortcutButton> {
   bool _isPressed = false;
+  bool _didRepeat = false;
+  Timer? _repeatDelayTimer;
+  Timer? _repeatTimer;
 
   void _handleTapDown(TapDownDetails details) {
     setState(() => _isPressed = true);
     HapticFeedback.lightImpact();
+
+    if (!widget.repeatable) return;
+    _didRepeat = false;
+    _repeatDelayTimer?.cancel();
+    _repeatTimer?.cancel();
+    _repeatDelayTimer = Timer(const Duration(milliseconds: 320), () {
+      _didRepeat = true;
+      _repeatTimer?.cancel();
+      _repeatTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
+        widget.onPressed();
+      });
+    });
   }
 
   void _handleTapUp(TapUpDetails details) {
     setState(() => _isPressed = false);
-    widget.onPressed();
+    _repeatDelayTimer?.cancel();
+    _repeatTimer?.cancel();
+    // If we already repeated, avoid firing an extra trailing click.
+    if (!widget.repeatable || !_didRepeat) {
+      widget.onPressed();
+    }
   }
 
   void _handleTapCancel() {
     setState(() => _isPressed = false);
+    _repeatDelayTimer?.cancel();
+    _repeatTimer?.cancel();
+  }
+
+  @override
+  void dispose() {
+    _repeatDelayTimer?.cancel();
+    _repeatTimer?.cancel();
+    super.dispose();
   }
 
   @override

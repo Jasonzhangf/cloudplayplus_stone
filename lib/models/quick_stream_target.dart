@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:cloudplayplus/models/stream_mode.dart';
+import 'package:characters/characters.dart';
 
 class QuickStreamTarget {
   final StreamMode mode;
@@ -23,9 +24,54 @@ class QuickStreamTarget {
     this.alias,
   });
 
-  String get displayLabel => (alias != null && alias!.trim().isNotEmpty)
-      ? alias!.trim()
-      : label;
+  String get displayLabel =>
+      (alias != null && alias!.trim().isNotEmpty) ? alias!.trim() : label;
+
+  /// A compact label for UI buttons (favorites / quick switch).
+  ///
+  /// Requirement: keep it short (≈ max 5 Chinese characters width). We treat
+  /// CJK graphemes as 1 unit and non‑CJK as 0.5 unit so ASCII can be longer.
+  String shortDisplayLabel({double maxHanUnits = 5.0}) {
+    return _compactByUnits(displayLabel, maxUnits: maxHanUnits);
+  }
+
+  static String _compactByUnits(String input, {required double maxUnits}) {
+    final s = input.trim();
+    if (s.isEmpty) return s;
+
+    double units = 0.0;
+    final out = StringBuffer();
+    bool truncated = false;
+
+    for (final ch in s.characters) {
+      final rune = ch.runes.isEmpty ? 0 : ch.runes.first;
+      final isCjk = _isCjkRune(rune);
+      final add = isCjk ? 1.0 : 0.5;
+      if (units + add > maxUnits) {
+        truncated = true;
+        break;
+      }
+      out.write(ch);
+      units += add;
+    }
+    final result = out.toString();
+    if (!truncated) return result;
+    if (result.isEmpty) return '…';
+    return '$result…';
+  }
+
+  static bool _isCjkRune(int rune) {
+    // CJK Unified Ideographs + Ext A + Compatibility Ideographs.
+    if (rune >= 0x4E00 && rune <= 0x9FFF) return true;
+    if (rune >= 0x3400 && rune <= 0x4DBF) return true;
+    if (rune >= 0xF900 && rune <= 0xFAFF) return true;
+    // CJK Unified Ideographs Extensions (rare on UI labels but included).
+    if (rune >= 0x20000 && rune <= 0x2A6DF) return true;
+    if (rune >= 0x2A700 && rune <= 0x2B73F) return true;
+    if (rune >= 0x2B740 && rune <= 0x2B81F) return true;
+    if (rune >= 0x2B820 && rune <= 0x2CEAF) return true;
+    return false;
+  }
 
   Map<String, dynamic> toJson() => {
         'mode': mode.index,
@@ -42,7 +88,8 @@ class QuickStreamTarget {
       mode: StreamMode.values[(json['mode'] as num).toInt()],
       id: json['id']?.toString() ?? '',
       label: json['label']?.toString() ?? '',
-      windowId: (json['windowId'] is num) ? (json['windowId'] as num).toInt() : null,
+      windowId:
+          (json['windowId'] is num) ? (json['windowId'] as num).toInt() : null,
       appId: json['appId']?.toString(),
       appName: json['appName']?.toString(),
       alias: json['alias']?.toString(),

@@ -201,6 +201,36 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 6,
         ),
         ShortcutItem(
+          id: 'escape',
+          label: 'Esc',
+          icon: '',
+          keys: [ShortcutKey(key: 'Esc', keyCode: 'Escape')],
+          platform: platform,
+          order: 7,
+        ),
+        ShortcutItem(
+          id: 'shift-tab',
+          label: 'Shift+Tab',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
+            ShortcutKey(key: 'Tab', keyCode: 'Tab')
+          ],
+          platform: platform,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'shift-enter',
+          label: 'Shift+Enter',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
+            ShortcutKey(key: 'Enter', keyCode: 'Enter')
+          ],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
           icon: '',
@@ -209,7 +239,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 7,
+          order: 10,
         ),
         ShortcutItem(
           id: 'paste',
@@ -220,7 +250,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 8,
+          order: 11,
         ),
         ShortcutItem(
           id: 'cut',
@@ -231,7 +261,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'X', keyCode: 'KeyX')
           ],
           platform: platform,
-          order: 9,
+          enabled: false,
+          order: 12,
         ),
         ShortcutItem(
           id: 'select-all',
@@ -242,7 +273,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'A', keyCode: 'KeyA')
           ],
           platform: platform,
-          order: 10,
+          enabled: false,
+          order: 13,
         ),
         ShortcutItem(
           id: 'save',
@@ -253,7 +285,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'S', keyCode: 'KeyS')
           ],
           platform: platform,
-          order: 11,
+          enabled: false,
+          order: 14,
         ),
         ShortcutItem(
           id: 'find',
@@ -264,7 +297,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'F', keyCode: 'KeyF')
           ],
           platform: platform,
-          order: 12,
+          enabled: false,
+          order: 15,
         ),
         ShortcutItem(
           id: 'undo',
@@ -275,7 +309,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Z', keyCode: 'KeyZ')
           ],
           platform: platform,
-          order: 13,
+          enabled: false,
+          order: 16,
         ),
         ShortcutItem(
           id: 'alt-tab',
@@ -286,7 +321,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 14,
+          enabled: false,
+          order: 17,
         ),
         ShortcutItem(
           id: 'lock',
@@ -297,7 +333,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'L', keyCode: 'KeyL')
           ],
           platform: platform,
-          order: 15,
+          enabled: false,
+          order: 18,
         ),
         ShortcutItem(
           id: 'task-manager',
@@ -309,7 +346,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Esc', keyCode: 'Escape'),
           ],
           platform: platform,
-          order: 16,
+          enabled: false,
+          order: 19,
         ),
       ];
 
@@ -364,6 +402,36 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 6,
         ),
         ShortcutItem(
+          id: 'escape',
+          label: 'Esc',
+          icon: '',
+          keys: [ShortcutKey(key: 'Esc', keyCode: 'Escape')],
+          platform: platform,
+          order: 7,
+        ),
+        ShortcutItem(
+          id: 'shift-tab',
+          label: 'Shift+Tab',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
+            ShortcutKey(key: 'Tab', keyCode: 'Tab')
+          ],
+          platform: platform,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'shift-enter',
+          label: 'Shift+Enter',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
+            ShortcutKey(key: 'Enter', keyCode: 'Enter')
+          ],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
           icon: '',
@@ -372,7 +440,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 7,
+          order: 10,
         ),
         ShortcutItem(
           id: 'paste',
@@ -383,7 +451,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 8,
+          order: 11,
         ),
         ShortcutItem(
           id: 'cut',
@@ -394,7 +462,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'X', keyCode: 'KeyX')
           ],
           platform: platform,
-          order: 9,
+          enabled: false,
+          order: 12,
         ),
         ShortcutItem(
           id: 'select-all',
@@ -405,7 +474,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'A', keyCode: 'KeyA')
           ],
           platform: platform,
-          order: 10,
+          enabled: false,
+          order: 13,
         ),
         ShortcutItem(
           id: 'save',
@@ -416,7 +486,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'S', keyCode: 'KeyS')
           ],
           platform: platform,
-          order: 11,
+          enabled: false,
+          order: 14,
         ),
         ShortcutItem(
           id: 'find',
@@ -427,7 +498,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'F', keyCode: 'KeyF')
           ],
           platform: platform,
-          order: 12,
+          enabled: false,
+          order: 15,
         ),
         ShortcutItem(
           id: 'undo',
@@ -438,7 +510,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Z', keyCode: 'KeyZ')
           ],
           platform: platform,
-          order: 13,
+          enabled: false,
+          order: 16,
         ),
         ShortcutItem(
           id: 'cmd-tab',
@@ -449,7 +522,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 14,
+          enabled: false,
+          order: 17,
         ),
         ShortcutItem(
           id: 'lock',
@@ -461,7 +535,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Q', keyCode: 'KeyQ'),
           ],
           platform: platform,
-          order: 15,
+          enabled: false,
+          order: 18,
         ),
         ShortcutItem(
           id: 'screenshot',
@@ -473,7 +548,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: '4', keyCode: 'Digit4'),
           ],
           platform: platform,
-          order: 16,
+          enabled: false,
+          order: 19,
         ),
       ];
 
@@ -528,6 +604,36 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 6,
         ),
         ShortcutItem(
+          id: 'escape',
+          label: 'Esc',
+          icon: '',
+          keys: [ShortcutKey(key: 'Esc', keyCode: 'Escape')],
+          platform: platform,
+          order: 7,
+        ),
+        ShortcutItem(
+          id: 'shift-tab',
+          label: 'Shift+Tab',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
+            ShortcutKey(key: 'Tab', keyCode: 'Tab')
+          ],
+          platform: platform,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'shift-enter',
+          label: 'Shift+Enter',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Shift', keyCode: 'ShiftLeft'),
+            ShortcutKey(key: 'Enter', keyCode: 'Enter')
+          ],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
           icon: '',
@@ -536,7 +642,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 7,
+          order: 10,
         ),
         ShortcutItem(
           id: 'paste',
@@ -547,7 +653,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 8,
+          order: 11,
         ),
         ShortcutItem(
           id: 'cut',
@@ -558,7 +664,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'X', keyCode: 'KeyX')
           ],
           platform: platform,
-          order: 9,
+          enabled: false,
+          order: 12,
         ),
         ShortcutItem(
           id: 'select-all',
@@ -569,7 +676,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'A', keyCode: 'KeyA')
           ],
           platform: platform,
-          order: 10,
+          enabled: false,
+          order: 13,
         ),
         ShortcutItem(
           id: 'save',
@@ -580,7 +688,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'S', keyCode: 'KeyS')
           ],
           platform: platform,
-          order: 11,
+          enabled: false,
+          order: 14,
         ),
         ShortcutItem(
           id: 'find',
@@ -591,7 +700,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'F', keyCode: 'KeyF')
           ],
           platform: platform,
-          order: 12,
+          enabled: false,
+          order: 15,
         ),
         ShortcutItem(
           id: 'undo',
@@ -602,7 +712,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Z', keyCode: 'KeyZ')
           ],
           platform: platform,
-          order: 13,
+          enabled: false,
+          order: 16,
         ),
         ShortcutItem(
           id: 'alt-tab',
@@ -613,7 +724,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 14,
+          enabled: false,
+          order: 17,
         ),
         ShortcutItem(
           id: 'lock',
@@ -624,7 +736,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'L', keyCode: 'KeyL')
           ],
           platform: platform,
-          order: 15,
+          enabled: false,
+          order: 18,
         ),
         ShortcutItem(
           id: 'terminal',
@@ -636,7 +749,8 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'T', keyCode: 'KeyT'),
           ],
           platform: platform,
-          order: 16,
+          enabled: false,
+          order: 19,
         ),
       ];
   }
