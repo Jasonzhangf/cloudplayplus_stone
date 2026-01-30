@@ -13,7 +13,7 @@ void main() {
       await SharedPreferencesManager.init();
     });
 
-    testWidgets('keyboard/X does not overlap stream controls', (tester) async {
+    testWidgets('keyboard/X stays in the top-right stream row', (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -35,13 +35,13 @@ void main() {
 
       expect(
         keyboardRect.top,
-        greaterThanOrEqualTo(streamRect.bottom),
-        reason: 'Keyboard toggle should not cover the top stream control row.',
+        greaterThanOrEqualTo(streamRect.top),
+        reason: 'Keyboard toggle should be inside the stream control row.',
       );
       expect(
-        keyboardRect.left,
-        greaterThanOrEqualTo(panelRect.left),
-        reason: 'Keyboard toggle should be inside the panel bounds.',
+        keyboardRect.bottom,
+        lessThanOrEqualTo(streamRect.bottom),
+        reason: 'Keyboard toggle should be inside the stream control row.',
       );
       expect(
         keyboardRect.right,
@@ -49,9 +49,9 @@ void main() {
         reason: 'Keyboard toggle should be inside the panel bounds.',
       );
       expect(
-        keyboardRect.bottom,
-        lessThanOrEqualTo(panelRect.bottom),
-        reason: 'Keyboard toggle should be inside the panel bounds.',
+        keyboardRect.right,
+        greaterThan(panelRect.right - 80),
+        reason: 'Keyboard toggle should be near the top-right corner.',
       );
     });
   });

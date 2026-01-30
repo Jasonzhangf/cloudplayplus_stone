@@ -30,6 +30,41 @@ import 'virtual_gamepad/control_event.dart';
 
 enum TwoFingerGestureType { undecided, zoom, scroll }
 
+@visibleForTesting
+TwoFingerGestureType decideTwoFingerGestureType({
+  required bool isMobile,
+  required double cumulativeDistanceChangeRatio,
+  required double cumulativeCenterMovement,
+}) {
+  // “先本地判定、再发送”：移动端允许 pinch 时中心漂移更大，缩放意图明显时优先 zoom。
+  final zoomRatioThreshold = isMobile ? 0.10 : 0.02;
+  final scrollMoveThreshold = isMobile ? 12.0 : 15.0;
+
+  if (cumulativeDistanceChangeRatio > zoomRatioThreshold) {
+    return TwoFingerGestureType.zoom;
+  }
+  if (cumulativeCenterMovement > scrollMoveThreshold &&
+      cumulativeDistanceChangeRatio < (zoomRatioThreshold * 0.5)) {
+    return TwoFingerGestureType.scroll;
+  }
+  if (cumulativeCenterMovement > (scrollMoveThreshold * 2.2)) {
+    return TwoFingerGestureType.scroll;
+  }
+  return TwoFingerGestureType.undecided;
+}
+
+@visibleForTesting
+bool shouldActivateTwoFingerScroll({
+  required bool isMobile,
+  required Duration sinceStart,
+  required double accumulatedScrollDistance,
+  required Duration decisionDebounce,
+}) {
+  final activateDistance = isMobile ? 10.0 : 6.0;
+  return sinceStart >= decisionDebounce &&
+      accumulatedScrollDistance >= activateDistance;
+}
+
 class GlobalRemoteScreenRenderer extends StatefulWidget {
   const GlobalRemoteScreenRenderer({super.key});
 
@@ -97,6 +132,12 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   Offset? _pinchFocalPoint;
   Offset? _lastPinchFocalPoint;
   TwoFingerGestureType _twoFingerGestureType = TwoFingerGestureType.undecided;
+  DateTime? _twoFingerStartTime;
+  bool _twoFingerScrollActivated = false;
+  double _twoFingerScrollActivationDistance = 0.0;
+
+  static const Duration _twoFingerDecisionDebounce = Duration(milliseconds: 90);
+  static const double _twoFingerScrollActivateDistanceMobile = 10.0;
 
   Widget _buildNoVideoPlaceholder([String? message]) {
     return Container(
@@ -268,6 +309,10 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _lastPinchFocalPoint = null;
       _twoFingerGestureType = TwoFingerGestureType.undecided;
 
+      _twoFingerStartTime = DateTime.now();
+      _twoFingerScrollActivated = false;
+      _twoFingerScrollActivationDistance = 0.0;
+
       _scrollController.startScroll();
       _isTwoFingerScrolling = true;
     }
@@ -412,6 +457,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _pinchFocalPoint = null;
       _lastPinchFocalPoint = null;
       _twoFingerGestureType = TwoFingerGestureType.undecided;
+      _twoFingerStartTime = null;
+      _twoFingerScrollActivated = false;
+      _twoFingerScrollActivationDistance = 0.0;
       // 如果还有拖拽状态，确保清理
       if (_isDragging) {
         WebrtcService.currentRenderingSession?.inputController
@@ -428,6 +476,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
       _pinchFocalPoint = null;
       _lastPinchFocalPoint = null;
       _twoFingerGestureType = TwoFingerGestureType.undecided;
+      _twoFingerStartTime = null;
+      _twoFingerScrollActivated = false;
+      _twoFingerScrollActivationDistance = 0.0;
       // When dropping from 2 fingers to 1, avoid interpreting the remaining finger
       // as a continuation pan. Require lifting and re-touching to start panning.
       _lockSingleFingerAfterTwoFinger = true;
@@ -497,29 +548,41 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
             (center - _initialTwoFingerCenter!).distance;
 
         // Android 上双指容易出现轻微 pinch 抖动，导致误判为缩放；
-        // 这里偏向判定为滚动，除非缩放意图非常明显。
-        // Mobile: prefer scroll over zoom to avoid accidental pinch classification.
-        final zoomRatioThreshold = AppPlatform.isMobile ? 0.14 : 0.02;
-        final scrollMoveThreshold = AppPlatform.isMobile ? 6.0 : 15.0;
-        final zoomCenterMax = AppPlatform.isMobile ? 6.0 : 10.0;
-
-        if (cumulativeCenterMovement > scrollMoveThreshold &&
-            cumulativeDistanceChangeRatio < (zoomRatioThreshold * 0.75)) {
-          _twoFingerGestureType = TwoFingerGestureType.scroll;
-        } else if (cumulativeDistanceChangeRatio > zoomRatioThreshold &&
-            cumulativeCenterMovement < zoomCenterMax) {
-          _twoFingerGestureType = TwoFingerGestureType.zoom;
-        } else if (cumulativeCenterMovement > (scrollMoveThreshold * 1.8)) {
-          // 兜底：两指明显在移动时，按滚动处理。
-          _twoFingerGestureType = TwoFingerGestureType.scroll;
-        }
+        _twoFingerGestureType = decideTwoFingerGestureType(
+          isMobile: AppPlatform.isMobile,
+          cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
+          cumulativeCenterMovement: cumulativeCenterMovement,
+        );
       }
 
       if (_twoFingerGestureType == TwoFingerGestureType.zoom) {
+        _twoFingerScrollActivated = false;
         _handlePinchZoom(currentDistance / _lastPinchDistance!);
       } else if (_twoFingerGestureType == TwoFingerGestureType.scroll) {
         double scrollDeltaX = center.dx - _lastTouchpadPosition!.dx;
         double scrollDeltaY = center.dy - _lastTouchpadPosition!.dy;
+        final sinceStart = _twoFingerStartTime == null
+            ? Duration.zero
+            : DateTime.now().difference(_twoFingerStartTime!);
+
+        _twoFingerScrollActivationDistance += scrollDeltaY.abs();
+
+        // Debounce: do not send any scroll until we are confident it's scroll.
+        if (!_twoFingerScrollActivated) {
+          if (shouldActivateTwoFingerScroll(
+            isMobile: AppPlatform.isMobile,
+            sinceStart: sinceStart,
+            accumulatedScrollDistance: _twoFingerScrollActivationDistance,
+            decisionDebounce: _twoFingerDecisionDebounce,
+          )) {
+            _twoFingerScrollActivated = true;
+            _scrollController.startScroll();
+          } else {
+            _lastTouchpadPosition = center;
+            _lastPinchDistance = currentDistance;
+            return;
+          }
+        }
         _handleTwoFingerScroll(scrollDeltaX, scrollDeltaY);
       }
     }
