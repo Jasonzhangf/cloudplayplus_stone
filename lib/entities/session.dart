@@ -16,6 +16,7 @@ import 'package:cloudplayplus/services/video_frame_size_event_bus.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/utils/host/host_command_runner.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
+import 'package:cloudplayplus/models/stream_mode.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:hardware_simulator/hardware_simulator.dart';
@@ -321,13 +322,30 @@ class StreamingSession {
       };
       // read the latest settings from user settings.
       final settings = StreamingSettings.toJson();
-      // Default policy: mobile controller always starts with full-desktop stream.
-      // Window selection is done after connection via datachannel.
+      // Mobile controller: prefer restoring last selected target instead of
+      // forcing an initial full-desktop stream.
       if (AppPlatform.isMobile || AppPlatform.isAndroidTV) {
-        settings.remove('desktopSourceId');
-        settings.remove('sourceType');
-        settings.remove('windowId');
-        settings.remove('windowFrame');
+        final quick = QuickTargetService.instance;
+        final t = quick.lastTarget.value;
+        final restore = (t != null) && quick.restoreLastTargetOnConnect.value;
+        if (restore) {
+          try {
+            if (t!.mode == StreamMode.window && t.windowId != null) {
+              settings['sourceType'] = 'window';
+              settings['windowId'] = t.windowId;
+              // On macOS desktopCapturer sources, window id typically matches source id.
+              settings['desktopSourceId'] = t.windowId.toString();
+              settings['captureTargetType'] = 'window';
+            } else if (t.mode == StreamMode.iterm2) {
+              // Start with iTerm2 intent; capture will be refined once datachannel opens.
+              settings['captureTargetType'] = 'iterm2';
+              settings['iterm2SessionId'] = t.id;
+            } else {
+              settings['sourceType'] = 'screen';
+              settings['captureTargetType'] = 'screen';
+            }
+          } catch (_) {}
+        }
       }
       WebSocketService.send('requestRemoteControl', {
         'target_uid': ApplicationInfo.user.uid,

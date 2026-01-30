@@ -32,6 +32,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   final ShortcutService _shortcutService = ShortcutService();
   final QuickTargetService _quick = QuickTargetService.instance;
   late ShortcutSettings _settings;
+  ShortcutPlatform? _appliedRemoteShortcutPlatform;
   bool _isPanelVisible = false;
   bool _useSystemKeyboard = true;
   bool _systemKeyboardWanted = false;
@@ -89,6 +90,40 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         _settings = _shortcutService.settings;
       });
     }
+  }
+
+  ShortcutPlatform _platformFromRemoteDeviceType(String raw) {
+    final s = raw.trim().toLowerCase();
+    if (s.contains('mac') || s.contains('osx') || s.contains('darwin')) {
+      return ShortcutPlatform.macos;
+    }
+    if (s.contains('linux') || s.contains('ubuntu') || s.contains('debian')) {
+      return ShortcutPlatform.linux;
+    }
+    return ShortcutPlatform.windows;
+  }
+
+  Future<void> _maybeSyncShortcutPlatformWithRemoteHost() async {
+    final session = WebrtcService.currentRenderingSession;
+    if (session == null) return;
+    final remoteType = session.controlled.devicetype;
+    final want = _platformFromRemoteDeviceType(remoteType);
+    if (_appliedRemoteShortcutPlatform == want &&
+        _settings.currentPlatform == want) {
+      return;
+    }
+    if (_settings.currentPlatform == want &&
+        _appliedRemoteShortcutPlatform == want) {
+      return;
+    }
+
+    // Only switch when it actually changes to avoid overwriting user edits.
+    if (_settings.currentPlatform != want) {
+      await _shortcutService.switchPlatform(want);
+      if (!mounted) return;
+      setState(() => _settings = _shortcutService.settings);
+    }
+    _appliedRemoteShortcutPlatform = want;
   }
 
   void _handleShortcutPressed(ShortcutItem shortcut) {
@@ -251,6 +286,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     // Keep this in sync with the panel height/offset below.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      _maybeSyncShortcutPlatformWithRemoteHost();
       final imeVisible = bottomInset > 0;
       if (_lastImeVisible != imeVisible) {
         _lastImeVisible = imeVisible;

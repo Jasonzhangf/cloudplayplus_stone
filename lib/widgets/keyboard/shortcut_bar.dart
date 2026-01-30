@@ -189,7 +189,7 @@ class _ShortcutBarState extends State<ShortcutBar> {
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: _ShortcutButton(
-        keysText: formatShortcutKeys(shortcut.keys),
+        label: shortcut.label,
         repeatable: repeatable,
         onPressed: () => widget.onShortcutPressed(shortcut),
       ),
