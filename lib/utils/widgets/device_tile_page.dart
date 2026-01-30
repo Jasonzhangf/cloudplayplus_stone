@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:cloudplayplus/base/constants.dart';
 import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/global_settings/streaming_settings.dart';
+import 'package:cloudplayplus/services/quick_target_service.dart';
 import 'package:cloudplayplus/services/shared_preferences_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
@@ -34,7 +37,8 @@ class DeviceDetailPage extends StatefulWidget {
   State<DeviceDetailPage> createState() => _DeviceDetailPageState();
 }
 
-class _DeviceDetailPageState extends State<DeviceDetailPage> {
+class _DeviceDetailPageState extends State<DeviceDetailPage>
+    with WidgetsBindingObserver {
   late TextEditingController _shareController;
   late TextEditingController _deviceNameController;
   final FocusNode _connectPasswordFocusNode = FocusNode();
@@ -63,6 +67,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     if (!AppPlatform.isAndroidTV) {
       _passwordController = TextEditingController();
       _deviceNameController = TextEditingController();
@@ -113,6 +118,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _passwordController.dispose();
     _deviceNameController.dispose();
     _shareController.dispose();
@@ -135,6 +141,59 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   
   // 屏幕尺寸缓存，用于检测屏幕尺寸变化
   Size? _lastScreenSize;
+  bool _wasEverConnected = false;
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!AppPlatform.isMobile && !AppPlatform.isAndroidTV) return;
+    if (state != AppLifecycleState.resumed) return;
+
+    // When returning to foreground while staying on streaming page,
+    // try to restore the link automatically.
+    _tryRestoreStreamingOnResume();
+  }
+
+  Future<void> _tryRestoreStreamingOnResume() async {
+    // Only auto-restore when user is already in a streaming session page.
+    if (!_wasEverConnected) return;
+    try {
+      WebSocketService.reconnect();
+    } catch (_) {}
+
+    // Give device list a moment to refresh (connection id may change).
+    await Future<void>.delayed(const Duration(milliseconds: 600));
+    if (!mounted) return;
+
+    final state = StreamingManager.getStreamingStateto(widget.device);
+    if (state == StreamingSessionConnectionState.connected ||
+        state == StreamingSessionConnectionState.connceting ||
+        state == StreamingSessionConnectionState.requestSent ||
+        state == StreamingSessionConnectionState.offerSent ||
+        state == StreamingSessionConnectionState.answerSent ||
+        state == StreamingSessionConnectionState.answerReceived) {
+      return;
+    }
+
+    // Reuse saved password so reconnect doesn't require user actions.
+    final savedPasswordKey = 'connectPassword_${widget.device.uid}';
+    final savedPassword =
+        SharedPreferencesManager.getString(savedPasswordKey) ?? '';
+    if (savedPassword.isNotEmpty) {
+      StreamingSettings.connectPassword = savedPassword;
+    }
+
+    // If there is an existing stale session, stop it before restarting.
+    try {
+      StreamingManager.stopStreaming(widget.device);
+    } catch (_) {}
+
+    try {
+      StreamingManager.startStreaming(widget.device);
+      VLOG0('[resume] try restore streaming: ${widget.device.devicename}');
+    } catch (e) {
+      VLOG0('[resume] restore streaming failed: $e');
+    }
+  }
   /*void setAspectRatio(double ratio) {
     if (aspectRatio == ratio) return;
     aspectRatio = ratio;
@@ -221,6 +280,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
           }
           if (value == StreamingSessionConnectionState.connected) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
+              _wasEverConnected = true;
               if (ScreenController.showDetailUseScrollView.value == true) {
                 ScreenController.showDetailUseScrollView.value = false;
               }
@@ -228,6 +288,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
                 ScreenController.setOnlyShowRemoteScreen(true);
                 _inited = true;
               }
+              // Persist last connected device for next-start UX.
+              try {
+                unawaited(
+                  QuickTargetService.instance.setLastDeviceUid(widget.device.uid),
+                );
+              } catch (_) {}
               if (WebrtcService
                           .currentRenderingSession?.controlled.devicetype ==
                       'Windows' &&

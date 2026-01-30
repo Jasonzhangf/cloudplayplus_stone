@@ -1306,6 +1306,20 @@ class StreamingSession {
             inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
                 windowId: streamSettings?.windowId,
                 cropRect: streamSettings?.cropRect);
+
+            // Controller side: persist "last connected target" so next connect
+            // restores stream mode/target instead of defaulting to desktop.
+            if (selfSessionType == SelfSessionType.controller) {
+              try {
+                final quick = QuickTargetService.instance;
+                unawaited(
+                  quick.recordLastConnectedFromCaptureTargetChanged(
+                    deviceUid: controlled.uid,
+                    payload: payload.map((k, v) => MapEntry(k.toString(), v)),
+                  ),
+                );
+              } catch (_) {}
+            }
           }
           RemoteWindowService.instance
               .handleCaptureTargetChangedMessage(payload);
