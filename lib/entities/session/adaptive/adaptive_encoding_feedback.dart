@@ -1,6 +1,29 @@
 part of streaming_session;
 
 extension _StreamingSessionAdaptiveEncoding on StreamingSession {
+  int _computeFullBitrateKbpsForCaptureType({
+    required int width,
+    required int height,
+  }) {
+    final captureType =
+        (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
+            ?.toString()
+            .trim()
+            .toLowerCase();
+    final windowLike = captureType == 'window' || captureType == 'iterm2';
+
+    // For low-resolution window/panel streams, keep a higher bitrate floor
+    // to preserve text clarity (especially terminals/chat apps).
+    // Baseline: 1080p30 => 2000 kbps; scale by area, but clamp minimum.
+    return computeHighQualityBitrateKbps(
+      width: width,
+      height: height,
+      base1080p30Kbps: 2000,
+      minKbps: windowLike ? 2000 : 250,
+      maxKbps: 20000,
+    );
+  }
+
   void _sendHostEncodingStatus({
     required String mode,
     int? fullBitrateKbps,
@@ -110,17 +133,19 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final currentFpsRaw = streamSettings!.framerate ?? 30;
     final currentFps = currentFpsRaw <= 0 ? 30 : currentFpsRaw;
     final minFps = 15;
-    const maxFps = 30;
+    const maxFps = 60;
 
     // Compute full bitrate baseline from rendered resolution.
     final computedFull =
-        computeHighQualityBitrateKbps(width: width, height: height);
+        _computeFullBitrateKbpsForCaptureType(width: width, height: height);
     _adaptiveFullBitrateKbps = _adaptiveFullBitrateKbps == null
         ? computedFull
         : ((_adaptiveFullBitrateKbps! * 0.70) + (computedFull * 0.30)).round();
     final full = _adaptiveFullBitrateKbps!;
 
     final curBitrate = (streamSettings!.bitrate ?? full).clamp(250, 20000);
+    final rxKbpsAny = payload['rxKbps'];
+    final rxKbps = (rxKbpsAny is num) ? rxKbpsAny.toDouble() : 0.0;
 
     // Always report current host-side target to the controller for debug UI.
     _sendHostEncodingStatus(mode: mode, fullBitrateKbps: full);
@@ -172,8 +197,13 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     // - If receiver FPS is low but loss is low: reduce FPS (device decode/encode bound).
 
     final lossPct = (_adaptiveLossEwma * 100.0);
-    final goodNetwork = _adaptiveLossEwma <= 0.005 && _adaptiveRttEwma <= 220;
-    final badNetwork = _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 420;
+    final goodNetwork =
+        _adaptiveLossEwma <= 0.005 && _adaptiveRttEwma <= 220;
+    // If receiver throughput is significantly lower than target bitrate, treat as congestion.
+    final bitrateNotSustainable =
+        rxKbps > 0 && rxKbps < (curBitrate * 0.70);
+    final badNetwork =
+        _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 420 || bitrateNotSustainable;
 
     // 1) Network bad: lower bitrate (down to full/4).
     if (badNetwork) {
@@ -236,9 +266,10 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       final canStepUp = _adaptiveRenderFpsEwma >= (currentFps - 1);
       if (canStepUp && (nowMs - _adaptiveLastFpsChangeAtMs) > 6500) {
         int nextFps(int cur) {
-          if (cur <= 15) return 20;
-          if (cur <= 20) return 30;
-          return 30;
+          if (cur < 20) return 20;
+          if (cur < 30) return 30;
+          if (cur < 45) return 45;
+          return 60;
         }
 
         final targetFps = nextFps(currentFps).clamp(minFps, maxFps);

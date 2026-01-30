@@ -489,6 +489,30 @@ class StreamingSession {
       _resetPingState();
       restartPingTimeoutTimer(10);
       streamSettings = settings;
+      // Normalize bitrate/fps early to avoid negotiating extreme values
+      // (e.g. legacy default 80000 kbps) which can cause poor initial UX.
+      try {
+        final captureType =
+            (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
+                ?.toString()
+                .trim()
+                .toLowerCase();
+        final mode =
+            (streamSettings?.encodingMode ?? '').toString().trim().toLowerCase();
+
+        final b = (streamSettings!.bitrate ?? 2000).clamp(250, 20000);
+        streamSettings!.bitrate = b;
+
+        if (captureType == 'window' || captureType == 'iterm2') {
+          // For window/panel capture, prioritize clarity (text) by keeping higher
+          // bitrate and allowing higher FPS, then let adaptive loop step down.
+          if (streamSettings!.bitrate! < 2000) streamSettings!.bitrate = 2000;
+          if (mode != 'off') {
+            final f = streamSettings!.framerate ?? 30;
+            if (f < 60) streamSettings!.framerate = 60;
+          }
+        }
+      } catch (_) {}
 
       pc = await createRTCPeerConnection();
 

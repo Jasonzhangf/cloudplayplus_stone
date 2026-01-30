@@ -156,6 +156,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
   Future<void> _tryRestoreStreamingOnResume() async {
     // Only auto-restore when user is already in a streaming session page.
     if (!_wasEverConnected) return;
+    final activeDevice = _resolveActiveDeviceForStreaming();
     try {
       WebSocketService.reconnect();
     } catch (_) {}
@@ -167,7 +168,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     await Future<void>.delayed(const Duration(milliseconds: 600));
     if (!mounted) return;
 
-    final state = StreamingManager.getStreamingStateto(widget.device);
+    final state = StreamingManager.getStreamingStateto(activeDevice);
     if (state == StreamingSessionConnectionState.connected ||
         state == StreamingSessionConnectionState.connceting ||
         state == StreamingSessionConnectionState.requestSent ||
@@ -187,12 +188,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
 
     // If there is an existing stale session, stop it before restarting.
     try {
-      StreamingManager.stopStreaming(widget.device);
+      StreamingManager.stopStreaming(activeDevice);
     } catch (_) {}
 
     try {
-      StreamingManager.startStreaming(widget.device);
-      VLOG0('[resume] try restore streaming: ${widget.device.devicename}');
+      StreamingManager.startStreaming(activeDevice);
+      VLOG0('[resume] try restore streaming: ${activeDevice.devicename}');
     } catch (e) {
       VLOG0('[resume] restore streaming failed: $e');
     }
@@ -219,12 +220,33 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
   //first time succeed to connect, enter full screen.
   bool _inited = false;
 
+  Device _resolveActiveDeviceForStreaming() {
+    // Prefer the active StreamingSession's controlled Device instance when available.
+    // Otherwise we may be holding a stale Device reference from a device-list refresh,
+    // causing UI to stay on the settings page even though streaming is connected.
+    final byId = StreamingManager.sessions[widget.device.websocketSessionid];
+    if (byId != null) return byId.controlled;
+
+    // Fallback: match by stable identity fields (uid + devicename + devicetype),
+    // which can survive connection_id changes across reconnects.
+    for (final s in StreamingManager.sessions.values) {
+      final d = s.controlled;
+      if (d.uid == widget.device.uid &&
+          d.devicetype == widget.device.devicetype &&
+          d.devicename == widget.device.devicename) {
+        return d;
+      }
+    }
+    return widget.device;
+  }
+
   @override
   Widget build(BuildContext context) {
     inbuilding = true;
     _iconColor = Theme.of(context).colorScheme.primary;
     
-    DeviceSelectManager.lastSelectedDevice = widget.device;
+    final activeDevice = _resolveActiveDeviceForStreaming();
+    DeviceSelectManager.lastSelectedDevice = activeDevice;
     // 检测屏幕尺寸变化，只在屏幕尺寸真正变化时才更新虚拟显示器尺寸
     final currentScreenSize = MediaQuery.of(context).size;
     if (_lastScreenSize == null || _lastScreenSize != currentScreenSize) {
@@ -256,10 +278,10 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
 
     MessageBoxManager().init(context);
     WebrtcService.updateCurrentRenderingDevice(
-        widget.device.websocketSessionid, onRemoteScreenReceived);
+        activeDevice.websocketSessionid, onRemoteScreenReceived);
 
     return ValueListenableBuilder<StreamingSessionConnectionState>(
-        valueListenable: widget.device.connectionState,
+        valueListenable: activeDevice.connectionState,
         builder: (context, value, child) {
           if (value == StreamingSessionConnectionState.connceting) {
             return const Center(
@@ -295,10 +317,10 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
               try {
                 unawaited(
                   QuickTargetService.instance.setLastDeviceHint(
-                    uid: widget.device.uid,
-                    nickname: widget.device.nickname,
-                    devicename: widget.device.devicename,
-                    devicetype: widget.device.devicetype,
+                    uid: activeDevice.uid,
+                    nickname: activeDevice.nickname,
+                    devicename: activeDevice.devicename,
+                    devicetype: activeDevice.devicetype,
                   ),
                 );
               } catch (_) {}
@@ -399,7 +421,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                     if (index == 5) {
                       ScreenController.setshowDetailUseScrollView(true);
                       ScreenController.setOnlyShowRemoteScreen(false);
-                      StreamingManager.stopStreaming(widget.device);
+                      StreamingManager.stopStreaming(activeDevice);
                     }
                   },
                     buttons: const [
