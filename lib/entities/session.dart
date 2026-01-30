@@ -18,6 +18,7 @@ import 'package:cloudplayplus/services/video_frame_size_event_bus.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/utils/host/host_command_runner.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
+import 'package:cloudplayplus/models/quick_stream_target.dart';
 import 'package:cloudplayplus/models/stream_mode.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -311,14 +312,15 @@ class StreamingSession {
               if (!_restoreTargetApplied &&
                   selfSessionType == SelfSessionType.controller &&
                   (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
-                _restoreTargetApplied = true;
                 final quick = QuickTargetService.instance;
-                final t = quick.lastTarget.value;
+                final t = _restoreTargetSnapshot ?? quick.lastTarget.value;
                 if (t != null && quick.restoreLastTargetOnConnect.value) {
                   try {
                     await quick.applyTarget(channel, t);
                   } catch (_) {}
                 }
+                _restoreTargetApplied = true;
+                _restoreTargetPending = false;
               }
               if (StreamingSettings.streamAudio!) {
                 StreamingSettings.audioBitrate ??= 32;
@@ -343,6 +345,10 @@ class StreamingSession {
         final quick = QuickTargetService.instance;
         final t = quick.lastTarget.value;
         final restore = (t != null) && quick.restoreLastTargetOnConnect.value;
+        // Snapshot the desired restore target early, so it won't be overwritten
+        // by any initial captureTargetChanged messages (e.g. host defaulting to screen).
+        _restoreTargetSnapshot = restore ? t : null;
+        _restoreTargetPending = restore;
         if (restore) {
           try {
             if (t!.mode == StreamMode.window && t.windowId != null) {
@@ -925,8 +931,39 @@ class StreamingSession {
   bool _pingKickoffSent = false;
   bool _pingEverReceived = false;
   bool _restoreTargetApplied = false;
+  QuickStreamTarget? _restoreTargetSnapshot;
+  bool _restoreTargetPending = false;
   bool _loggedOfferCodecs = false;
   final Set<int> _iterm2ModifiersDown = <int>{};
+
+  @visibleForTesting
+  void debugSetRestoreTargetPending(QuickStreamTarget? target) {
+    _restoreTargetSnapshot = target;
+    _restoreTargetPending = target != null;
+    _restoreTargetApplied = false;
+  }
+
+  @visibleForTesting
+  bool debugShouldRecordLastConnected(Map<String, dynamic> payload) {
+    if (!_restoreTargetPending || _restoreTargetApplied) return true;
+    final desired = _restoreTargetSnapshot;
+    if (desired == null) return true;
+    final ct = (payload['captureTargetType'] ?? payload['sourceType'])
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (desired.mode == StreamMode.iterm2) {
+      final sid =
+          (payload['iterm2SessionId'] ?? payload['sessionId'])?.toString();
+      return (ct == 'iterm2') && (sid == desired.id);
+    }
+    if (desired.mode == StreamMode.window) {
+      final widAny = payload['windowId'];
+      final wid = (widAny is num) ? widAny.toInt() : null;
+      return (ct == 'window') && (wid != null) && (wid == desired.windowId);
+    }
+    return true;
+  }
 
   void _resetPingState() {
     _pingTimeoutTimer?.cancel();
@@ -1313,12 +1350,20 @@ class StreamingSession {
             if (selfSessionType == SelfSessionType.controller) {
               try {
                 final quick = QuickTargetService.instance;
-                unawaited(
-                  quick.recordLastConnectedFromCaptureTargetChanged(
-                    deviceUid: controlled.uid,
-                    payload: payload.map((k, v) => MapEntry(k.toString(), v)),
-                  ),
+                final shouldRecord = debugShouldRecordLastConnected(
+                  payload.map((k, v) => MapEntry(k.toString(), v)),
                 );
+                if (shouldRecord) {
+                  unawaited(
+                    quick.recordLastConnectedFromCaptureTargetChanged(
+                      deviceUid: controlled.uid,
+                      payload: payload.map((k, v) => MapEntry(k.toString(), v)),
+                    ),
+                  );
+                  // After we observe the desired target, we can clear snapshot.
+                  _restoreTargetSnapshot = null;
+                  _restoreTargetPending = false;
+                }
               } catch (_) {}
             }
           }

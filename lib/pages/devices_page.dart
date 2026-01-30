@@ -23,6 +23,19 @@ class _DevicesPageState extends State<DevicesPage> {
   List<Device> _deviceList = defaultDeviceList;
   bool _autoRestoreAttempted = false;
 
+  Future<void> _waitForWebSocketConnected({
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    final deadline = DateTime.now().add(timeout);
+    while (DateTime.now().isBefore(deadline)) {
+      if (WebSocketService.connectionState ==
+          WebSocketConnectionState.connected) {
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 200));
+    }
+  }
+
   // 更新列表的方法
   void _updateList(devicelist) {
     setState(() {
@@ -278,6 +291,12 @@ class _DevicesPageState extends State<DevicesPage> {
     _autoRestoreAttempted = true;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       if (!mounted) return;
+
+      // Ensure WS is up; otherwise requestRemoteControl will be dropped.
+      try {
+        WebSocketService.reconnect();
+      } catch (_) {}
+      await _waitForWebSocketConnected();
 
       // Bring user back to the streaming page and reuse local saved password.
       final savedPassword =
