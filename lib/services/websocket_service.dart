@@ -228,6 +228,10 @@ class WebSocketService {
   }
 
   static Future<void> reconnect() async {
+    // Testing hook: avoid making real network connections in unit tests.
+    if (reconnectHookForTest != null) {
+      return reconnectHookForTest!();
+    }
     should_be_connected = true;
     _socket?.close();
     _socket = null;
@@ -237,6 +241,9 @@ class WebSocketService {
     _stopHeartbeat();
     init();
   }
+
+  @visibleForTesting
+  static Future<void> Function()? reconnectHookForTest;
 
   static Future<void> disconnect() async {
     should_be_connected = false;

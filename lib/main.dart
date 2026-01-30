@@ -16,6 +16,7 @@ import 'services/login_service.dart';
 import 'services/secure_storage_manager.dart';
 import 'services/quick_target_service.dart';
 import 'services/shared_preferences_manager.dart';
+import 'services/app_lifecycle_reconnect_service.dart';
 import 'theme/theme_provider.dart';
 import 'dev_settings.dart/develop_settings.dart';
 import 'package:bitsdojo_window/bitsdojo_window.dart';
@@ -50,6 +51,7 @@ void main() async {
   StreamingSettings.init();
   InputController.init();
   await ControlManager().loadControls();
+  AppLifecycleReconnectService.instance.install();
   if (AppPlatform.isWeb) {
     setUrlStrategy(null);
   }
