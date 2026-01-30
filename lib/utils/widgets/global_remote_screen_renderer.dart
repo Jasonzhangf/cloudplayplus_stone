@@ -109,6 +109,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   Timer? _adaptiveEncodingTimer;
   int _adaptivePrevFramesDecoded = 0;
+  int _adaptivePrevFramesDecodedAtMs = 0;
   int _adaptivePrevAtMs = 0;
   int _adaptivePrevPacketsReceived = 0;
   int _adaptivePrevPacketsLost = 0;
@@ -164,23 +165,24 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
           }
         }
 
-        // Fallback FPS from framesDecoded delta when framesPerSecond is missing.
         final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+        // Fallback FPS from framesDecoded delta when framesPerSecond is missing.
         if (fps <= 0 && framesDecoded > 0) {
-          if (_adaptivePrevAtMs > 0 && _adaptivePrevFramesDecoded > 0) {
-            final dtMs = (nowMs - _adaptivePrevAtMs).clamp(1, 60000);
+          if (_adaptivePrevFramesDecodedAtMs > 0 && _adaptivePrevFramesDecoded > 0) {
+            final dtMs =
+                (nowMs - _adaptivePrevFramesDecodedAtMs).clamp(1, 60000);
             final df =
                 (framesDecoded - _adaptivePrevFramesDecoded).clamp(0, 1000000);
             fps = df * 1000.0 / dtMs;
           }
-          _adaptivePrevAtMs = nowMs;
+          _adaptivePrevFramesDecodedAtMs = nowMs;
           _adaptivePrevFramesDecoded = framesDecoded;
         }
 
         if (fps <= 0 || width <= 0 || height <= 0) return;
 
         // Loss + receive bitrate sampling (delta over interval).
-        final nowMs = DateTime.now().millisecondsSinceEpoch;
         final dtMs = (_adaptivePrevAtMs > 0) ? (nowMs - _adaptivePrevAtMs) : 0;
         double lossFraction = 0.0;
         double rxKbps = 0.0;
