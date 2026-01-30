@@ -254,32 +254,38 @@ didOutputSampleBuffer:(CMSampleBufferRef)sampleBuffer
           h = 0;
         }
 
-        // CIImage uses bottom-left origin.
-        int yBottom = (int)srcH - (yTop + h);
-        yBottom &= ~1;
+        if (w >= 16 && h >= 16) {
+          // Use WebRTC's RTCCVPixelBuffer crop/scale utility to avoid CIContext
+          // rendering quirks (e.g. black frames) when the source is NV12.
+          RTCCVPixelBuffer* src = [[RTCCVPixelBuffer alloc] initWithPixelBuffer:originalPixelBuffer
+                                                                   adaptedWidth:(int)srcW
+                                                                  adaptedHeight:(int)srcH
+                                                                      cropWidth:w
+                                                                     cropHeight:h
+                                                                          cropX:x
+                                                                          cropY:yTop];
 
-        if (w >= 16 && h >= 16 && yBottom >= 0) {
-          if (!self.ciContext) {
-            self.ciContext = [CIContext contextWithOptions:@{kCIContextUseSoftwareRenderer : @NO}];
-          }
-          CIImage *img = [CIImage imageWithCVPixelBuffer:pixelBuffer];
-          CGRect cropPx = CGRectMake(x, yBottom, w, h);
-          CIImage *cropped = [img imageByCroppingToRect:cropPx];
-
-          // Note: Rendering CIImage directly into an NV12 (BiPlanar420) CVPixelBuffer can
-          // produce green frames on some macOS setups (often due to chroma planes not being
-          // populated as expected). Use BGRA for the cropped output buffer to keep rendering
-          // reliable; WebRTC will convert internally as needed.
-          NSDictionary *attrs = @{(id)kCVPixelBufferIOSurfacePropertiesKey : @{}};
+          NSDictionary* attrs = @{
+            (id)kCVPixelBufferIOSurfacePropertiesKey : @{},
+            (id)kCVPixelBufferCGImageCompatibilityKey : @YES,
+            (id)kCVPixelBufferCGBitmapContextCompatibilityKey : @YES,
+          };
           CVReturn cvret = CVPixelBufferCreate(kCFAllocatorDefault, w, h,
-                                               kCVPixelFormatType_32BGRA,
+                                               kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
                                                (__bridge CFDictionaryRef)attrs,
                                                &croppedPixelBuffer);
           if (cvret == kCVReturnSuccess && croppedPixelBuffer) {
-            CGColorSpaceRef cs = CGColorSpaceCreateDeviceRGB();
-            CGRect bounds = CGRectMake(0, 0, w, h);
-            [self.ciContext render:cropped toCVPixelBuffer:croppedPixelBuffer bounds:bounds colorSpace:cs];
-            if (cs) CGColorSpaceRelease(cs);
+            int tmpSize = [src bufferSizeForCroppingAndScalingToWidth:w height:h];
+            uint8_t* tmp = nil;
+            if (tmpSize > 0) {
+              tmp = (uint8_t*)malloc((size_t)tmpSize);
+            }
+            BOOL ok = [src cropAndScaleTo:croppedPixelBuffer withTempBuffer:tmp];
+            if (tmp) free(tmp);
+            if (!ok) {
+              CVPixelBufferRelease(croppedPixelBuffer);
+              croppedPixelBuffer = nil;
+            }
           } else {
             if (croppedPixelBuffer) {
               CVPixelBufferRelease(croppedPixelBuffer);
