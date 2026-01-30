@@ -1425,31 +1425,133 @@ class StreamingSession {
     const timeout = Duration(seconds: 2);
 
     const script = r'''
-import json
-import sys
+	import json
+	import sys
+	import time
 
-try:
-    import iterm2
+	try:
+	    import iterm2
 except Exception as e:
     print(json.dumps({"error": f"iterm2 module not available: {e}", "panels": []}, ensure_ascii=False))
     raise SystemExit(0)
 
-async def main(connection):
-    app = await iterm2.async_get_app(connection)
-    panels = []
-    selected = None
+	async def main(connection):
+	    app = await iterm2.async_get_app(connection)
+	    panels = []
+	    selected = None
 
-    async def get_frame(obj):
-        try:
-            fn = getattr(obj, "async_get_frame", None)
-            if fn:
-                return await fn()
-        except Exception:
-            pass
-        try:
-            return obj.frame
-        except Exception:
-            return None
+	    async def get_frame(obj):
+	        try:
+	            fn = getattr(obj, "async_get_frame", None)
+	            if fn:
+	                return await fn()
+	        except Exception:
+	            pass
+	        try:
+	            return obj.frame
+	        except Exception:
+	            return None
+
+	    # Reconstruct iTerm2 pane layout frames.
+	    #
+	    # iTerm2's Session.frame y can be 0 for sessions in different rows because
+	    # it's expressed in the coordinate space of a row Splitter. To compute a
+	    # stable crop rect we rebuild absolute offsets from the tab.root Splitter tree.
+	    def subtree_size(node):
+	        try:
+	            if isinstance(node, iterm2.session.Session):
+	                f = node.frame
+	                return float(f.size.width), float(f.size.height)
+	            if isinstance(node, iterm2.session.Splitter):
+	                if getattr(node, "_Splitter__vertical", False):
+	                    w = 0.0
+	                    h = 0.0
+	                    for c in node.children:
+	                        cw, ch = subtree_size(c)
+	                        w += cw
+	                        if ch > h:
+	                            h = ch
+	                    return w, h
+	                else:
+	                    w = 0.0
+	                    h = 0.0
+	                    for c in node.children:
+	                        cw, ch = subtree_size(c)
+	                        if cw > w:
+	                            w = cw
+	                        h += ch
+	                    return w, h
+	        except Exception:
+	            pass
+	        return 0.0, 0.0
+
+	    def node_bounds(node):
+	        try:
+	            if isinstance(node, iterm2.session.Session):
+	                f = node.frame
+	                x0 = float(f.origin.x)
+	                y0 = float(f.origin.y)
+	                x1 = x0 + float(f.size.width)
+	                y1 = y0 + float(f.size.height)
+	                return x0, y0, x1, y1
+	            if isinstance(node, iterm2.session.Splitter):
+	                xs = []
+	                ys = []
+	                xe = []
+	                ye = []
+	                for c in node.children:
+	                    b = node_bounds(c)
+	                    if b:
+	                        xs.append(b[0]); ys.append(b[1]); xe.append(b[2]); ye.append(b[3])
+	                if xs:
+	                    return min(xs), min(ys), max(xe), max(ye)
+	        except Exception:
+	            pass
+	        return None
+
+	    def assign_layout_frames(node, ox, oy, out):
+	        try:
+	            if isinstance(node, iterm2.session.Session):
+	                f = node.frame
+	                out[node.session_id] = {
+	                    "x": ox + float(f.origin.x),
+	                    "y": oy + float(f.origin.y),
+	                    "w": float(f.size.width),
+	                    "h": float(f.size.height),
+	                }
+	                return
+	            if isinstance(node, iterm2.session.Splitter):
+	                vertical = getattr(node, "_Splitter__vertical", False)
+	                # If children already report distinct offsets in their frame origins,
+	                # don't double-apply offsets by summing widths/heights.
+	                mins = []
+	                for c in node.children:
+	                    b = node_bounds(c)
+	                    if b:
+	                        mins.append(round(b[0 if vertical else 1], 3))
+	                distinct = len(set(mins)) if mins else 0
+	                if vertical:
+	                    if distinct > 1:
+	                        for c in node.children:
+	                            assign_layout_frames(c, ox, oy, out)
+	                    else:
+	                        x = ox
+	                        for c in node.children:
+	                            assign_layout_frames(c, x, oy, out)
+	                            cw, _ = subtree_size(c)
+	                            x += cw
+	                else:
+	                    if distinct > 1:
+	                        for c in node.children:
+	                            assign_layout_frames(c, ox, oy, out)
+	                    else:
+	                        y = oy
+	                        for c in node.children:
+	                            assign_layout_frames(c, ox, y, out)
+	                            _, ch = subtree_size(c)
+	                            y += ch
+	        except Exception:
+	            pass
 
     # best-effort current session id
     try:
@@ -1460,14 +1562,25 @@ async def main(connection):
         selected = None
 
     win_idx = 0
-    for win in app.terminal_windows:
-        win_idx += 1
-        tab_idx = 0
-        for tab in win.tabs:
-            tab_idx += 1
-            sess_idx = 0
-            for sess in tab.sessions:
-                sess_idx += 1
+	    for win in app.terminal_windows:
+	        win_idx += 1
+	        tab_idx = 0
+	        for tab in win.tabs:
+	            tab_idx += 1
+	            layout_frames = {}
+	            layout_w = 0.0
+	            layout_h = 0.0
+	            try:
+	                root = tab.root
+	                layout_w, layout_h = subtree_size(root)
+	                assign_layout_frames(root, 0.0, 0.0, layout_frames)
+	            except Exception:
+	                layout_frames = {}
+	                layout_w = 0.0
+	                layout_h = 0.0
+	            sess_idx = 0
+	            for sess in tab.sessions:
+	                sess_idx += 1
                 try:
                     tab_title = await sess.async_get_variable('tab.title')
                 except Exception:
@@ -1475,33 +1588,35 @@ async def main(connection):
                 name = getattr(sess, 'name', '') or ''
                 title = f"{win_idx}.{tab_idx}.{sess_idx}"
                 detail = ' · '.join([p for p in [tab_title, name] if p])
-                item = {
-                    "id": sess.session_id,
-                    "title": title,
-                    "detail": detail,
-                    "index": len(panels),
-                    # include extra metadata for future use
-                    "windowId": getattr(win, 'window_id', None),
-                }
-                try:
-                    f = await get_frame(sess)
-                    wf = await get_frame(win)
-                    if f and wf:
-                        item["frame"] = {
-                            "x": float(f.origin.x),
-                            "y": float(f.origin.y),
-                            "w": float(f.size.width),
-                            "h": float(f.size.height),
-                        }
-                        item["windowFrame"] = {
-                            "x": float(wf.origin.x),
-                            "y": float(wf.origin.y),
-                            "w": float(wf.size.width),
-                            "h": float(wf.size.height),
-                        }
-                except Exception:
-                    pass
-                panels.append(item)
+	                item = {
+	                    "id": sess.session_id,
+	                    "title": title,
+	                    "detail": detail,
+	                    "index": len(panels),
+	                    # include extra metadata for future use
+	                    "windowId": getattr(win, 'window_id', None),
+	                }
+	                try:
+	                    f = layout_frames.get(sess.session_id)
+	                    wf = await get_frame(win)
+	                    if f and layout_w > 0 and layout_h > 0:
+	                        item["frame"] = f
+	                        item["windowFrame"] = {
+	                            "x": 0.0,
+	                            "y": 0.0,
+	                            "w": float(layout_w),
+	                            "h": float(layout_h),
+	                        }
+	                    if wf:
+	                        item["rawWindowFrame"] = {
+	                            "x": float(wf.origin.x),
+	                            "y": float(wf.origin.y),
+	                            "w": float(wf.size.width),
+	                            "h": float(wf.size.height),
+	                        }
+	                except Exception:
+	                    pass
+	                panels.append(item)
 
     print(json.dumps({"panels": panels, "selectedSessionId": selected}, ensure_ascii=False))
 
@@ -1778,6 +1893,7 @@ iterm2.run_until_complete(main)
         const script = r'''
 import json
 import sys
+import time
 
 try:
     import iterm2
@@ -1798,6 +1914,100 @@ async def get_frame(obj):
         return obj.frame
     except Exception:
         return None
+
+def subtree_size(node):
+    try:
+        if isinstance(node, iterm2.session.Session):
+            f = node.frame
+            return float(f.size.width), float(f.size.height)
+        if isinstance(node, iterm2.session.Splitter):
+            if getattr(node, "_Splitter__vertical", False):
+                w = 0.0
+                h = 0.0
+                for c in node.children:
+                    cw, ch = subtree_size(c)
+                    w += cw
+                    if ch > h:
+                        h = ch
+                return w, h
+            else:
+                w = 0.0
+                h = 0.0
+                for c in node.children:
+                    cw, ch = subtree_size(c)
+                    if cw > w:
+                        w = cw
+                    h += ch
+                return w, h
+    except Exception:
+        pass
+    return 0.0, 0.0
+
+def node_bounds(node):
+    try:
+        if isinstance(node, iterm2.session.Session):
+            f = node.frame
+            x0 = float(f.origin.x)
+            y0 = float(f.origin.y)
+            x1 = x0 + float(f.size.width)
+            y1 = y0 + float(f.size.height)
+            return x0, y0, x1, y1
+        if isinstance(node, iterm2.session.Splitter):
+            xs = []
+            ys = []
+            xe = []
+            ye = []
+            for c in node.children:
+                b = node_bounds(c)
+                if b:
+                    xs.append(b[0]); ys.append(b[1]); xe.append(b[2]); ye.append(b[3])
+            if xs:
+                return min(xs), min(ys), max(xe), max(ye)
+    except Exception:
+        pass
+    return None
+
+def assign_layout_frames(node, ox, oy, out):
+    try:
+        if isinstance(node, iterm2.session.Session):
+            f = node.frame
+            out[node.session_id] = {
+                "x": ox + float(f.origin.x),
+                "y": oy + float(f.origin.y),
+                "w": float(f.size.width),
+                "h": float(f.size.height),
+            }
+            return
+        if isinstance(node, iterm2.session.Splitter):
+            vertical = getattr(node, "_Splitter__vertical", False)
+            mins = []
+            for c in node.children:
+                b = node_bounds(c)
+                if b:
+                    mins.append(round(b[0 if vertical else 1], 3))
+            distinct = len(set(mins)) if mins else 0
+            if vertical:
+                if distinct > 1:
+                    for c in node.children:
+                        assign_layout_frames(c, ox, oy, out)
+                else:
+                    x = ox
+                    for c in node.children:
+                        assign_layout_frames(c, x, oy, out)
+                        cw, _ = subtree_size(c)
+                        x += cw
+            else:
+                if distinct > 1:
+                    for c in node.children:
+                        assign_layout_frames(c, ox, oy, out)
+                else:
+                    y = oy
+                    for c in node.children:
+                        assign_layout_frames(c, ox, y, out)
+                        _, ch = subtree_size(c)
+                        y += ch
+    except Exception:
+        pass
 
 async def main(connection):
     app = await iterm2.async_get_app(connection)
@@ -1822,9 +2032,15 @@ async def main(connection):
         print(json.dumps({"error": f"session not found: {SESSION_ID}"}, ensure_ascii=False))
         return
 
-    # best-effort: activate session/window
+    # best-effort: activate session/tab/window
     try:
         await target.async_activate()
+    except Exception:
+        pass
+    try:
+        fn = getattr(target_tab, "async_select", None)
+        if fn:
+            await fn()
     except Exception:
         pass
     try:
@@ -1832,16 +2048,36 @@ async def main(connection):
     except Exception:
         pass
 
+    try:
+        time.sleep(0.05)
+    except Exception:
+        pass
+
+    layout_frames = {}
+    layout_w = 0.0
+    layout_h = 0.0
+    try:
+        root = target_tab.root
+        layout_w, layout_h = subtree_size(root)
+        assign_layout_frames(root, 0.0, 0.0, layout_frames)
+    except Exception:
+        layout_frames = {}
+        layout_w = 0.0
+        layout_h = 0.0
+
     out = {
         "sessionId": target.session_id,
-        "windowId": getattr(target_win, 'window_id', None),
+        "windowId": getattr(target_win, "window_id", None),
     }
+
     try:
-        f = await get_frame(target)
+        f = layout_frames.get(target.session_id)
         wf = await get_frame(target_win)
-        if f and wf:
-            out["frame"] = {"x": float(f.origin.x), "y": float(f.origin.y), "w": float(f.size.width), "h": float(f.size.height)}
-            out["windowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
+        if f and layout_w > 0 and layout_h > 0:
+            out["frame"] = f
+            out["windowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
+        if wf:
+            out["rawWindowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
     except Exception:
         pass
 

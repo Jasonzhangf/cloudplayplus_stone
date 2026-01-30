@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:cloudplayplus/utils/iterm2/iterm2_crop.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -37,6 +38,7 @@ class _RunnerPageState extends State<_RunnerPage> {
   bool _done = false;
   int _ok = 0;
   int _fail = 0;
+  final Map<String, String> _sha1ToTitle = {};
 
   @override
   void initState() {
@@ -66,13 +68,15 @@ class _RunnerPageState extends State<_RunnerPage> {
     try {
       final panels = await _fetchIterm2Panels();
       if (panels.isEmpty) {
-        _log('no iTerm2 panels found (ensure iTerm2 is running + Python API enabled)');
+        _log(
+            'no iTerm2 panels found (ensure iTerm2 is running + Python API enabled)');
         setState(() => _done = true);
         return;
       }
       _log('panels=${panels.length}');
 
-      final sources = await desktopCapturer.getSources(types: [SourceType.Window]);
+      final sources =
+          await desktopCapturer.getSources(types: [SourceType.Window]);
       final itermSources = sources.where((s) {
         final an = (s.appName ?? '').toLowerCase();
         final aid = (s.appId ?? '').toLowerCase();
@@ -80,7 +84,8 @@ class _RunnerPageState extends State<_RunnerPage> {
       }).toList(growable: false);
 
       if (itermSources.isEmpty) {
-        _log('no iTerm2 window sources available via desktopCapturer (check Screen Recording permission)');
+        _log(
+            'no iTerm2 window sources available via desktopCapturer (check Screen Recording permission)');
         setState(() => _done = true);
         return;
       }
@@ -91,8 +96,11 @@ class _RunnerPageState extends State<_RunnerPage> {
       for (final p in panels) {
         final title = (p['title'] ?? '').toString();
         final detail = (p['detail'] ?? '').toString();
-        final frame = (p['frame'] is Map) ? Map<String, dynamic>.from(p['frame']) : null;
-        final winFrame = (p['windowFrame'] is Map) ? Map<String, dynamic>.from(p['windowFrame']) : null;
+        final frame =
+            (p['frame'] is Map) ? Map<String, dynamic>.from(p['frame']) : null;
+        final winFrame = (p['windowFrame'] is Map)
+            ? Map<String, dynamic>.from(p['windowFrame'])
+            : null;
         if (frame == null || winFrame == null) {
           _fail++;
           _log('SKIP $title ($detail): missing frame/windowFrame');
@@ -113,9 +121,17 @@ class _RunnerPageState extends State<_RunnerPage> {
         final wy = (winFrame['y'] as num?)?.toDouble() ?? 0.0;
         final ww = (winFrame['w'] as num?)?.toDouble();
         final wh = (winFrame['h'] as num?)?.toDouble();
-        if (fx == null || fy == null || fw == null || fh == null || ww == null || wh == null || ww <= 0 || wh <= 0) {
+        if (fx == null ||
+            fy == null ||
+            fw == null ||
+            fh == null ||
+            ww == null ||
+            wh == null ||
+            ww <= 0 ||
+            wh <= 0) {
           _fail++;
-          _log('SKIP $title ($detail): invalid frames frame=$frame windowFrame=$winFrame');
+          _log(
+              'SKIP $title ($detail): invalid frames frame=$frame windowFrame=$winFrame');
           results.add({
             'title': title,
             'detail': detail,
@@ -139,7 +155,8 @@ class _RunnerPageState extends State<_RunnerPage> {
         );
         if (cropRes == null) {
           _fail++;
-          _log('SKIP $title ($detail): compute cropRectNorm failed frame=$frame windowFrame=$winFrame');
+          _log(
+              'SKIP $title ($detail): compute cropRectNorm failed frame=$frame windowFrame=$winFrame');
           results.add({
             'title': title,
             'detail': detail,
@@ -164,6 +181,12 @@ class _RunnerPageState extends State<_RunnerPage> {
           );
 
           final analysis = await _analyzePngLooksNonBlack(png);
+          final sha1Hex = sha1.convert(png).toString();
+          final dupTitle = _sha1ToTitle[sha1Hex];
+          final isDuplicate = dupTitle != null && dupTitle != title;
+          if (!isDuplicate) {
+            _sha1ToTitle[sha1Hex] = title;
+          }
           final safeTitle = title.replaceAll(RegExp(r'[^0-9a-zA-Z_.-]+'), '_');
           final safeDetail = detail.isEmpty
               ? ''
@@ -171,13 +194,18 @@ class _RunnerPageState extends State<_RunnerPage> {
           final path = '${outDir.path}/panel_${safeTitle}${safeDetail}.png';
           await File(path).writeAsBytes(png);
 
-          final ok = analysis.looksNonBlack;
+          final ok = analysis.looksNonBlack && !isDuplicate;
           if (ok) {
             _ok++;
             _log('OK  $title -> $path ($analysis)');
           } else {
             _fail++;
-            _log('FAIL $title -> $path ($analysis)');
+            if (isDuplicate) {
+              _log(
+                  'FAIL $title -> $path (duplicate of $dupTitle sha1=$sha1Hex) ($analysis)');
+            } else {
+              _log('FAIL $title -> $path ($analysis)');
+            }
           }
 
           results.add({
@@ -187,6 +215,8 @@ class _RunnerPageState extends State<_RunnerPage> {
             'path': path,
             'analysis': analysis.toJson(),
             'cropRectNorm': crop,
+            'sha1': sha1Hex,
+            if (isDuplicate) 'duplicateOf': dupTitle,
             'windowSource': {
               'id': source.id,
               'windowId': source.windowId,
@@ -325,6 +355,102 @@ async def main(connection):
     app = await iterm2.async_get_app(connection)
     panels = []
 
+    # Reconstruct pane layout frames from the Splitter tree so sessions in
+    # different rows get distinct y offsets (Session.frame y can be 0 per-row).
+    def subtree_size(node):
+        try:
+            if isinstance(node, iterm2.session.Session):
+                f = node.frame
+                return float(f.size.width), float(f.size.height)
+            if isinstance(node, iterm2.session.Splitter):
+                if getattr(node, "_Splitter__vertical", False):
+                    w = 0.0
+                    h = 0.0
+                    for c in node.children:
+                        cw, ch = subtree_size(c)
+                        w += cw
+                        if ch > h:
+                            h = ch
+                    return w, h
+                else:
+                    w = 0.0
+                    h = 0.0
+                    for c in node.children:
+                        cw, ch = subtree_size(c)
+                        if cw > w:
+                            w = cw
+                        h += ch
+                    return w, h
+        except Exception:
+            pass
+        return 0.0, 0.0
+
+    def node_bounds(node):
+        try:
+            if isinstance(node, iterm2.session.Session):
+                f = node.frame
+                x0 = float(f.origin.x)
+                y0 = float(f.origin.y)
+                x1 = x0 + float(f.size.width)
+                y1 = y0 + float(f.size.height)
+                return x0, y0, x1, y1
+            if isinstance(node, iterm2.session.Splitter):
+                xs = []
+                ys = []
+                xe = []
+                ye = []
+                for c in node.children:
+                    b = node_bounds(c)
+                    if b:
+                        xs.append(b[0]); ys.append(b[1]); xe.append(b[2]); ye.append(b[3])
+                if xs:
+                    return min(xs), min(ys), max(xe), max(ye)
+        except Exception:
+            pass
+        return None
+
+    def assign_layout_frames(node, ox, oy, out):
+        try:
+            if isinstance(node, iterm2.session.Session):
+                f = node.frame
+                out[node.session_id] = {
+                    "x": ox + float(f.origin.x),
+                    "y": oy + float(f.origin.y),
+                    "w": float(f.size.width),
+                    "h": float(f.size.height),
+                }
+                return
+            if isinstance(node, iterm2.session.Splitter):
+                vertical = getattr(node, "_Splitter__vertical", False)
+                mins = []
+                for c in node.children:
+                    b = node_bounds(c)
+                    if b:
+                        mins.append(round(b[0 if vertical else 1], 3))
+                distinct = len(set(mins)) if mins else 0
+                if vertical:
+                    if distinct > 1:
+                        for c in node.children:
+                            assign_layout_frames(c, ox, oy, out)
+                    else:
+                        x = ox
+                        for c in node.children:
+                            assign_layout_frames(c, x, oy, out)
+                            cw, _ = subtree_size(c)
+                            x += cw
+                else:
+                    if distinct > 1:
+                        for c in node.children:
+                            assign_layout_frames(c, ox, oy, out)
+                    else:
+                        y = oy
+                        for c in node.children:
+                            assign_layout_frames(c, ox, y, out)
+                            _, ch = subtree_size(c)
+                            y += ch
+        except Exception:
+            pass
+
     async def get_frame(obj):
         try:
             fn = getattr(obj, "async_get_frame", None)
@@ -343,6 +469,17 @@ async def main(connection):
         tab_idx = 0
         for tab in win.tabs:
             tab_idx += 1
+            layout_frames = {}
+            layout_w = 0.0
+            layout_h = 0.0
+            try:
+                root = tab.root
+                layout_w, layout_h = subtree_size(root)
+                assign_layout_frames(root, 0.0, 0.0, layout_frames)
+            except Exception:
+                layout_frames = {}
+                layout_w = 0.0
+                layout_h = 0.0
             sess_idx = 0
             for sess in tab.sessions:
                 sess_idx += 1
@@ -361,16 +498,13 @@ async def main(connection):
                     "windowId": getattr(win, 'window_id', None),
                 }
                 try:
-                    f = await get_frame(sess)
+                    f = layout_frames.get(sess.session_id)
                     wf = await get_frame(win)
-                    if f and wf:
-                        item["frame"] = {
-                            "x": float(f.origin.x),
-                            "y": float(f.origin.y),
-                            "w": float(f.size.width),
-                            "h": float(f.size.height),
-                        }
-                        item["windowFrame"] = {
+                    if f and layout_w > 0 and layout_h > 0:
+                        item["frame"] = f
+                        item["windowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
+                    if wf:
+                        item["rawWindowFrame"] = {
                             "x": float(wf.origin.x),
                             "y": float(wf.origin.y),
                             "w": float(wf.size.width),
