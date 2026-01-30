@@ -336,12 +336,21 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
 
     final packetLossRate = _calculatePacketLossRate(_videoInfo);
     final rtt = ((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0);
+    // WebRTC inbound-rtp fps is the *decoded/render* fps on the receiver.
     final fps = (_videoInfo['fps'] as num).toStringAsFixed(1);
     final bitrateKbps = computeBitrateKbpsFromSamples(
       previous: _previousVideoInfo,
       current: _videoInfo,
     );
     final bitrateText = bitrateKbps > 0 ? '${bitrateKbps}kbps' : '--kbps';
+
+    final host = WebrtcService.hostEncodingStatus.value;
+    final hostMode = host?['mode']?.toString();
+    final hostFps = host?['targetFps'];
+    final hostBitrate = host?['targetBitrateKbps'];
+    final hostText = (hostMode != null || hostFps != null || hostBitrate != null)
+        ? ' | 编码${hostMode ?? "--"} ${hostFps ?? "--"}fps ${hostBitrate ?? "--"}kbps'
+        : '';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -350,7 +359,7 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        '${_videoInfo['width']}×${_videoInfo['height']} | ${fps}fps | $bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms',
+        '${_videoInfo['width']}×${_videoInfo['height']} | 解码${fps}fps | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
         style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
       ),
     );

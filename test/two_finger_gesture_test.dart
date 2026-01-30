@@ -86,6 +86,32 @@ void main() {
       expect(newContentCenter.dx, closeTo(oldContentCenter.dx, 0.0001));
       expect(newContentCenter.dy, closeTo(oldContentCenter.dy, 0.0001));
     });
+
+    test('keeps top-left content stable when anchored', () {
+      const oldSize = Size(1000, 800);
+      const newSize = Size(1000, 600);
+      const scale = 2.5;
+      const oldOffset = Offset(40, -12);
+
+      final newOffset = adjustVideoOffsetForRenderSizeChangeAnchoredTopLeft(
+        oldSize: oldSize,
+        newSize: newSize,
+        scale: scale,
+        oldOffset: oldOffset,
+      );
+
+      Offset contentAtViewTopLeft({
+        required Size size,
+        required Offset offset,
+      }) {
+        final center = Offset(size.width / 2, size.height / 2);
+        return center + (Offset.zero - center - offset) / scale;
+      }
+
+      final oldContent = contentAtViewTopLeft(size: oldSize, offset: oldOffset);
+      final newContent = contentAtViewTopLeft(size: newSize, offset: newOffset);
+      expect(newContent.dx, closeTo(oldContent.dx, 0.0001));
+      expect(newContent.dy, closeTo(oldContent.dy, 0.0001));
+    });
   });
 }
-

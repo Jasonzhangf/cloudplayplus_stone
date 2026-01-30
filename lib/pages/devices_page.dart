@@ -1,5 +1,9 @@
 import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:cloudplayplus/entities/device.dart';
+import 'package:cloudplayplus/entities/session.dart';
+import 'package:cloudplayplus/global_settings/streaming_settings.dart';
+import 'package:cloudplayplus/services/quick_target_service.dart';
+import 'package:cloudplayplus/services/shared_preferences_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
@@ -17,6 +21,7 @@ class DevicesPage extends StatefulWidget {
 
 class _DevicesPageState extends State<DevicesPage> {
   List<Device> _deviceList = defaultDeviceList;
+  bool _autoRestoreAttempted = false;
 
   // 更新列表的方法
   void _updateList(devicelist) {
@@ -63,6 +68,7 @@ class _DevicesPageState extends State<DevicesPage> {
         _deviceList.add(deviceInstance);
       }
     });
+    _maybeAutoRestoreLastConnection();
   }
 
   _registerCallbacks() {
@@ -224,6 +230,84 @@ class _DevicesPageState extends State<DevicesPage> {
       ),
       masterViewFraction: 0.26,
     );
+  }
+
+  Device? _findLastConnectedDeviceCandidate() {
+    final quick = QuickTargetService.instance;
+    final hint = quick.lastDeviceHint.value;
+
+    // Prefer exact hint match (device name + type, optionally nickname) to handle
+    // reconnection where connection_id changes.
+    if (hint != null) {
+      final candidates = _deviceList.where((d) => d.uid > 0).toList();
+      Device? best;
+      for (final d in candidates) {
+        if (d.devicename == hint.devicename && d.devicetype == hint.devicetype) {
+          if (hint.nickname.isNotEmpty && d.nickname == hint.nickname) {
+            return d;
+          }
+          best ??= d;
+        }
+      }
+      if (best != null) return best;
+    }
+
+    final uid = quick.lastDeviceUid.value;
+    if (uid != null && uid > 0) {
+      // Fallback: if only one device is available for this uid, restore it.
+      final matches = _deviceList.where((d) => d.uid == uid && d.uid > 0).toList();
+      if (matches.length == 1) return matches.first;
+      // If multiple, pick the first connective one.
+      for (final d in matches) {
+        if (d.connective) return d;
+      }
+    }
+    return null;
+  }
+
+  void _maybeAutoRestoreLastConnection() {
+    if (_autoRestoreAttempted) return;
+    if (!AppPlatform.isMobile) return;
+    if (_deviceList.isEmpty) return;
+    // Avoid restoring during initial placeholder state.
+    if (_deviceList.length == 1 && _deviceList.first.uid == 0) return;
+
+    final target = _findLastConnectedDeviceCandidate();
+    if (target == null) return;
+
+    _autoRestoreAttempted = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+
+      // Bring user back to the streaming page and reuse local saved password.
+      final savedPassword =
+          SharedPreferencesManager.getString('connectPassword_${target.uid}') ??
+              '';
+      if (savedPassword.isNotEmpty) {
+        StreamingSettings.connectPassword = savedPassword;
+      }
+
+      // Ensure detail page is visible so user returns to the last streaming page.
+      try {
+        Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
+        );
+      } catch (_) {}
+
+      try {
+        // Best-effort: start streaming if not already connected.
+        final state = StreamingManager.getStreamingStateto(target);
+        if (state != StreamingSessionConnectionState.connected &&
+            state != StreamingSessionConnectionState.connceting &&
+            state != StreamingSessionConnectionState.requestSent &&
+            state != StreamingSessionConnectionState.offerSent &&
+            state != StreamingSessionConnectionState.answerSent &&
+            state != StreamingSessionConnectionState.answerReceived) {
+          await Future<void>.delayed(const Duration(milliseconds: 60));
+          StreamingManager.startStreaming(target);
+        }
+      } catch (_) {}
+    });
   }
 
   Widget _buildListTile(

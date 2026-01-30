@@ -1,6 +1,34 @@
 part of streaming_session;
 
 extension _StreamingSessionAdaptiveEncoding on StreamingSession {
+  void _sendHostEncodingStatus({
+    required String mode,
+    int? fullBitrateKbps,
+    String? reason,
+  }) {
+    final dc = channel;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    try {
+      dc.send(
+        RTCDataChannelMessage(
+          jsonEncode({
+            'hostEncodingStatus': {
+              'mode': mode,
+              'targetFps': streamSettings?.framerate,
+              'targetBitrateKbps': streamSettings?.bitrate,
+              'fullBitrateKbps': fullBitrateKbps,
+              'renderFpsEwma': _adaptiveRenderFpsEwma,
+              'lossEwma': _adaptiveLossEwma,
+              'rttEwmaMs': _adaptiveRttEwma,
+              if (reason != null) 'reason': reason,
+              'ts': DateTime.now().millisecondsSinceEpoch,
+            }
+          }),
+        ),
+      );
+    } catch (_) {}
+  }
+
   Future<DesktopCapturerSource?> _findCurrentCaptureSource() async {
     if (streamSettings?.desktopSourceId == null ||
         streamSettings!.desktopSourceId!.isEmpty) {
@@ -94,12 +122,17 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
 
     final curBitrate = (streamSettings!.bitrate ?? full).clamp(250, 20000);
 
+    // Always report current host-side target to the controller for debug UI.
+    _sendHostEncodingStatus(mode: mode, fullBitrateKbps: full);
+
     // High quality mode: keep bitrate at baseline (area-scaled), only adjust FPS down.
     if (mode == 'highquality' || mode == 'high_quality' || mode == 'hq') {
       if (curBitrate != full && (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = full;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log('[adaptive] HQ bitrate -> ${full}kbps');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'hq-bitrate');
         await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-hq-bitrate');
       }
       // HQ still allowed to adjust FPS down when receiver cannot keep up AND loss is low.
@@ -115,6 +148,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         _adaptiveLastFpsChangeAtMs = nowMs;
         InputDebugService.instance.log(
             '[adaptive] HQ fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${(_adaptiveLossEwma * 100).toStringAsFixed(2)}%)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'hq-fps-down');
         await _reapplyCurrentCaptureForAdaptiveFps();
       }
       return;
@@ -126,6 +161,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       streamSettings!.bitrate = full;
       _adaptiveLastBitrateChangeAtMs = nowMs;
       InputDebugService.instance.log('[adaptive] init bitrate -> ${full}kbps');
+      _sendHostEncodingStatus(
+          mode: mode, fullBitrateKbps: full, reason: 'init-bitrate');
       await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-init-bitrate');
     }
 
@@ -149,6 +186,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
             '[adaptive] net bad (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'net-bad-bitrate-down');
         await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-down');
         return;
       }
@@ -165,6 +204,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         _adaptiveLastFpsChangeAtMs = nowMs;
         InputDebugService.instance.log(
             '[adaptive] net bad fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)})');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'net-bad-fps-down');
         await _reapplyCurrentCaptureForAdaptiveFps();
       }
       return;
@@ -180,6 +221,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
             '[adaptive] net good (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'net-good-bitrate-up');
         await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-up');
         // Let bitrate settle before increasing fps.
         return;
@@ -204,6 +247,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
           _adaptiveLastFpsChangeAtMs = nowMs;
           InputDebugService.instance.log(
               '[adaptive] fps up $currentFps -> $targetFps (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${lossPct.toStringAsFixed(2)}%)');
+          _sendHostEncodingStatus(
+              mode: mode, fullBitrateKbps: full, reason: 'fps-up');
           await _reapplyCurrentCaptureForAdaptiveFps();
           return;
         }
@@ -226,6 +271,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         _adaptiveLastFpsChangeAtMs = nowMs;
         InputDebugService.instance.log(
             '[adaptive] device bound fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${lossPct.toStringAsFixed(2)}%)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'device-bound-fps-down');
         await _reapplyCurrentCaptureForAdaptiveFps();
         return;
       }

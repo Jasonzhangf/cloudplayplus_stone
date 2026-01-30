@@ -5,8 +5,54 @@ import 'package:cloudplayplus/models/stream_mode.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/shared_preferences_manager.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+
+@immutable
+class LastConnectedDeviceHint {
+  final int uid;
+  final String nickname;
+  final String devicename;
+  final String devicetype;
+
+  const LastConnectedDeviceHint({
+    required this.uid,
+    required this.nickname,
+    required this.devicename,
+    required this.devicetype,
+  });
+
+  Map<String, dynamic> toJson() => {
+        'uid': uid,
+        'nickname': nickname,
+        'devicename': devicename,
+        'devicetype': devicetype,
+      };
+
+  static LastConnectedDeviceHint? tryParse(String raw) {
+    if (raw.trim().isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+      final uidAny = decoded['uid'];
+      final uid = uidAny is num ? uidAny.toInt() : int.tryParse('$uidAny');
+      if (uid == null || uid <= 0) return null;
+      final nickname = (decoded['nickname'] ?? '').toString();
+      final devicename = (decoded['devicename'] ?? '').toString();
+      final devicetype = (decoded['devicetype'] ?? '').toString();
+      if (devicename.isEmpty || devicetype.isEmpty) return null;
+      return LastConnectedDeviceHint(
+        uid: uid,
+        nickname: nickname,
+        devicename: devicename,
+        devicetype: devicetype,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+}
 
 class QuickTargetService {
   QuickTargetService._();
@@ -16,12 +62,15 @@ class QuickTargetService {
   static const _kMode = 'controller.streamMode.v1';
   static const _kLastTarget = 'controller.lastTarget.v1';
   static const _kLastDeviceUid = 'controller.lastDeviceUid.v1';
+  static const _kLastDeviceHint = 'controller.lastDeviceHint.v1';
   static const _kFavorites = 'controller.favorites.v1';
   static const _kToolbarOpacity = 'controller.toolbarOpacity.v1';
   static const _kRestoreOnConnect = 'controller.restoreLastTargetOnConnect.v1';
 
   final ValueNotifier<StreamMode> mode = ValueNotifier(StreamMode.desktop);
   final ValueNotifier<int?> lastDeviceUid = ValueNotifier<int?>(null);
+  final ValueNotifier<LastConnectedDeviceHint?> lastDeviceHint =
+      ValueNotifier<LastConnectedDeviceHint?>(null);
   final ValueNotifier<QuickStreamTarget?> lastTarget =
       ValueNotifier<QuickStreamTarget?>(null);
   final ValueNotifier<List<QuickStreamTarget?>> favorites =
@@ -40,6 +89,11 @@ class QuickTargetService {
     final lastUid = SharedPreferencesManager.getInt(_kLastDeviceUid);
     if (lastUid != null && lastUid > 0) {
       lastDeviceUid.value = lastUid;
+    }
+
+    final hintRaw = SharedPreferencesManager.getString(_kLastDeviceHint);
+    if (hintRaw != null && hintRaw.isNotEmpty) {
+      lastDeviceHint.value = LastConnectedDeviceHint.tryParse(hintRaw);
     }
 
     final lastRaw = SharedPreferencesManager.getString(_kLastTarget);
@@ -87,6 +141,24 @@ class QuickTargetService {
     if (uid <= 0) return;
     lastDeviceUid.value = uid;
     await SharedPreferencesManager.setInt(_kLastDeviceUid, uid);
+  }
+
+  Future<void> setLastDeviceHint({
+    required int uid,
+    required String nickname,
+    required String devicename,
+    required String devicetype,
+  }) async {
+    if (uid <= 0) return;
+    final hint = LastConnectedDeviceHint(
+      uid: uid,
+      nickname: nickname,
+      devicename: devicename,
+      devicetype: devicetype,
+    );
+    lastDeviceHint.value = hint;
+    await setLastDeviceUid(uid);
+    await SharedPreferencesManager.setString(_kLastDeviceHint, jsonEncode(hint.toJson()));
   }
 
   Future<void> recordLastConnectedFromCaptureTargetChanged({
@@ -152,6 +224,14 @@ class QuickTargetService {
     }
 
     if (target == null) return;
+    lastTarget.value = target;
+    await SharedPreferencesManager.setString(_kLastTarget, target.encode());
+    await setMode(target.mode);
+  }
+
+  /// Remember target selection locally even when the DataChannel is not ready yet.
+  /// The session will apply it automatically once the channel opens.
+  Future<void> rememberTarget(QuickStreamTarget target) async {
     lastTarget.value = target;
     await SharedPreferencesManager.setString(_kLastTarget, target.encode());
     await setMode(target.mode);

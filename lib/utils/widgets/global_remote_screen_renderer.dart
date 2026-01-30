@@ -1190,12 +1190,21 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 return ValueListenableBuilder<double>(
                   valueListenable: ScreenController.bottomOverlayInset,
                   builder: (context, overlayInset, child) {
-                    final bottomPad = keyboardInset + overlayInset;
-                    return Stack(
-                      children: [
-                        Padding(
-                          padding: EdgeInsets.only(bottom: bottomPad),
-                          child: Stack(
+                    return LayoutBuilder(
+                      builder: (context, constraints) {
+                        final rawBottomPad = keyboardInset + overlayInset;
+                        // Overflow protection: never shrink the video area to 0.
+                        // Keep a minimal viewport so rendering/mapping remains stable.
+                        const minViewport = 120.0;
+                        final maxPad = (constraints.maxHeight - minViewport)
+                            .clamp(0.0, constraints.maxHeight);
+                        final bottomPad =
+                            rawBottomPad.clamp(0.0, maxPad).toDouble();
+                        return Stack(
+                          children: [
+                            Padding(
+                              padding: EdgeInsets.only(bottom: bottomPad),
+                              child: Stack(
                             children: [
                               const Positioned.fill(
                                 child: ColoredBox(color: Colors.black),
@@ -1541,13 +1550,28 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                                     if (_videoScale != 1.0 ||
                                                         _videoOffset !=
                                                             Offset.zero) {
-                                                      final adjusted =
-                                                          adjustVideoOffsetForRenderSizeChange(
-                                                        oldSize: oldSize,
-                                                        newSize: newSize,
-                                                        scale: _videoScale,
-                                                        oldOffset: _videoOffset,
-                                                      );
+                                                      final heightOnlyResize =
+                                                          (oldSize.width -
+                                                                      newSize.width)
+                                                                  .abs() <=
+                                                              0.5 &&
+                                                              (oldSize.height -
+                                                                          newSize.height)
+                                                                      .abs() >
+                                                                  0.5;
+                                                      final adjusted = heightOnlyResize
+                                                          ? adjustVideoOffsetForRenderSizeChangeAnchoredTopLeft(
+                                                              oldSize: oldSize,
+                                                              newSize: newSize,
+                                                              scale: _videoScale,
+                                                              oldOffset: _videoOffset,
+                                                            )
+                                                          : adjustVideoOffsetForRenderSizeChange(
+                                                              oldSize: oldSize,
+                                                              newSize: newSize,
+                                                              scale: _videoScale,
+                                                              oldOffset: _videoOffset,
+                                                            );
                                                       if (adjusted !=
                                                           _videoOffset) {
                                                         setState(() {
@@ -1683,6 +1707,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                         const EnhancedKeyboardPanel(), // 放置在Stack中，独立于Listener和RawKeyboardListener,
                         const FloatingShortcutButton(),
                       ],
+                    );
+                      },
                     );
                   },
                 );

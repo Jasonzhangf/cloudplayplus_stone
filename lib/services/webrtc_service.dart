@@ -14,6 +14,9 @@ class WebrtcService {
   static String currentDeviceId = "";
   static final ValueNotifier<int> videoRevision = ValueNotifier<int>(0);
   static final ValueNotifier<int> audioRevision = ValueNotifier<int>(0);
+  // Host-side encoder target state (bitrate/fps/mode), reported via DataChannel.
+  static final ValueNotifier<Map<String, dynamic>?> hostEncodingStatus =
+      ValueNotifier<Map<String, dynamic>?>(null);
 
   //seems we dont need to actually render audio on page.
   /*static Function(bool)? audioStateChanged;*/

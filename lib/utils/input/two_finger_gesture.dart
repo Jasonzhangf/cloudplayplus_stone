@@ -75,3 +75,23 @@ Offset adjustVideoOffsetForRenderSizeChange({
   return oldOffset + (deltaCenter * scale);
 }
 
+/// Adjust video translation when the render box size changes while keeping the
+/// content under the viewport *top-left* stable.
+///
+/// This is often a better UX when the view height changes due to bottom insets
+/// (system IME / toolbars): we want the scene to be "pushed up" without
+/// re-centering the zoomed content.
+@visibleForTesting
+Offset adjustVideoOffsetForRenderSizeChangeAnchoredTopLeft({
+  required Size oldSize,
+  required Size newSize,
+  required double scale,
+  required Offset oldOffset,
+}) {
+  if (scale == 0) return oldOffset;
+  final deltaCenter = Offset(
+    (newSize.width - oldSize.width) / 2,
+    (newSize.height - oldSize.height) / 2,
+  );
+  return oldOffset + (deltaCenter * (scale - 1));
+}

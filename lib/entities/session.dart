@@ -1338,6 +1338,13 @@ class StreamingSession {
             );
           }
           break;
+        case "hostEncodingStatus":
+          final payload = data['hostEncodingStatus'];
+          if (payload is Map) {
+            WebrtcService.hostEncodingStatus.value =
+                payload.map((k, v) => MapEntry(k.toString(), v));
+          }
+          break;
         case "inputInjectResult":
           final payload = data['inputInjectResult'];
           if (payload is Map) {

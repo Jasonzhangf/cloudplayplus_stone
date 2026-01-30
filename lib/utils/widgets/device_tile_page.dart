@@ -291,7 +291,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
               // Persist last connected device for next-start UX.
               try {
                 unawaited(
-                  QuickTargetService.instance.setLastDeviceUid(widget.device.uid),
+                  QuickTargetService.instance.setLastDeviceHint(
+                    uid: widget.device.uid,
+                    nickname: widget.device.nickname,
+                    devicename: widget.device.devicename,
+                    devicetype: widget.device.devicetype,
+                  ),
                 );
               } catch (_) {}
               if (WebrtcService

@@ -37,6 +37,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   bool _useSystemKeyboard = true;
   bool _systemKeyboardWanted = false;
   bool _lastImeVisible = false;
+  int _lastImeShowAtMs = 0;
   static const _arrowIds = {
     'arrow-left',
     'arrow-right',
@@ -300,24 +301,25 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       if (!mounted) return;
       _maybeSyncShortcutPlatformWithRemoteHost();
       final imeVisible = bottomInset > 0;
-      if (_lastImeVisible != imeVisible) {
-        _lastImeVisible = imeVisible;
-        if (!imeVisible && _systemKeyboardWanted) {
-          // User dismissed the IME (e.g. back button). Keep it dismissed until
-          // they explicitly tap the keyboard button again.
-          _systemKeyboardWanted = false;
-          ScreenController.setSystemImeActive(false);
-          if (_systemKeyboardFocusNode.hasFocus) {
-            FocusScope.of(context).unfocus();
+      _lastImeVisible = imeVisible;
+
+      // System IME must be fully manual:
+      // - only show/hide when user taps the keyboard button
+      // - do NOT auto-dismiss when user taps the remote screen
+      if (_useSystemKeyboard && _systemKeyboardWanted) {
+        ScreenController.setSystemImeActive(true);
+        if (!_systemKeyboardFocusNode.hasFocus) {
+          FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+        }
+        // Some Android IMEs may hide when focus briefly changes; keep it stable.
+        // Throttle to avoid spamming platform channels.
+        if (!imeVisible) {
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          if (nowMs - _lastImeShowAtMs >= 350) {
+            _lastImeShowAtMs = nowMs;
+            SystemChannels.textInput.invokeMethod('TextInput.show');
           }
         }
-      }
-      // If the user explicitly wants system IME and we don't have focus, restore focus,
-      // but avoid forcing `TextInput.show` repeatedly.
-      if (_useSystemKeyboard &&
-          _systemKeyboardWanted &&
-          !_systemKeyboardFocusNode.hasFocus) {
-        FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
       }
       // Keep this roughly in sync with the toolbar height to lift the remote video.
       final inset = _isPanelVisible ? 86.0 : 0.0;
@@ -540,7 +542,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       shortcuts:
           _settings.shortcuts.where((s) => !_arrowIds.contains(s.id)).toList(),
     );
-    final channel = WebrtcService.currentRenderingSession?.channel;
+    final session = WebrtcService.currentRenderingSession;
+    final channel = session?.channel;
+    final hasSession = session != null;
     final channelOpen = channel != null &&
         channel.state == RTCDataChannelState.RTCDataChannelOpen;
 
@@ -573,7 +577,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   key: const Key('shortcutPanelStreamControls'),
                   height: 32,
                   child: _StreamControlRow(
-                    enabled: channelOpen,
+                    enabled: hasSession,
                     onPickMode: () => _showStreamModePicker(context, channel),
                     onPickTarget: () => _openTargetPicker(context),
                     onPickModeAndTarget: () => _showStreamModePicker(
@@ -699,6 +703,13 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
     if (!mounted) return;
     if (picked == StreamMode.desktop) {
+      await _quick.rememberTarget(
+        const QuickStreamTarget(
+          mode: StreamMode.desktop,
+          id: 'screen',
+          label: '整个桌面',
+        ),
+      );
       if (channel != null &&
           channel.state == RTCDataChannelState.RTCDataChannelOpen) {
         await _quick.applyTarget(
@@ -709,6 +720,15 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
             label: '整个桌面',
           ),
         );
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('连接未就绪：已记录为“桌面”，连接完成后会自动切换'),
+              duration: Duration(seconds: 2),
+            ),
+          );
+        }
       }
       return;
     }
@@ -725,8 +745,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
   Future<void> _applyQuickTarget(QuickStreamTarget target) async {
     final channel = WebrtcService.currentRenderingSession?.channel;
+    // Always remember locally so we can apply once the DataChannel opens.
+    await _quick.rememberTarget(target);
+
     if (channel == null ||
         channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('连接未就绪：已记录目标，连接完成后会自动切换'),
+          duration: Duration(seconds: 2),
+        ),
+      );
       return;
     }
     await _quick.applyTarget(channel, target);
