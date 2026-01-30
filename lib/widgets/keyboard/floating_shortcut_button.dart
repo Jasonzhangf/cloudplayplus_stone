@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../../models/shortcut.dart';
 import '../../models/quick_stream_target.dart';
@@ -525,6 +526,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                           Expanded(
                             child: SingleChildScrollView(
                               scrollDirection: Axis.horizontal,
+                              dragStartBehavior: DragStartBehavior.down,
                               physics: const BouncingScrollPhysics(),
                               child: Row(
                                 mainAxisSize: MainAxisSize.min,
@@ -546,6 +548,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                                     padding: EdgeInsets.zero,
                                     scrollable: false,
                                   ),
+                                  // Allow the last shortcut to be fully visible while scrolling.
+                                  const SizedBox(width: 16),
                                 ],
                               ),
                             ),
