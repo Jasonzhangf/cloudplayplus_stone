@@ -26,14 +26,7 @@ class _DevicesPageState extends State<DevicesPage> {
   Future<void> _waitForWebSocketConnected({
     Duration timeout = const Duration(seconds: 6),
   }) async {
-    final deadline = DateTime.now().add(timeout);
-    while (DateTime.now().isBefore(deadline)) {
-      if (WebSocketService.connectionState ==
-          WebSocketConnectionState.connected) {
-        return;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
+    await WebSocketService.waitUntilReady(timeout: timeout);
   }
 
   // 更新列表的方法

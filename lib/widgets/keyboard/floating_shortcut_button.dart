@@ -744,7 +744,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 
   Future<void> _applyQuickTarget(QuickStreamTarget target) async {
-    final channel = WebrtcService.currentRenderingSession?.channel;
+    final channel = WebrtcService.activeDataChannel;
     // Always remember locally so we can apply once the DataChannel opens.
     await _quick.rememberTarget(target);
 
@@ -1242,7 +1242,7 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
   @override
   Widget build(BuildContext context) {
     final debug = InputDebugService.instance;
-    final channel = WebrtcService.currentRenderingSession?.channel;
+    final channel = WebrtcService.activeDataChannel;
     final channelOpen = channel != null &&
         channel.state == RTCDataChannelState.RTCDataChannelOpen;
     return Container(

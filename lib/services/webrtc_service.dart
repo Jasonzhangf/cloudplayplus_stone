@@ -18,6 +18,24 @@ class WebrtcService {
   static final ValueNotifier<Map<String, dynamic>?> hostEncodingStatus =
       ValueNotifier<Map<String, dynamic>?>(null);
 
+  // DataChannel can exist even before we receive the first video track. Some UI
+  // flows (target switching / iterm2 panel selection) rely on it. Keep a
+  // resilient getter to avoid "currentRenderingSession is null" edge cases
+  // during reconnect or device id changes.
+  static RTCDataChannel? get activeDataChannel {
+    final s = currentRenderingSession;
+    if (s?.channel != null) return s!.channel;
+    final id = currentDeviceId;
+    if (id.isNotEmpty) {
+      final ss = StreamingManager.sessions[id];
+      if (ss?.channel != null) return ss!.channel;
+    }
+    if (StreamingManager.sessions.length == 1) {
+      return StreamingManager.sessions.values.first.channel;
+    }
+    return null;
+  }
+
   //seems we dont need to actually render audio on page.
   /*static Function(bool)? audioStateChanged;*/
 

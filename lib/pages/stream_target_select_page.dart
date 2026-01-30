@@ -22,8 +22,7 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   final RemoteWindowService _windows = RemoteWindowService.instance;
   final RemoteIterm2Service _iterm2 = RemoteIterm2Service.instance;
 
-  RTCDataChannel? get _channel =>
-      WebrtcService.currentRenderingSession?.channel;
+  RTCDataChannel? get _channel => WebrtcService.activeDataChannel;
 
   bool get _channelOpen =>
       _channel != null &&

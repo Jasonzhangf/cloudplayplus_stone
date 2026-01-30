@@ -368,6 +368,11 @@ class StreamingSession {
           } catch (_) {}
         }
       }
+      // Ensure WebSocket handshake completed (received `connection_info`) before
+      // requesting a remote session; otherwise the request may be ignored on cold start.
+      await WebSocketService.waitUntilReady(
+        timeout: const Duration(seconds: 6),
+      );
       WebSocketService.send('requestRemoteControl', {
         'target_uid': ApplicationInfo.user.uid,
         'target_connectionid': controlled.websocketSessionid,

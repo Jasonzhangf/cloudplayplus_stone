@@ -161,14 +161,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     } catch (_) {}
 
     // Wait for WS ready; otherwise requestRemoteControl is dropped.
-    final deadline = DateTime.now().add(const Duration(seconds: 6));
-    while (DateTime.now().isBefore(deadline)) {
-      if (WebSocketService.connectionState ==
-          WebSocketConnectionState.connected) {
-        break;
-      }
-      await Future<void>.delayed(const Duration(milliseconds: 200));
-    }
+    await WebSocketService.waitUntilReady(timeout: const Duration(seconds: 6));
 
     // Give device list a moment to refresh (connection id may change).
     await Future<void>.delayed(const Duration(milliseconds: 600));

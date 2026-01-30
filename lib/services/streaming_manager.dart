@@ -25,6 +25,12 @@ class StreamingManager {
     }
     session.startRequest();
     sessions[target.websocketSessionid] = session;
+
+    // Make the newly started session the active one immediately. This avoids
+    // UI paths (e.g. setCaptureTarget / iTerm2 panel selection) failing when
+    // currentRenderingSession isn't set yet (before the first video track arrives).
+    WebrtcService.currentDeviceId = target.websocketSessionid;
+    WebrtcService.currentRenderingSession = session;
   }
 
 /* TODO: 错误密码返回通知到对方的逻辑太麻烦 并且容易被攻击 以后处理
@@ -49,6 +55,10 @@ class StreamingManager {
       WebrtcService.removeStream(target.websocketSessionid);
     } else {
       VLOG0("No session found with sessionId: $target.websocketSessionid");
+    }
+    if (WebrtcService.currentDeviceId == target.websocketSessionid) {
+      WebrtcService.currentDeviceId = "";
+      WebrtcService.currentRenderingSession = null;
     }
     if (sessions.isEmpty) {
       //TODO(Haichao:fix ConcurrentModificationError when sometimes disconnecting)

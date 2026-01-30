@@ -41,10 +41,49 @@ class WebSocketService {
 
   static WebSocketConnectionState connectionState =
       WebSocketConnectionState.none;
+  // "ready" means we have received `connection_info` from server and updated our
+  // connection_id/user info. Some requests (e.g. requestRemoteControl) can be
+  // dropped if sent before this handshake completes.
+  static final ValueNotifier<bool> ready = ValueNotifier<bool>(false);
+  static Completer<void> _readyCompleter = Completer<void>();
 
   static Function(dynamic list)? onDeviceListchanged;
 
   static bool should_be_connected = false;
+
+  static void _resetReady() {
+    ready.value = false;
+    _readyCompleter = Completer<void>();
+  }
+
+  static void _markReady() {
+    if (ready.value) return;
+    ready.value = true;
+    if (!_readyCompleter.isCompleted) {
+      _readyCompleter.complete();
+    }
+  }
+
+  static Future<void> waitUntilReady({
+    Duration timeout = const Duration(seconds: 6),
+  }) async {
+    if (ready.value) return;
+    try {
+      await _readyCompleter.future.timeout(timeout);
+    } catch (_) {
+      // Best-effort: do not throw on timeout to avoid blocking user actions.
+    }
+  }
+
+  @visibleForTesting
+  static void debugResetReadyForTest() {
+    _resetReady();
+  }
+
+  @visibleForTesting
+  static void debugMarkReadyForTest() {
+    _markReady();
+  }
 
   static void init() async {
     should_be_connected = true;
@@ -53,6 +92,7 @@ class WebSocketService {
       VLOG0('[WebSocketService] init: already connecting, returning.');
       return;
     }
+    _resetReady();
     String initialBaseUrl = _baseUrl;
     if (DevelopSettings.useLocalServer) {
       if (AppPlatform.isAndroid) {
@@ -131,11 +171,21 @@ class WebSocketService {
 
     _socket?.onClose = (code, message) async {
       VLOG0('[WebSocketService] onClose: WebSocket closed (code: $code, message: $message).');
+      int ownerId = 0;
+      String ownerNickname = '';
+      String selfConnectionId = '';
+      try {
+        ownerId = ApplicationInfo.user.uid;
+        ownerNickname = ApplicationInfo.user.nickname;
+      } catch (_) {}
+      try {
+        selfConnectionId = ApplicationInfo.thisDevice.websocketSessionid;
+      } catch (_) {}
       onDeviceListchanged?.call([
         {
-          'owner_id': ApplicationInfo.user.uid,
-          'owner_nickname': ApplicationInfo.user.nickname,
-          'connection_id': ApplicationInfo.thisDevice.websocketSessionid,
+          'owner_id': ownerId,
+          'owner_nickname': ownerNickname,
+          'connection_id': selfConnectionId,
           'device_type': 'Web',
           'device_name': '重连中',
           'connective': false,
@@ -181,6 +231,7 @@ class WebSocketService {
     should_be_connected = true;
     _socket?.close();
     _socket = null;
+    _resetReady();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _stopHeartbeat();
@@ -191,6 +242,7 @@ class WebSocketService {
     should_be_connected = false;
     _socket?.close();
     _socket = null;
+    _resetReady();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
     _stopHeartbeat();
@@ -224,6 +276,7 @@ class WebSocketService {
               websocketSessionid: AppStateService.websocketSessionid!,
               connective: ApplicationInfo.connectable,
               screencount: ApplicationInfo.screenCount));
+          _markReady();
         }
       case 'connected_devices':
         {
@@ -279,6 +332,7 @@ class WebSocketService {
 
   static void onConnected() {
     connectionState = WebSocketConnectionState.connected;
+    // Not "ready" yet until we get `connection_info`.
     //connected and waiting for our connection uuid.
     /*send('newconnection', {
       'devicename': ApplicationInfo.deviceName,
@@ -347,5 +401,6 @@ class WebSocketService {
 
   static void onDisConnected() {
     connectionState = WebSocketConnectionState.disconnected;
+    _resetReady();
   }
 }
