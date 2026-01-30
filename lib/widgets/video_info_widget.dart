@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../services/webrtc_service.dart';
 import '../controller/screen_controller.dart';
@@ -330,6 +331,11 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
     final packetLossRate = _calculatePacketLossRate(_videoInfo);
     final rtt = ((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0);
     final fps = (_videoInfo['fps'] as num).toStringAsFixed(1);
+    final bitrateKbps = computeBitrateKbpsFromSamples(
+      previous: _previousVideoInfo,
+      current: _videoInfo,
+    );
+    final bitrateText = bitrateKbps > 0 ? '${bitrateKbps}kbps' : '--kbps';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -338,7 +344,7 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        '${_videoInfo['width']}×${_videoInfo['height']} | ${fps}fps | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms',
+        '${_videoInfo['width']}×${_videoInfo['height']} | ${fps}fps | $bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms',
         style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
       ),
     );
@@ -375,6 +381,7 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
     'width': 0,
     'height': 0,
     'fps': 0.0,
+    'sampleAtMs': DateTime.now().millisecondsSinceEpoch,
     'decoderImplementation': '未知',
     'isHardwareDecoder': false,
     'codecType': '未知',
@@ -482,6 +489,25 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
   }
   
   return videoInfo;
+}
+
+@visibleForTesting
+int computeBitrateKbpsFromSamples({
+  required Map<String, dynamic> previous,
+  required Map<String, dynamic> current,
+}) {
+  if (previous.isEmpty) return 0;
+  final prevBytes = (previous['bytesReceived'] as num?)?.toInt() ?? 0;
+  final curBytes = (current['bytesReceived'] as num?)?.toInt() ?? 0;
+  final prevAt = (previous['sampleAtMs'] as num?)?.toInt() ?? 0;
+  final curAt = (current['sampleAtMs'] as num?)?.toInt() ?? 0;
+  if (prevBytes <= 0 || curBytes <= prevBytes) return 0;
+  if (prevAt <= 0 || curAt <= prevAt) return 0;
+
+  final dtMs = (curAt - prevAt).clamp(1, 60000);
+  final deltaBytes = curBytes - prevBytes;
+  final kbps = (deltaBytes * 8 * 1000 / dtMs / 1000).round(); // bits/ms -> kbps
+  return kbps.clamp(0, 200000);
 }
 
 /// 判断是否为硬件解码器

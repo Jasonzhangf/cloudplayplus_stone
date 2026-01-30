@@ -10,12 +10,14 @@ import '../../pages/remote_window_select_page.dart';
 import '../../pages/stream_target_select_page.dart';
 import '../../services/quick_target_service.dart';
 import '../../services/shortcut_service.dart';
+import '../../services/shared_preferences_manager.dart';
 import '../../services/webrtc_service.dart';
 import '../../services/stream_monkey_service.dart';
 import '../../controller/screen_controller.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/system_keyboard_delta.dart';
 import '../../utils/input/input_debug.dart';
+import '../../global_settings/streaming_settings.dart';
 
 /// 悬浮快捷键按钮 - 固定在右下角
 /// 点击打开快捷键面板和快捷键条
@@ -1122,11 +1124,13 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
   bool _monkeyIncludeScreen = true;
   bool _monkeyIncludeWindows = true;
   bool _monkeyIncludeIterm2 = true;
+  late EncodingMode _encodingMode;
 
   @override
   void initState() {
     super.initState();
     _settings = widget.settings;
+    _encodingMode = StreamingSettings.encodingMode;
   }
 
   void _updateSettings(ShortcutSettings s) {
@@ -1241,6 +1245,39 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                       onChanged: (v) => ScreenController.setShowVideoInfo(v),
                     );
                   },
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: const Text('编码模式'),
+                  subtitle: const Text('高质量：按分辨率固定码率；动态：根据帧率/RTT自适应；关闭：不发送自适应反馈'),
+                  trailing: DropdownButtonHideUnderline(
+                    child: DropdownButton<EncodingMode>(
+                      value: _encodingMode,
+                      items: const [
+                        DropdownMenuItem(
+                          value: EncodingMode.highQuality,
+                          child: Text('高质量'),
+                        ),
+                        DropdownMenuItem(
+                          value: EncodingMode.dynamic,
+                          child: Text('动态'),
+                        ),
+                        DropdownMenuItem(
+                          value: EncodingMode.off,
+                          child: Text('关闭'),
+                        ),
+                      ],
+                      onChanged: (v) async {
+                        if (v == null) return;
+                        setState(() => _encodingMode = v);
+                        StreamingSettings.encodingMode = v;
+                        await SharedPreferencesManager.setInt(
+                          'encodingMode',
+                          v.index,
+                        );
+                      },
+                    ),
+                  ),
                 ),
                 Row(
                   children: [

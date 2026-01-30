@@ -11,6 +11,18 @@ enum TouchInputMode {
   mouse, // 2: 鼠标模式 - 绝对定位
 }
 
+/// Encoder control strategy (controller-side selection, host-side behavior).
+enum EncodingMode {
+  /// Prefer stable/high quality bitrate based on resolution (no dynamic downscale).
+  highQuality,
+
+  /// Adapt bitrate (and possibly capture FPS) to match render capability / RTT.
+  dynamic,
+
+  /// Disable adaptive feedback loop (manual bitrate/fps only).
+  off,
+}
+
 var officialStun1 = {
   'urls': "stun:stun.l.google.com:19302",
 };
@@ -60,6 +72,9 @@ class StreamingSettings {
   static bool switchCmdCtrl = false;
 
   static bool useClipBoard = true;
+
+  // Adaptive encoding mode (controller -> host feedback loop).
+  static EncodingMode encodingMode = EncodingMode.dynamic;
 
   // 触控模式：0=触摸(默认), 1=触控板, 2=鼠标
   // 仅对触摸输入控制Windows设备有效
@@ -187,6 +202,14 @@ class StreamingSettings {
         SharedPreferencesManager.getBool('touchpadTwoFingerScrollInvert') ??
             false;
 
+    final encodingModeRaw =
+        SharedPreferencesManager.getInt('encodingMode') ?? EncodingMode.dynamic.index;
+    if (encodingModeRaw >= 0 && encodingModeRaw < EncodingMode.values.length) {
+      encodingMode = EncodingMode.values[encodingModeRaw];
+    } else {
+      encodingMode = EncodingMode.dynamic;
+    }
+
     if (AppPlatform.isDeskTop) {
       useClipBoard = SharedPreferencesManager.getBool('useClipBoard') ?? true;
     } else {
@@ -228,6 +251,7 @@ class StreamingSettings {
       'streamMode': streamMode,
       'customScreenWidth': customScreenWidth,
       'customScreenHeight': customScreenHeight,
+      'encodingMode': encodingMode.name,
     };
     data.removeWhere((key, value) => value == null);
     return data;
@@ -262,6 +286,7 @@ class StreamedSettings {
   int? streamMode;
   int? customScreenWidth;
   int? customScreenHeight;
+  String? encodingMode;
 
   // For window streaming.
   String? desktopSourceId;
@@ -291,6 +316,7 @@ class StreamedSettings {
       ..streamMode = settings['streamMode'] as int?
       ..customScreenWidth = settings['customScreenWidth'] as int?
       ..customScreenHeight = settings['customScreenHeight'] as int?
+      ..encodingMode = settings['encodingMode']?.toString()
       ..captureTargetType = settings['captureTargetType'] as String?
       ..iterm2SessionId = settings['iterm2SessionId'] as String?
       ..cropRect = (settings['cropRect'] is Map)

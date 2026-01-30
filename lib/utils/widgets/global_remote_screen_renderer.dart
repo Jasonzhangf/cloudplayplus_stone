@@ -111,6 +111,83 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   int _adaptivePrevFramesDecoded = 0;
   int _adaptivePrevAtMs = 0;
 
+  void _startAdaptiveEncodingFeedbackLoop() {
+    _adaptiveEncodingTimer?.cancel();
+    _adaptiveEncodingTimer =
+        Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (!mounted) return;
+      if (StreamingSettings.encodingMode == EncodingMode.off) return;
+
+      final session = WebrtcService.currentRenderingSession;
+      if (session?.pc == null) return;
+      final channel = session?.channel;
+      if (channel == null ||
+          channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+        return;
+      }
+
+      try {
+        final stats = await session!.pc!.getStats();
+
+        double fps = 0.0;
+        int width = 0;
+        int height = 0;
+        int framesDecoded = 0;
+        double rttMs = 0.0;
+
+        for (final report in stats) {
+          if (report.type == 'inbound-rtp') {
+            final values = Map<String, dynamic>.from(report.values);
+            if (values['kind'] == 'video' || values['mediaType'] == 'video') {
+              fps = (values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
+              width = (values['frameWidth'] as num?)?.toInt() ?? 0;
+              height = (values['frameHeight'] as num?)?.toInt() ?? 0;
+              framesDecoded = (values['framesDecoded'] as num?)?.toInt() ?? 0;
+            }
+          } else if (report.type == 'candidate-pair') {
+            final values = Map<String, dynamic>.from(report.values);
+            if (values['state'] == 'succeeded' && values['nominated'] == true) {
+              final rtt =
+                  (values['currentRoundTripTime'] as num?)?.toDouble() ?? 0.0;
+              rttMs = rtt * 1000.0;
+            }
+          }
+        }
+
+        // Fallback FPS from framesDecoded delta when framesPerSecond is missing.
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        if (fps <= 0 && framesDecoded > 0) {
+          if (_adaptivePrevAtMs > 0 && _adaptivePrevFramesDecoded > 0) {
+            final dtMs = (nowMs - _adaptivePrevAtMs).clamp(1, 60000);
+            final df =
+                (framesDecoded - _adaptivePrevFramesDecoded).clamp(0, 1000000);
+            fps = df * 1000.0 / dtMs;
+          }
+          _adaptivePrevAtMs = nowMs;
+          _adaptivePrevFramesDecoded = framesDecoded;
+        }
+
+        if (fps <= 0 || width <= 0 || height <= 0) return;
+
+        channel.send(
+          RTCDataChannelMessage(
+            jsonEncode({
+              'adaptiveEncoding': {
+                'renderFps': fps,
+                'width': width,
+                'height': height,
+                'rttMs': rttMs,
+                'mode': StreamingSettings.encodingMode.name,
+              }
+            }),
+          ),
+        );
+      } catch (_) {
+        // Ignore stats / send failures.
+      }
+    });
+  }
+
   Widget _buildNoVideoPlaceholder([String? message]) {
     return Container(
       color: Colors.black,
@@ -1022,6 +1099,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         }
       });
     }
+    _startAdaptiveEncodingFeedbackLoop();
     initcount++;
   }
 
@@ -1631,6 +1709,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
   @override
   void dispose() {
+    _adaptiveEncodingTimer?.cancel();
     focusNode.dispose();
     if (AppPlatform.isWindows) {
       HardwareSimulator.putImmersiveModeEnabled(false);

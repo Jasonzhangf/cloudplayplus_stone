@@ -2288,6 +2288,13 @@ iterm2.run_until_complete(main)
     if (pc == null || streamSettings == null) return;
     if (payload is! Map) return;
 
+    final modeAny = payload['mode'] ?? payload['encodingMode'];
+    final mode = (modeAny?.toString().trim().toLowerCase() ?? '').isEmpty
+        ? (streamSettings?.encodingMode?.toString().trim().toLowerCase() ?? '')
+        : modeAny.toString().trim().toLowerCase();
+    // Allow controller to disable adaptive feedback loop.
+    if (mode == 'off') return;
+
     final renderFpsAny = payload['renderFps'];
     final widthAny = payload['width'];
     final heightAny = payload['height'];
@@ -2332,6 +2339,18 @@ iterm2.run_until_complete(main)
         ? computedFull
         : ((_adaptiveFullBitrateKbps! * 0.70) + (computedFull * 0.30)).round();
     final full = _adaptiveFullBitrateKbps!;
+
+    // High quality mode: keep bitrate at baseline (area-scaled), only adjust FPS down.
+    if (mode == 'highquality' || mode == 'high_quality' || mode == 'hq') {
+      final cur = (streamSettings!.bitrate ?? full).clamp(250, 20000);
+      if (cur != full && (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
+        streamSettings!.bitrate = full;
+        _adaptiveLastBitrateChangeAtMs = nowMs;
+        InputDebugService.instance.log('[adaptive] HQ bitrate -> ${full}kbps');
+        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-hq-bitrate');
+      }
+      return;
+    }
 
     // If we came from legacy huge bitrate settings (e.g. 80000kbps), reset to a sane baseline.
     final curBitrate = streamSettings!.bitrate;
