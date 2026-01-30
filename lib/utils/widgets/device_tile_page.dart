@@ -444,8 +444,12 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
             }
           });
           return SingleChildScrollView(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 24.0, vertical: 32.0),
+            padding: EdgeInsets.fromLTRB(
+              24.0,
+              32.0,
+              24.0,
+              32.0 + MediaQuery.of(context).viewInsets.bottom,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[

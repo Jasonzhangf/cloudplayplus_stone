@@ -38,6 +38,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   bool _systemKeyboardWanted = false;
   bool _lastImeVisible = false;
   int _lastImeShowAtMs = 0;
+  int _forceImeShowUntilMs = 0;
   static const _arrowIds = {
     'arrow-left',
     'arrow-right',
@@ -78,6 +79,10 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   @override
   void dispose() {
     ScreenController.setShortcutOverlayHeight(0);
+    ScreenController.setSystemImeActive(false);
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
     _systemKeyboardFocusNode.dispose();
     _systemKeyboardController.dispose();
     _lastSystemKeyboardValue = '';
@@ -299,7 +304,13 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     // Keep this in sync with the panel height/offset below.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      final route = ModalRoute.of(context);
+      // When a modal (bottom sheet/dialog) is on top, don't steal focus or force-show IME.
+      if (route != null && route.isCurrent != true) {
+        return;
+      }
       _maybeSyncShortcutPlatformWithRemoteHost();
+      final prevImeVisible = _lastImeVisible;
       final imeVisible = bottomInset > 0;
       _lastImeVisible = imeVisible;
 
@@ -311,13 +322,24 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         if (!_systemKeyboardFocusNode.hasFocus) {
           FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
         }
-        // Some Android IMEs may hide when focus briefly changes; keep it stable.
-        // Throttle to avoid spamming platform channels.
-        if (!imeVisible) {
-          final nowMs = DateTime.now().millisecondsSinceEpoch;
-          if (nowMs - _lastImeShowAtMs >= 350) {
-            _lastImeShowAtMs = nowMs;
-            SystemChannels.textInput.invokeMethod('TextInput.show');
+        // If user dismisses IME via system UI, respect it and stop forcing.
+        if (prevImeVisible && !imeVisible) {
+          setState(() => _systemKeyboardWanted = false);
+          ScreenController.setSystemImeActive(false);
+          FocusScope.of(context).unfocus();
+          try {
+            SystemChannels.textInput.invokeMethod('TextInput.hide');
+          } catch (_) {}
+        } else {
+          // Some Android IMEs may hide when focus briefly changes; keep it stable
+          // only shortly after user explicitly requested it.
+          if (!imeVisible) {
+            final nowMs = DateTime.now().millisecondsSinceEpoch;
+            if (nowMs <= _forceImeShowUntilMs &&
+                nowMs - _lastImeShowAtMs >= 350) {
+              _lastImeShowAtMs = nowMs;
+              SystemChannels.textInput.invokeMethod('TextInput.show');
+            }
           }
         }
       }
@@ -391,14 +413,17 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     if (_useSystemKeyboard) {
                       // Toggle IME visibility (manual only).
                       final want = !_systemKeyboardWanted;
+                      final nowMs = DateTime.now().millisecondsSinceEpoch;
                       setState(() => _systemKeyboardWanted = want);
                       ScreenController.setSystemImeActive(want);
                       if (want) {
+                        _forceImeShowUntilMs = nowMs + 1600;
                         ScreenController.setShowVirtualKeyboard(false);
                         FocusScope.of(context)
                             .requestFocus(_systemKeyboardFocusNode);
                         SystemChannels.textInput.invokeMethod('TextInput.show');
                       } else {
+                        _forceImeShowUntilMs = 0;
                         SystemChannels.textInput.invokeMethod('TextInput.hide');
                         FocusScope.of(context).unfocus();
                       }
@@ -409,6 +434,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       _useSystemKeyboard = true;
                       _systemKeyboardWanted = true;
                     });
+                    _forceImeShowUntilMs =
+                        DateTime.now().millisecondsSinceEpoch + 1600;
                     ScreenController.setSystemImeActive(true);
                     ScreenController.setShowVirtualKeyboard(false);
                     FocusScope.of(context)
@@ -418,6 +445,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   onClose: () {
                     setState(() => _isPanelVisible = false);
                     _systemKeyboardWanted = false;
+                    _forceImeShowUntilMs = 0;
                     ScreenController.setSystemImeActive(false);
                     ScreenController.setShowVirtualKeyboard(false);
                     ScreenController.setShortcutOverlayHeight(0);
@@ -773,26 +801,63 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         if (current == null) return;
         final controller =
             TextEditingController(text: current.alias ?? current.label);
-        final alias = await showDialog<String>(
+        final alias = await showModalBottomSheet<String>(
           context: context,
+          isScrollControlled: true,
           builder: (context) {
-            return AlertDialog(
-              title: const Text('编辑名称'),
-              content: TextField(
-                controller: controller,
-                decoration: const InputDecoration(hintText: '显示名称'),
+            final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+            return AnimatedPadding(
+              duration: const Duration(milliseconds: 180),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(bottom: bottomInset),
+              child: SafeArea(
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '编辑名称',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: controller,
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          hintText: '显示名称（最多一行）',
+                          border: OutlineInputBorder(),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(context),
+                              child: const Text('取消'),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: ElevatedButton(
+                              onPressed: () =>
+                                  Navigator.pop(context, controller.text.trim()),
+                              child: const Text('保存'),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
               ),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
-                ),
-                ElevatedButton(
-                  onPressed: () =>
-                      Navigator.pop(context, controller.text.trim()),
-                  child: const Text('保存'),
-                ),
-              ],
             );
           },
         );
