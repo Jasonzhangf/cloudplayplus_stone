@@ -5,6 +5,26 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('two finger gesture decision', () {
+    test('prefer zoom when already zoomed in (mobile)', () {
+      // These values are below the default zoom px threshold (10px),
+      // but should be treated as zoom when already zoomed.
+      final prefer = shouldPreferZoom(
+        isMobile: true,
+        currentScale: 2.0,
+        cumulativeDistanceChangeRatio: 0.055,
+        cumulativeDistanceChangePx: 7.0,
+      );
+      expect(prefer, isTrue);
+
+      final notPrefer = shouldPreferZoom(
+        isMobile: true,
+        currentScale: 1.0,
+        cumulativeDistanceChangeRatio: 0.055,
+        cumulativeDistanceChangePx: 7.0,
+      );
+      expect(notPrefer, isFalse);
+    });
+
     test('prefers scroll when pinch change is small', () {
       final t = decideTwoFingerGestureType(
         isMobile: true,

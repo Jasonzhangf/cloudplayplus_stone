@@ -4,6 +4,26 @@ import 'package:flutter/foundation.dart';
 
 enum TwoFingerGestureType { undecided, zoom, scroll }
 
+/// Whether we should treat the two-finger gesture as zoom (pinch).
+///
+/// On mobile, when the view is already zoomed in, users often do small pinch
+/// adjustments to zoom back out. If we keep the same high thresholds, the
+/// gesture can be misclassified as scroll (due to center drift), making it hard
+/// to zoom out.
+@visibleForTesting
+bool shouldPreferZoom({
+  required bool isMobile,
+  required double currentScale,
+  required double cumulativeDistanceChangeRatio,
+  required double cumulativeDistanceChangePx,
+}) {
+  final zoomed = currentScale > 1.02;
+  final ratioThreshold = isMobile ? (zoomed ? 0.045 : 0.075) : 0.03;
+  final pxThreshold = isMobile ? (zoomed ? 6.0 : 10.0) : 6.0;
+  return cumulativeDistanceChangeRatio >= ratioThreshold &&
+      cumulativeDistanceChangePx >= pxThreshold;
+}
+
 @visibleForTesting
 TwoFingerGestureType decideTwoFingerGestureType({
   required bool isMobile,

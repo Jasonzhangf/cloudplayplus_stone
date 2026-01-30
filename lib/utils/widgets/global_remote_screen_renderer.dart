@@ -637,21 +637,50 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         final cumulativeCenterDeltaX = centerDelta.dx.abs();
         final cumulativeCenterDeltaY = centerDelta.dy.abs();
 
-        // Android 上双指容易出现轻微 pinch 抖动，导致误判为缩放；
-        _twoFingerGestureType = decideTwoFingerGestureType(
+        // Prefer zoom when already zoomed in, to make zoom-out easier.
+        if (shouldPreferZoom(
           isMobile: AppPlatform.isMobile,
+          currentScale: _videoScale,
           cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
           cumulativeDistanceChangePx: cumulativeDistanceChangePx,
-          cumulativeCenterMovement: cumulativeCenterMovement,
-          cumulativeCenterDeltaX: cumulativeCenterDeltaX,
-          cumulativeCenterDeltaY: cumulativeCenterDeltaY,
-        );
+        )) {
+          _twoFingerGestureType = TwoFingerGestureType.zoom;
+        } else {
+          // Android 上双指容易出现轻微 pinch 抖动，导致误判为缩放；
+          _twoFingerGestureType = decideTwoFingerGestureType(
+            isMobile: AppPlatform.isMobile,
+            cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
+            cumulativeDistanceChangePx: cumulativeDistanceChangePx,
+            cumulativeCenterMovement: cumulativeCenterMovement,
+            cumulativeCenterDeltaX: cumulativeCenterDeltaX,
+            cumulativeCenterDeltaY: cumulativeCenterDeltaY,
+          );
+        }
       }
 
       if (_twoFingerGestureType == TwoFingerGestureType.zoom) {
         _twoFingerScrollActivated = false;
         _handlePinchZoom(currentDistance / _lastPinchDistance!);
       } else if (_twoFingerGestureType == TwoFingerGestureType.scroll) {
+        // Allow switching from scroll -> zoom if the pinch becomes obvious later.
+        final cumulativeDistanceChangeRatio =
+            (currentDistance - _initialPinchDistance!).abs() /
+                _initialPinchDistance!;
+        final cumulativeDistanceChangePx =
+            (currentDistance - _initialPinchDistance!).abs();
+        if (shouldPreferZoom(
+          isMobile: AppPlatform.isMobile,
+          currentScale: _videoScale,
+          cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
+          cumulativeDistanceChangePx: cumulativeDistanceChangePx,
+        )) {
+          _twoFingerGestureType = TwoFingerGestureType.zoom;
+          _twoFingerScrollActivated = false;
+          _handlePinchZoom(currentDistance / _lastPinchDistance!);
+          _lastTouchpadPosition = center;
+          _lastPinchDistance = currentDistance;
+          return;
+        }
         double scrollDeltaX = center.dx - _lastTouchpadPosition!.dx;
         double scrollDeltaY = center.dy - _lastTouchpadPosition!.dy;
         final sinceStart = _twoFingerStartTime == null
