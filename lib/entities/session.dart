@@ -1,3 +1,5 @@
+library streaming_session;
+
 import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
@@ -33,9 +35,21 @@ import '../utils/rtc_utils.dart';
 import '../utils/input/input_trace.dart';
 import '../utils/input/input_debug.dart';
 import '../utils/iterm2/iterm2_crop.dart';
+import '../utils/iterm2/iterm2_activate_and_crop_python_script.dart';
+import '../utils/iterm2/iterm2_send_text_python_script.dart';
 import '../utils/iterm2/iterm2_sources_python_script.dart';
 import '../utils/adaptive_encoding/adaptive_encoding.dart';
 import 'messages.dart';
+
+part 'session/signaling.dart';
+part 'session/datachannel_router.dart';
+part 'session/capture/capture_switcher.dart';
+part 'session/capture/desktop_sources.dart';
+part 'session/capture/iterm2/iterm2_sources.dart';
+part 'session/capture/iterm2/iterm2_activate_and_crop.dart';
+part 'session/input/input_routing.dart';
+part 'session/adaptive/adaptive_encoding_feedback.dart';
+part 'session/debug/input_trace_hooks.dart';
 
 /*
 每个启动的app均有两个state controlstate是作为控制端的state hoststate是作为被控端的state
@@ -1173,7 +1187,7 @@ class StreamingSession {
           break;
         case "adaptiveEncoding":
           if (!AppPlatform.isDeskTop) break;
-          await _handleAdaptiveEncodingFeedback(data['adaptiveEncoding']);
+          await this._handleAdaptiveEncodingFeedback(data['adaptiveEncoding']);
           break;
         default:
           VLOG0("unhandled message from client.please debug");
@@ -1733,201 +1747,7 @@ class StreamingSession {
 
         const runner = HostCommandRunner();
         const timeout = Duration(seconds: 2);
-        const script = r'''
-import json
-import sys
-import time
-
-try:
-    import iterm2
-except Exception as e:
-    print(json.dumps({"error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
-    raise SystemExit(0)
-
-SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
-
-async def get_frame(obj):
-    try:
-        fn = getattr(obj, "async_get_frame", None)
-        if fn:
-            return await fn()
-    except Exception:
-        pass
-    try:
-        return obj.frame
-    except Exception:
-        return None
-
-def subtree_size(node):
-    try:
-        if isinstance(node, iterm2.session.Session):
-            f = node.frame
-            return float(f.size.width), float(f.size.height)
-        if isinstance(node, iterm2.session.Splitter):
-            if getattr(node, "_Splitter__vertical", False):
-                w = 0.0
-                h = 0.0
-                for c in node.children:
-                    cw, ch = subtree_size(c)
-                    w += cw
-                    if ch > h:
-                        h = ch
-                return w, h
-            else:
-                w = 0.0
-                h = 0.0
-                for c in node.children:
-                    cw, ch = subtree_size(c)
-                    if cw > w:
-                        w = cw
-                    h += ch
-                return w, h
-    except Exception:
-        pass
-    return 0.0, 0.0
-
-def node_bounds(node):
-    try:
-        if isinstance(node, iterm2.session.Session):
-            f = node.frame
-            x0 = float(f.origin.x)
-            y0 = float(f.origin.y)
-            x1 = x0 + float(f.size.width)
-            y1 = y0 + float(f.size.height)
-            return x0, y0, x1, y1
-        if isinstance(node, iterm2.session.Splitter):
-            xs = []
-            ys = []
-            xe = []
-            ye = []
-            for c in node.children:
-                b = node_bounds(c)
-                if b:
-                    xs.append(b[0]); ys.append(b[1]); xe.append(b[2]); ye.append(b[3])
-            if xs:
-                return min(xs), min(ys), max(xe), max(ye)
-    except Exception:
-        pass
-    return None
-
-def assign_layout_frames(node, ox, oy, out):
-    try:
-        if isinstance(node, iterm2.session.Session):
-            f = node.frame
-            out[node.session_id] = {
-                "x": ox + float(f.origin.x),
-                "y": oy + float(f.origin.y),
-                "w": float(f.size.width),
-                "h": float(f.size.height),
-            }
-            return
-        if isinstance(node, iterm2.session.Splitter):
-            vertical = getattr(node, "_Splitter__vertical", False)
-            mins = []
-            for c in node.children:
-                b = node_bounds(c)
-                if b:
-                    mins.append(round(b[0 if vertical else 1], 3))
-            distinct = len(set(mins)) if mins else 0
-            if vertical:
-                if distinct > 1:
-                    for c in node.children:
-                        assign_layout_frames(c, ox, oy, out)
-                else:
-                    x = ox
-                    for c in node.children:
-                        assign_layout_frames(c, x, oy, out)
-                        cw, _ = subtree_size(c)
-                        x += cw
-            else:
-                if distinct > 1:
-                    for c in node.children:
-                        assign_layout_frames(c, ox, oy, out)
-                else:
-                    y = oy
-                    for c in node.children:
-                        assign_layout_frames(c, ox, y, out)
-                        _, ch = subtree_size(c)
-                        y += ch
-    except Exception:
-        pass
-
-async def main(connection):
-    app = await iterm2.async_get_app(connection)
-    target = None
-    target_win = None
-    target_tab = None
-
-    for win in app.terminal_windows:
-        for tab in win.tabs:
-            for sess in tab.sessions:
-                if sess.session_id == SESSION_ID:
-                    target = sess
-                    target_win = win
-                    target_tab = tab
-                    break
-            if target:
-                break
-        if target:
-            break
-
-    if not target:
-        print(json.dumps({"error": f"session not found: {SESSION_ID}"}, ensure_ascii=False))
-        return
-
-    # best-effort: activate session/tab/window
-    try:
-        await target.async_activate()
-    except Exception:
-        pass
-    try:
-        fn = getattr(target_tab, "async_select", None)
-        if fn:
-            await fn()
-    except Exception:
-        pass
-    try:
-        await target_win.async_activate()
-    except Exception:
-        pass
-
-    try:
-        time.sleep(0.05)
-    except Exception:
-        pass
-
-    layout_frames = {}
-    layout_w = 0.0
-    layout_h = 0.0
-    try:
-        root = target_tab.root
-        layout_w, layout_h = subtree_size(root)
-        assign_layout_frames(root, 0.0, 0.0, layout_frames)
-    except Exception:
-        layout_frames = {}
-        layout_w = 0.0
-        layout_h = 0.0
-
-    out = {
-        "sessionId": target.session_id,
-        "windowId": getattr(target_win, "window_id", None),
-    }
-
-    try:
-        f = layout_frames.get(target.session_id)
-        wf = await get_frame(target_win)
-        if f and layout_w > 0 and layout_h > 0:
-            out["frame"] = f
-            out["windowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
-        if wf:
-            out["rawWindowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
-    except Exception:
-        pass
-
-    print(json.dumps(out, ensure_ascii=False))
-
-iterm2.run_until_complete(main)
-''';
+        const script = iterm2ActivateAndCropPythonScript;
 
         HostCommandResult meta;
         try {
@@ -2241,7 +2061,7 @@ iterm2.run_until_complete(main)
         ?.toString();
     if (capType == 'iterm2' && cropRectNormalized != null) {
       unawaited(
-          _maybeRenegotiateAfterCaptureSwitch(reason: 'iterm2-crop-switch'));
+          this._maybeRenegotiateAfterCaptureSwitch(reason: 'iterm2-crop-switch'));
     }
 
     channel?.send(
@@ -2259,203 +2079,6 @@ iterm2.run_until_complete(main)
         }),
       ),
     );
-  }
-
-  Future<DesktopCapturerSource?> _findCurrentCaptureSource() async {
-    if (streamSettings?.desktopSourceId == null ||
-        streamSettings!.desktopSourceId!.isEmpty) {
-      return null;
-    }
-    final sourceType = (streamSettings?.sourceType ?? '').toString().toLowerCase();
-    final types =
-        sourceType == 'screen' ? [SourceType.Screen] : [SourceType.Window];
-    final sources = await desktopCapturer.getSources(types: types);
-    for (final s in sources) {
-      if (s.id == streamSettings!.desktopSourceId) return s;
-    }
-    return sources.isNotEmpty ? sources.first : null;
-  }
-
-  Future<void> _reapplyCurrentCaptureForAdaptiveFps() async {
-    final source = await _findCurrentCaptureSource();
-    if (source == null) return;
-    final captureType =
-        (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
-            ?.toString()
-            .trim();
-    final extra = <String, dynamic>{
-      'captureTargetType': captureType,
-      'iterm2SessionId': streamSettings?.iterm2SessionId,
-      'cropRect': streamSettings?.cropRect,
-    };
-    final cropRect = streamSettings?.cropRect;
-    await _switchCaptureToSource(
-      source,
-      extraCaptureTarget: extra,
-      cropRectNormalized: cropRect,
-      minWidthConstraint:
-          captureType == 'iterm2' ? _iterm2MinWidthConstraint : null,
-      minHeightConstraint:
-          captureType == 'iterm2' ? _iterm2MinHeightConstraint : null,
-    );
-  }
-
-  Future<void> _handleAdaptiveEncodingFeedback(dynamic payload) async {
-    if (selfSessionType != SelfSessionType.controlled) return;
-    if (!AppPlatform.isDeskTop) return;
-    if (pc == null || streamSettings == null) return;
-    if (payload is! Map) return;
-
-    final modeAny = payload['mode'] ?? payload['encodingMode'];
-    final mode = (modeAny?.toString().trim().toLowerCase() ?? '').isEmpty
-        ? (streamSettings?.encodingMode?.toString().trim().toLowerCase() ?? '')
-        : modeAny.toString().trim().toLowerCase();
-    // Allow controller to disable adaptive feedback loop.
-    if (mode == 'off') return;
-
-    final renderFpsAny = payload['renderFps'];
-    final widthAny = payload['width'];
-    final heightAny = payload['height'];
-    final rttAny = payload['rttMs'];
-
-    final renderFps =
-        (renderFpsAny is num) ? renderFpsAny.toDouble() : 0.0;
-    final width = (widthAny is num) ? widthAny.toInt() : 0;
-    final height = (heightAny is num) ? heightAny.toInt() : 0;
-    final rttMs = (rttAny is num) ? rttAny.toDouble() : 0.0;
-
-    if (renderFps <= 0 || width <= 0 || height <= 0) return;
-
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    // Smooth to avoid oscillations.
-    _adaptiveRenderFpsEwma = _adaptiveRenderFpsEwma <= 0
-        ? renderFps
-        : (_adaptiveRenderFpsEwma * 0.65 + renderFps * 0.35);
-    _adaptiveRttEwma =
-        _adaptiveRttEwma <= 0 ? rttMs : (_adaptiveRttEwma * 0.80 + rttMs * 0.20);
-
-    final currentFps = streamSettings!.framerate ?? 30;
-    final wantFps = pickAdaptiveTargetFps(
-      renderFps: _adaptiveRenderFpsEwma,
-      currentFps: currentFps,
-      minFps: 15,
-    );
-
-    // Step 1: align capture FPS down to avoid encoding above render capability.
-    if (wantFps < currentFps && (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
-      streamSettings!.framerate = wantFps;
-      _adaptiveLastFpsChangeAtMs = nowMs;
-      InputDebugService.instance.log(
-          '[adaptive] fps $currentFps -> $wantFps (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms)');
-      await _reapplyCurrentCaptureForAdaptiveFps();
-    }
-
-    // Compute full bitrate baseline from rendered resolution.
-    final computedFull =
-        computeHighQualityBitrateKbps(width: width, height: height);
-    _adaptiveFullBitrateKbps = _adaptiveFullBitrateKbps == null
-        ? computedFull
-        : ((_adaptiveFullBitrateKbps! * 0.70) + (computedFull * 0.30)).round();
-    final full = _adaptiveFullBitrateKbps!;
-
-    // High quality mode: keep bitrate at baseline (area-scaled), only adjust FPS down.
-    if (mode == 'highquality' || mode == 'high_quality' || mode == 'hq') {
-      final cur = (streamSettings!.bitrate ?? full).clamp(250, 20000);
-      if (cur != full && (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
-        streamSettings!.bitrate = full;
-        _adaptiveLastBitrateChangeAtMs = nowMs;
-        InputDebugService.instance.log('[adaptive] HQ bitrate -> ${full}kbps');
-        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-hq-bitrate');
-      }
-      return;
-    }
-
-    // If we came from legacy huge bitrate settings (e.g. 80000kbps), reset to a sane baseline.
-    final curBitrate = streamSettings!.bitrate;
-    if ((curBitrate == null || curBitrate > 50000) &&
-        (nowMs - _adaptiveLastBitrateChangeAtMs) > 3000) {
-      streamSettings!.bitrate = full;
-      _adaptiveLastBitrateChangeAtMs = nowMs;
-      InputDebugService.instance.log('[adaptive] init bitrate -> ${full}kbps');
-      await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-init-bitrate');
-      return;
-    }
-
-    // Step 2: if already at 15fps but still struggling, adjust bitrate dynamically.
-    final encFps = streamSettings!.framerate ?? currentFps;
-    if (encFps <= 15) {
-      final target = computeDynamicBitrateKbps(
-        fullBitrateKbps: full,
-        renderFps: _adaptiveRenderFpsEwma,
-        targetFps: encFps <= 0 ? 15 : encFps,
-        rttMs: _adaptiveRttEwma,
-      );
-      final cur = (streamSettings!.bitrate ?? full).clamp(250, 20000);
-      final diffRatio = (target - cur).abs() / cur;
-      if (diffRatio >= 0.12 && (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
-        streamSettings!.bitrate = target;
-        _adaptiveLastBitrateChangeAtMs = nowMs;
-        InputDebugService.instance
-            .log('[adaptive] bitrate $cur -> ${target}kbps (full=$full)');
-        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate');
-      }
-    }
-  }
-
-  Future<void> _maybeRenegotiateAfterCaptureSwitch({
-    required String reason,
-  }) async {
-    // On some Android decoders/hardware pipelines, switching capture resolution/crop
-    // (especially for iTerm2 panel capture) can result in transient green/black frames
-    // until a fresh keyframe/codec config arrives. Renegotiation is a heavy but reliable
-    // way to force the sender to emit fresh SPS/PPS.
-    if (selfSessionType != SelfSessionType.controlled) return;
-    if (pc == null) return;
-    if (streamSettings == null) return;
-    if (streamSettings?.bitrate == null) return;
-
-    final nowMs = DateTime.now().millisecondsSinceEpoch;
-    if ((nowMs - _lastRenegotiateAtMs) < 1500) return;
-    _lastRenegotiateAtMs = nowMs;
-
-    // Only renegotiate when signaling state is stable; otherwise we risk "glare".
-    if (pc!.signalingState != RTCSignalingState.RTCSignalingStateStable) {
-      return;
-    }
-
-    try {
-      RTCSessionDescription sdp = await pc!.createOffer({
-        'mandatory': {
-          'OfferToReceiveAudio': false,
-          'OfferToReceiveVideo': true,
-        },
-        'optional': [],
-      });
-
-      // Keep codec preference consistent with initial offer.
-      if (AppPlatform.isMacos) {
-        final ct = (controller.devicetype).toString().toLowerCase();
-        final isMobileController =
-            ct == 'android' || ct == 'ios' || ct == 'androidtv';
-        final prefer = isMobileController ? 'h264' : 'av1';
-        setPreferredCodec(sdp, audio: 'opus', video: prefer);
-      }
-
-      await pc!.setLocalDescription(_fixSdp(sdp, streamSettings!.bitrate!));
-
-      WebSocketService.send('offer', {
-        'source_connectionid': controlled.websocketSessionid,
-        'target_uid': controller.uid,
-        'target_connectionid': controller.websocketSessionid,
-        'description': {'sdp': sdp.sdp, 'type': sdp.type},
-        'bitrate': streamSettings!.bitrate,
-        'reason': reason,
-      });
-      InputDebugService.instance.log('HOST renegotiate sent reason=$reason');
-    } catch (e) {
-      InputDebugService.instance
-          .log('HOST renegotiate failed reason=$reason err=$e');
-    }
   }
 
   Future<bool> _handleIterm2TtyKeyEvent({
@@ -2625,61 +2248,7 @@ iterm2.run_until_complete(main)
     const runner = HostCommandRunner();
     const timeout = Duration(seconds: 2);
 
-    const script = r'''
-import base64
-import json
-import sys
-
-try:
-    import iterm2
-except Exception as e:
-    print(json.dumps({"ok": False, "error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
-    raise SystemExit(0)
-
-SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
-TEXT_B64 = sys.argv[2] if len(sys.argv) > 2 else ""
-
-def decode_text(b64: str) -> str:
-    try:
-        raw = base64.b64decode(b64.encode("ascii"), validate=False)
-        return raw.decode("utf-8", errors="replace")
-    except Exception:
-        return ""
-
-text = decode_text(TEXT_B64)
-if not text:
-    raise SystemExit(0)
-
-# TTY compatibility:
-# - Enter is usually carriage return.
-# - Backspace is usually DEL (0x7f).
-text = text.replace("\r\n", "\r").replace("\n", "\r")
-text = text.replace("\b", "\x7f")
-
-async def main(connection):
-    app = await iterm2.async_get_app(connection)
-    target = None
-    for win in app.terminal_windows:
-        for tab in win.tabs:
-            for sess in tab.sessions:
-                if sess.session_id == SESSION_ID:
-                    target = sess
-                    break
-            if target:
-                break
-        if target:
-            break
-    if not target:
-        print(json.dumps({"ok": False, "error": f"session not found: {SESSION_ID}"}, ensure_ascii=False))
-        return
-    try:
-        await target.async_send_text(text)
-        print(json.dumps({"ok": True}, ensure_ascii=False))
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": str(e)}, ensure_ascii=False))
-
-iterm2.run_until_complete(main)
-''';
+    const script = iterm2SendTextPythonScript;
 
     try {
       final res = await runner

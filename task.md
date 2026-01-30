@@ -518,6 +518,146 @@ WindowSource 结构（由 `getDesktopSources` 返回）：
 
 ### 6.3 UI 列表与切换（P0）
 
+---
+
+# 代码重构（模块化 + 单一实现 + CLI）任务（待审核）
+
+> 目标：把当前“可运行但耦合严重”的实现，重构为 **模块化/可测试/可通过 CLI 独立验证** 的架构；UI 仅做编排与渲染；核心逻辑只保留唯一实现。
+>
+> 执行原则：**先写清计划与验收（本章节）→ 再动代码 → 每一步必须有验证证据 → 不盲测。**
+
+## 一、强制架构原则（必须遵守）
+
+1. **唯一实现（Single Source of Truth）**
+   - 同一能力（例如：裁切计算、手势判定、输入注入路由、码率/帧率自适应策略、消息 schema 解析）在项目中只能有一处实现。
+   - UI、API、脚本、测试均不得复制逻辑；只能调用 core blocks。
+
+2. **层次职责**
+   - `lib/widgets/**`、`lib/pages/**`：只做 UI 渲染 + 轻量状态（ValueNotifier/Provider 等）+ 调用 blocks；**禁止**写业务算法/协议解析/输入注入策略。
+   - `lib/services/**`：Facade / API 调度层；只负责生命周期、依赖注入、与 blocks 交互；**禁止**写算法与判定策略。
+   - `lib/core/**`：blocks/use-cases（业务逻辑唯一实现）+ ports（平台依赖抽象）+ CLI 命令编排。
+   - `bin/**`：唯一 CLI 入口（参数解析 + 调用 `lib/core/cli`），不写业务逻辑。
+
+3. **验证优先**
+   - 每一步提交前必须通过：`flutter analyze` + `flutter test`
+   - 涉及串流/裁切/切换的改动必须跑 verify（见“验证栈”）。
+   - 不允许把临时构建物、测试产物、截图、设备日志等提交进 git。
+
+## 二、本轮重构范围（按优先级）
+
+### P0（必须完成）
+1. `lib/entities/session.dart`（连接/消息路由/切换/裁切/输入注入/自适应等耦合点）
+2. `lib/utils/widgets/global_remote_screen_renderer.dart`（渲染 + 手势 + 坐标 + 发送策略混杂）
+3. `lib/widgets/keyboard/floating_shortcut_button.dart`（UI/IME/快捷键发送/设置面板耦合）
+4. 建立 `lib/core/**` + `bin/**` CLI 骨架，并用单测固定行为
+
+### P1（后续）
+1. `lib/settings_screen.dart`
+
+### P2（后续）
+1. `lib/utils/widgets/virtual_gamepad/control_management_screen.dart`
+
+## 三、目标目录结构（重构后）
+
+> 说明：本轮优先落地骨架与 P0 拆分；P1/P2 在后续迭代完成。
+
+```
+bin/
+  cloudplayplus_cli.dart                    # 唯一 CLI 入口
+
+lib/
+  core/
+    cli/
+      cloudplayplus_cli.dart                # CLI 命令注册/分发（不含业务逻辑）
+    blocks/                                 # 业务逻辑唯一实现（可被 CLI/API/UI 调用）
+      ...                                   # 逐步迁移：gesture/encoding/input/capture/iterm2
+    ports/                                  # IO/平台抽象（ProcessRunner/Clock/Logger/SettingsStore 等）
+
+  app/                                      # 应用编排（调用 blocks；不写算法）
+    ...
+
+  entities/
+    session.dart                            # 作为 library，拆成多个 part 文件
+    session/
+      ...                                   # signaling/router/capture/iterm2/input/adaptive/debug 等
+
+  widgets/                                  # 纯 UI（渲染与交互）；逻辑下沉 blocks
+    ...
+```
+
+## 四、验证栈（强制）
+
+### 4.1 必跑（每个步骤）
+```bash
+flutter analyze
+flutter test
+```
+
+> 备注：当前仓库存在大量历史 analyzer issue（warning/info）。本轮重构的门槛是：
+> - `flutter analyze` **不得出现 error**；
+> - 不新增与本次改动相关的 analyzer 问题（尤其是新文件/改动文件）。
+
+### 4.2 串流/裁切/切换相关改动必跑（macOS 可用时）
+```bash
+dart run scripts/verify/verify_webrtc_loopback_content_app.dart
+dart run scripts/verify/verify_iterm2_panels_loopback.dart
+```
+
+> 证据要求：verify 会生成 `build/verify/*` 截图/日志（本地留档即可，不入 git）。
+
+## 五、执行任务清单（先 P0，再 P1/P2）
+
+> 状态说明：
+> - [ ] 未开始
+> - [~] 进行中
+> - [x] 已完成
+
+### 5.0 基础骨架（core + CLI）（P0）
+- [x] 创建目录：`lib/core/cli/` `lib/core/blocks/` `lib/core/ports/` `lib/app/`
+  - 验收：目录存在；不影响 app 构建
+- [x] 新增 CLI 入口：`bin/cloudplayplus_cli.dart`
+  - 验收：`dart run bin/cloudplayplus_cli.dart --help` 退出码为 0
+- [x] CLI 核心：`lib/core/cli/cloudplayplus_cli.dart`
+  - 目标签名：`int runCloudPlayPlusCli(List<String> args, {required IOSink out, required IOSink err});`
+  - 验收：可在单测中调用；输出稳定
+- [x] 新增单测：`test/cli_smoke_test.dart`
+  - 验收：`--help` 输出包含命令说明；测试全绿
+
+### 5.1 拆分 `lib/entities/session.dart`（P0）
+> 第一步用 `part` 拆文件，确保行为不变（不引入跨库 import 问题）。
+
+- [x] 将 `lib/entities/session.dart` 声明为 library：`library streaming_session;`
+- [~] 新建 `lib/entities/session/**` 并按职责拆成 part 文件（先拆文件，再逐步下沉 blocks）
+  - `signaling.dart`：offer/answer/candidate + 连接状态推进
+  - `datachannel_router.dart`：datachannel message 分发（含 setCaptureTarget / desktopSourcesRequest / iterm2SourcesRequest / adaptiveEncoding 等）
+  - `capture/capture_switcher.dart`：`_switchCaptureToSource` 与 capture start/stop
+  - `capture/desktop_sources.dart`：desktop sources 枚举与 payload 组装（含 thumbnail）
+  - `capture/iterm2/iterm2_sources.dart`：iTerm2 panels 查询/解析/返回（保留现有脚本调用）
+  - `capture/iterm2/iterm2_activate_and_crop.dart`：iTerm2 激活 + cropRectNorm 选择与应用
+  - `input/input_routing.dart`：键盘/文本输入路由（含 TTY 偏好写入）
+  - `adaptive/adaptive_encoding_feedback.dart`：自适应反馈处理与 FPS 重应用
+  - `debug/input_trace_hooks.dart`：录制/回放 hook（调用 `lib/utils/input/input_trace.dart`）
+- [ ] 验收：`flutter test` 与 `flutter analyze` 全绿；verify 脚本仍可跑通（本地）
+- [ ] 验收：`flutter test` 全绿；`flutter analyze` 无 error 且不新增本轮相关问题；verify 脚本仍可跑通（本地）
+
+### 5.2 拆分 `global_remote_screen_renderer`（P0）
+- [ ] 将 `lib/utils/widgets/global_remote_screen_renderer.dart` 拆为 `lib/widgets/remote_screen/**`
+  - `global_remote_screen_renderer.dart`：Widget 壳（仅渲染/编排）
+  - `remote_screen_gestures.dart`：手势采集与事件分发（不写算法）
+  - `remote_screen_transform.dart`：变换状态存储（不写算法）
+- [ ] 将手势判定/去抖/策略迁移到 `lib/core/blocks/gestures/**`（唯一实现）
+- [ ] 验收：现有 gesture/scroll 相关测试全绿（`two_finger_*`、`scroll_anchor_packet_test.dart`）
+
+### 5.3 拆分 `floating_shortcut_button.dart`（P0）
+- [ ] 拆为 `lib/widgets/keyboard/floating_shortcut_button/**` 小组件文件
+- [ ] 将 IME 手动唤起/保持策略迁移到 `lib/core/blocks/ime/**`
+- [ ] 将组合键发送策略迁移到 `lib/core/blocks/input/**`（唯一实现）
+- [ ] 验收：`system_ime_manual_toggle_test.dart`、`shortcut_panel_top_right_actions_position_test.dart` 全绿
+
+### 5.4 Settings 与 VirtualGamepad（P1/P2）
+- [ ] P1：拆分 `lib/settings_screen.dart` 至 `lib/pages/settings/**`
+- [ ] P2：拆分 `lib/utils/widgets/virtual_gamepad/control_management_screen.dart` 至 `lib/widgets/virtual_gamepad/editor/**` + `lib/core/blocks/virtual_gamepad/**`
+
 - Grid/List 展示：thumbnail + title + app icon
 - 切换策略：Stop → Start（稳定优先）
 - 选中态：高亮 + 右侧预览
