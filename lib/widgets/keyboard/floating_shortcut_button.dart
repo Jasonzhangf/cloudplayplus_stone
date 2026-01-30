@@ -64,6 +64,19 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     _systemKeyboardFocusNode.addListener(() {
       InputDebugService.instance
           .log('IME focus=${_systemKeyboardFocusNode.hasFocus}');
+      // Keep the hidden text client focused while the panel is open.
+      // Otherwise many Android IMEs will only deliver KeyEvent-based keys
+      // (e.g. Space) and stop delivering committed text (including Chinese).
+      if (!_systemKeyboardFocusNode.hasFocus &&
+          _isPanelVisible &&
+          _useSystemKeyboard) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          if (!_isPanelVisible || !_useSystemKeyboard) return;
+          FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+          SystemChannels.textInput.invokeMethod('TextInput.show');
+        });
+      }
     });
     _initShortcuts();
   }
@@ -533,7 +546,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                                     padding: EdgeInsets.zero,
                                     scrollable: false,
                                   ),
-                                  const SizedBox(width: 72),
                                 ],
                               ),
                             ),
@@ -545,9 +557,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ),
                 Positioned(
                   right: 6,
-                  // Avoid overlapping the top stream-mode row ("模式/窗口/选择").
-                  // Place actions aligned with the shortcut row instead.
-                  top: 38,
+                  // Keep these actions out of the shortcut row hit area.
+                  top: 6,
                   child: _TopRightActions(
                     useSystemKeyboard: _useSystemKeyboard,
                     onToggleKeyboard: () {
@@ -785,8 +796,11 @@ class _StreamControlRow extends StatelessWidget {
     final quick = QuickTargetService.instance;
     return SizedBox(
       height: 32,
-      child: Row(
-        children: [
+      child: Padding(
+        // Leave room for the top-right keyboard/close actions.
+        padding: const EdgeInsets.only(right: 64),
+        child: Row(
+          children: [
           _PillButton(
             icon: Icons.movie_filter,
             label: '模式',
@@ -855,7 +869,8 @@ class _StreamControlRow extends StatelessWidget {
               },
             ),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }
