@@ -110,6 +110,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   Timer? _adaptiveEncodingTimer;
   int _adaptivePrevFramesDecoded = 0;
   int _adaptivePrevAtMs = 0;
+  int _adaptivePrevPacketsReceived = 0;
+  int _adaptivePrevPacketsLost = 0;
+  int _adaptivePrevBytesReceived = 0;
 
   void _startAdaptiveEncodingFeedbackLoop() {
     _adaptiveEncodingTimer?.cancel();
@@ -133,6 +136,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         int width = 0;
         int height = 0;
         int framesDecoded = 0;
+        int packetsReceived = 0;
+        int packetsLost = 0;
+        int bytesReceived = 0;
         double rttMs = 0.0;
 
         for (final report in stats) {
@@ -143,6 +149,10 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
               width = (values['frameWidth'] as num?)?.toInt() ?? 0;
               height = (values['frameHeight'] as num?)?.toInt() ?? 0;
               framesDecoded = (values['framesDecoded'] as num?)?.toInt() ?? 0;
+              packetsReceived =
+                  (values['packetsReceived'] as num?)?.toInt() ?? 0;
+              packetsLost = (values['packetsLost'] as num?)?.toInt() ?? 0;
+              bytesReceived = (values['bytesReceived'] as num?)?.toInt() ?? 0;
             }
           } else if (report.type == 'candidate-pair') {
             final values = Map<String, dynamic>.from(report.values);
@@ -169,6 +179,29 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
 
         if (fps <= 0 || width <= 0 || height <= 0) return;
 
+        // Loss + receive bitrate sampling (delta over interval).
+        final nowMs = DateTime.now().millisecondsSinceEpoch;
+        final dtMs = (_adaptivePrevAtMs > 0) ? (nowMs - _adaptivePrevAtMs) : 0;
+        double lossFraction = 0.0;
+        double rxKbps = 0.0;
+        if (dtMs > 0) {
+          final dRecv =
+              (packetsReceived - _adaptivePrevPacketsReceived).clamp(0, 1 << 30);
+          final dLost =
+              (packetsLost - _adaptivePrevPacketsLost).clamp(0, 1 << 30);
+          final denom = dRecv + dLost;
+          if (denom > 0) {
+            lossFraction = dLost / denom;
+          }
+          final dBytes =
+              (bytesReceived - _adaptivePrevBytesReceived).clamp(0, 1 << 30);
+          rxKbps = dBytes * 8.0 / dtMs; // bytes->bits, ms->kbps
+        }
+        _adaptivePrevAtMs = nowMs;
+        _adaptivePrevPacketsReceived = packetsReceived;
+        _adaptivePrevPacketsLost = packetsLost;
+        _adaptivePrevBytesReceived = bytesReceived;
+
         channel.send(
           RTCDataChannelMessage(
             jsonEncode({
@@ -177,6 +210,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 'width': width,
                 'height': height,
                 'rttMs': rttMs,
+                'lossFraction': lossFraction,
+                'rxKbps': rxKbps,
                 'mode': StreamingSettings.encodingMode.name,
               }
             }),

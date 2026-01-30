@@ -152,6 +152,7 @@ class StreamingSession {
   int _adaptiveLastBitrateChangeAtMs = 0;
   double _adaptiveRenderFpsEwma = 0.0;
   double _adaptiveRttEwma = 0.0;
+  double _adaptiveLossEwma = 0.0;
   int? _adaptiveFullBitrateKbps;
 
   // 添加生命周期监听器

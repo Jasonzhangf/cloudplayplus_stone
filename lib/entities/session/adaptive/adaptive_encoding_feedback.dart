@@ -58,11 +58,13 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final widthAny = payload['width'];
     final heightAny = payload['height'];
     final rttAny = payload['rttMs'];
+    final lossAny = payload['lossFraction'] ?? payload['lossPct'];
 
     final renderFps = (renderFpsAny is num) ? renderFpsAny.toDouble() : 0.0;
     final width = (widthAny is num) ? widthAny.toInt() : 0;
     final height = (heightAny is num) ? heightAny.toInt() : 0;
     final rttMs = (rttAny is num) ? rttAny.toDouble() : 0.0;
+    final loss = (lossAny is num) ? lossAny.toDouble() : 0.0;
 
     if (renderFps <= 0 || width <= 0 || height <= 0) return;
 
@@ -74,22 +76,13 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     _adaptiveRttEwma = _adaptiveRttEwma <= 0
         ? rttMs
         : (_adaptiveRttEwma * 0.80 + rttMs * 0.20);
+    _adaptiveLossEwma =
+        (_adaptiveLossEwma <= 0) ? loss : (_adaptiveLossEwma * 0.80 + loss * 0.20);
 
-    final currentFps = streamSettings!.framerate ?? 30;
-    final wantFps = pickAdaptiveTargetFps(
-      renderFps: _adaptiveRenderFpsEwma,
-      currentFps: currentFps,
-      minFps: 15,
-    );
-
-    // Step 1: align capture FPS down to avoid encoding above render capability.
-    if (wantFps < currentFps && (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
-      streamSettings!.framerate = wantFps;
-      _adaptiveLastFpsChangeAtMs = nowMs;
-      InputDebugService.instance.log(
-          '[adaptive] fps $currentFps -> $wantFps (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms)');
-      await _reapplyCurrentCaptureForAdaptiveFps();
-    }
+    final currentFpsRaw = streamSettings!.framerate ?? 30;
+    final currentFps = currentFpsRaw <= 0 ? 30 : currentFpsRaw;
+    final minFps = 15;
+    const maxFps = 30;
 
     // Compute full bitrate baseline from rendered resolution.
     final computedFull =
@@ -99,47 +92,142 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         : ((_adaptiveFullBitrateKbps! * 0.70) + (computedFull * 0.30)).round();
     final full = _adaptiveFullBitrateKbps!;
 
+    final curBitrate = (streamSettings!.bitrate ?? full).clamp(250, 20000);
+
     // High quality mode: keep bitrate at baseline (area-scaled), only adjust FPS down.
     if (mode == 'highquality' || mode == 'high_quality' || mode == 'hq') {
-      final cur = (streamSettings!.bitrate ?? full).clamp(250, 20000);
-      if (cur != full && (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
+      if (curBitrate != full && (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = full;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log('[adaptive] HQ bitrate -> ${full}kbps');
         await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-hq-bitrate');
       }
+      // HQ still allowed to adjust FPS down when receiver cannot keep up AND loss is low.
+      final wantDown = pickAdaptiveTargetFps(
+        renderFps: _adaptiveRenderFpsEwma,
+        currentFps: currentFps,
+        minFps: minFps,
+      );
+      if (_adaptiveLossEwma <= 0.01 &&
+          wantDown < currentFps &&
+          (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
+        streamSettings!.framerate = wantDown;
+        _adaptiveLastFpsChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[adaptive] HQ fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${(_adaptiveLossEwma * 100).toStringAsFixed(2)}%)');
+        await _reapplyCurrentCaptureForAdaptiveFps();
+      }
       return;
     }
 
     // If we came from legacy huge bitrate settings (e.g. 80000kbps), reset to a sane baseline.
-    final curBitrate = streamSettings!.bitrate;
-    if ((curBitrate == null || curBitrate > 50000) &&
+    if ((streamSettings!.bitrate == null || streamSettings!.bitrate! > 50000) &&
         (nowMs - _adaptiveLastBitrateChangeAtMs) > 3000) {
       streamSettings!.bitrate = full;
       _adaptiveLastBitrateChangeAtMs = nowMs;
       InputDebugService.instance.log('[adaptive] init bitrate -> ${full}kbps');
       await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-init-bitrate');
+    }
+
+    // Policy:
+    // - If loss is high: reduce bitrate first (keep FPS as-is initially).
+    // - If loss is low and receiver keeps up: increase bitrate toward full, then raise FPS.
+    // - If receiver FPS is low but loss is low: reduce FPS (device decode/encode bound).
+
+    final lossPct = (_adaptiveLossEwma * 100.0);
+    final goodNetwork = _adaptiveLossEwma <= 0.005 && _adaptiveRttEwma <= 220;
+    final badNetwork = _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 420;
+
+    // 1) Network bad: lower bitrate (down to full/4).
+    if (badNetwork) {
+      final minBitrate = (full / 4).round().clamp(250, full);
+      final targetBitrate =
+          (curBitrate * 0.80).round().clamp(minBitrate, full);
+      if (targetBitrate < curBitrate &&
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
+        streamSettings!.bitrate = targetBitrate;
+        _adaptiveLastBitrateChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[adaptive] net bad (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full)');
+        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-down');
+        return;
+      }
+
+      // If already near min bitrate but still bad, then reduce FPS a step.
+      final wantDown = pickAdaptiveTargetFps(
+        renderFps: _adaptiveRenderFpsEwma,
+        currentFps: currentFps,
+        minFps: minFps,
+      );
+      if (wantDown < currentFps &&
+          (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
+        streamSettings!.framerate = wantDown;
+        _adaptiveLastFpsChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[adaptive] net bad fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)})');
+        await _reapplyCurrentCaptureForAdaptiveFps();
+      }
       return;
     }
 
-    // Step 2: if already at 15fps but still struggling, adjust bitrate dynamically.
-    final encFps = streamSettings!.framerate ?? currentFps;
-    if (encFps <= 15) {
-      final target = computeDynamicBitrateKbps(
-        fullBitrateKbps: full,
-        renderFps: _adaptiveRenderFpsEwma,
-        targetFps: encFps <= 0 ? 15 : encFps,
-        rttMs: _adaptiveRttEwma,
-      );
-      final cur = (streamSettings!.bitrate ?? full).clamp(250, 20000);
-      final diffRatio = (target - cur).abs() / cur;
-      if (diffRatio >= 0.12 &&
-          (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
-        streamSettings!.bitrate = target;
+    // 2) Good network: raise bitrate toward full.
+    if (goodNetwork && curBitrate < full) {
+      final targetBitrate =
+          (curBitrate * 1.25).round().clamp((full / 4).round(), full);
+      if (targetBitrate > curBitrate &&
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 5500) {
+        streamSettings!.bitrate = targetBitrate;
         _adaptiveLastBitrateChangeAtMs = nowMs;
-        InputDebugService.instance
-            .log('[adaptive] bitrate $cur -> ${target}kbps (full=$full)');
-        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate');
+        InputDebugService.instance.log(
+            '[adaptive] net good (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full)');
+        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-up');
+        // Let bitrate settle before increasing fps.
+        return;
+      }
+    }
+
+    // 3) If receiver keeps up and we are near full bitrate, try raise FPS toward 30.
+    final nearFullBitrate = curBitrate >= (full * 0.90).round();
+    if (goodNetwork && nearFullBitrate && currentFps < maxFps) {
+      // Only step up if the receiver is already matching current FPS (i.e. not struggling).
+      final canStepUp = _adaptiveRenderFpsEwma >= (currentFps - 1);
+      if (canStepUp && (nowMs - _adaptiveLastFpsChangeAtMs) > 6500) {
+        int nextFps(int cur) {
+          if (cur <= 15) return 20;
+          if (cur <= 20) return 30;
+          return 30;
+        }
+
+        final targetFps = nextFps(currentFps).clamp(minFps, maxFps);
+        if (targetFps > currentFps) {
+          streamSettings!.framerate = targetFps;
+          _adaptiveLastFpsChangeAtMs = nowMs;
+          InputDebugService.instance.log(
+              '[adaptive] fps up $currentFps -> $targetFps (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${lossPct.toStringAsFixed(2)}%)');
+          await _reapplyCurrentCaptureForAdaptiveFps();
+          return;
+        }
+      }
+    }
+
+    // 4) Device bound: render fps is low but loss is low -> step down fps to keep quality.
+    final deviceBound = _adaptiveLossEwma <= 0.01 &&
+        _adaptiveRenderFpsEwma > 0 &&
+        _adaptiveRenderFpsEwma < currentFps * 0.75;
+    if (deviceBound) {
+      final wantDown = pickAdaptiveTargetFps(
+        renderFps: _adaptiveRenderFpsEwma,
+        currentFps: currentFps,
+        minFps: minFps,
+      );
+      if (wantDown < currentFps &&
+          (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
+        streamSettings!.framerate = wantDown;
+        _adaptiveLastFpsChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[adaptive] device bound fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${lossPct.toStringAsFixed(2)}%)');
+        await _reapplyCurrentCaptureForAdaptiveFps();
+        return;
       }
     }
   }
@@ -200,4 +288,3 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     }
   }
 }
-

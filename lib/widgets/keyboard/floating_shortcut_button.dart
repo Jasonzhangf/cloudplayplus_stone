@@ -140,22 +140,34 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       inputController.requestKeyEvent(code, false);
     }
 
-    // 按下所有按键
+    // Ensure combo shortcuts are sent in chord order:
+    // - modifiers down first (Shift/Ctrl/Alt/Meta)
+    // - then non-modifiers
+    // - release in reverse
+    final downCodes = <int>[];
+    final downModifiers = <int>[];
     for (final key in shortcut.keys) {
       final keyCode = _getKeyCodeFromString(key.keyCode);
-      if (keyCode != null && keyCode != 0) {
-        inputController.requestKeyEvent(keyCode, true);
+      if (keyCode == null || keyCode == 0) continue;
+      if (_modifierKeyCodes.contains(keyCode)) {
+        downModifiers.add(keyCode);
+      } else {
+        downCodes.add(keyCode);
       }
     }
+    final orderedDown = <int>[...downModifiers, ...downCodes];
+    final orderedUp = <int>[...downCodes.reversed, ...downModifiers.reversed];
 
-    // 延迟释放所有按键
-    Future.delayed(const Duration(milliseconds: 50), () {
-      for (final key in shortcut.keys.reversed) {
-        final keyCode = _getKeyCodeFromString(key.keyCode);
-        if (keyCode != null && keyCode != 0) {
-          inputController.requestKeyEvent(keyCode, false);
-        }
+    for (final keyCode in orderedDown) {
+      inputController.requestKeyEvent(keyCode, true);
+    }
+
+    // Release shortly after to emulate a normal chord keypress.
+    Future.delayed(const Duration(milliseconds: 55), () {
+      for (final keyCode in orderedUp) {
+        inputController.requestKeyEvent(keyCode, false);
       }
+      // Extra safety: clear modifiers again.
       for (final code in _modifierKeyCodes) {
         inputController.requestKeyEvent(code, false);
       }
