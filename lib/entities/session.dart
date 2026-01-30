@@ -52,6 +52,75 @@ part 'session/input/input_routing.dart';
 part 'session/adaptive/adaptive_encoding_feedback.dart';
 part 'session/debug/input_trace_hooks.dart';
 
+@visibleForTesting
+String fixSdpBitrateForVideo(String sdp, int bitrateKbps) {
+  final trimmed = sdp.trim();
+  if (trimmed.isEmpty) return sdp;
+
+  final bitrate = bitrateKbps.clamp(250, 20000);
+  final usesCrLf = sdp.contains('\r\n');
+  final normalized = sdp.replaceAll('\r\n', '\n');
+  final lines = normalized.split('\n');
+
+  bool inVideo = false;
+  bool insertedB = false;
+  final out = <String>[];
+
+  for (final line in lines) {
+    if (line.startsWith('m=')) {
+      inVideo = line.startsWith('m=video');
+      insertedB = false;
+      out.add(line);
+      continue;
+    }
+
+    if (!inVideo) {
+      out.add(line);
+      continue;
+    }
+
+    if (line.startsWith('b=AS:')) {
+      if (insertedB) {
+        continue;
+      }
+      out.add('b=AS:$bitrate');
+      insertedB = true;
+      continue;
+    }
+
+    if (line.startsWith('c=IN')) {
+      out.add(line);
+      if (!insertedB) {
+        out.add('b=AS:$bitrate');
+        insertedB = true;
+      }
+      continue;
+    }
+
+    if (line.startsWith('a=fmtp:')) {
+      var cleaned = line.replaceAll(
+        RegExp(r';?x-google-(max|min|start)-bitrate=\d+'),
+        '',
+      );
+      while (cleaned.contains(';;')) {
+        cleaned = cleaned.replaceAll(';;', ';');
+      }
+      if (cleaned.endsWith(';')) {
+        cleaned = cleaned.substring(0, cleaned.length - 1);
+      }
+      out.add(
+        '$cleaned;x-google-max-bitrate=$bitrate;x-google-min-bitrate=$bitrate;x-google-start-bitrate=$bitrate',
+      );
+      continue;
+    }
+
+    out.add(line);
+  }
+
+  final fixed = out.join('\n');
+  return usesCrLf ? fixed.replaceAll('\n', '\r\n') : fixed;
+}
+
 /*
 每个启动的app均有两个state controlstate是作为控制端的state hoststate是作为被控端的state
 整个连接建立过程：
@@ -748,20 +817,7 @@ class StreamingSession {
   RTCSessionDescription _fixSdp(RTCSessionDescription s, int bitrate) {
     var sdp = s.sdp;
     sdp = sdp!.replaceAll('profile-level-id=640c1f', 'profile-level-id=42e032');
-
-    RegExp exp = RegExp(r"^a=fmtp.*$", multiLine: true);
-    String appendStr =
-        ";x-google-max-bitrate=$bitrate;x-google-min-bitrate=$bitrate;x-google-start-bitrate=$bitrate)";
-
-    sdp = sdp.replaceAllMapped(exp, (match) {
-      return match.group(0)! + appendStr;
-    });
-
-    RegExp exp2 = RegExp(r"^c=IN.*$", multiLine: true);
-    String appendStr2 = "\r\nb=AS:$bitrate";
-    sdp = sdp.replaceAllMapped(exp2, (match) {
-      return match.group(0)! + appendStr2;
-    });
+    sdp = fixSdpBitrateForVideo(sdp, bitrate);
 
     s.sdp = sdp;
     return s;

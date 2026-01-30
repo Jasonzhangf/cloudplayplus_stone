@@ -197,13 +197,27 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     // - If receiver FPS is low but loss is low: reduce FPS (device decode/encode bound).
 
     final lossPct = (_adaptiveLossEwma * 100.0);
-    final goodNetwork =
-        _adaptiveLossEwma <= 0.005 && _adaptiveRttEwma <= 220;
-    // If receiver throughput is significantly lower than target bitrate, treat as congestion.
-    final bitrateNotSustainable =
-        rxKbps > 0 && rxKbps < (curBitrate * 0.70);
+
+    // Network classification:
+    // - Use loss/RTT as primary signals.
+    // - rxKbps is *observed receive bitrate* (VBR + content dependent), so do NOT
+    //   treat "rx < target" as congestion when loss/RTT are good; otherwise the
+    //   loop will ratchet bitrate down for static scenes.
+    final veryLowLoss = _adaptiveLossEwma <= 0.003;
+    final lowLoss = _adaptiveLossEwma <= 0.010;
+    final goodRtt = _adaptiveRttEwma <= 320;
+    final okRtt = _adaptiveRttEwma <= 380;
+    final goodNetwork = veryLowLoss && goodRtt;
+    final okNetwork = lowLoss && okRtt;
+
+    // Only treat low rxKbps as a congestion signal when *also* seeing
+    // non-trivial loss or elevated RTT.
+    final rxLooksLimited = rxKbps > 0 && rxKbps < (curBitrate * 0.60);
+    final maybeCongestedByRx =
+        rxLooksLimited && (_adaptiveLossEwma >= 0.012 || _adaptiveRttEwma >= 380);
+
     final badNetwork =
-        _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 420 || bitrateNotSustainable;
+        _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 450 || maybeCongestedByRx;
 
     // 1) Network bad: lower bitrate (down to full/4).
     if (badNetwork) {
@@ -241,12 +255,12 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       return;
     }
 
-    // 2) Good network: raise bitrate toward full.
-    if (goodNetwork && curBitrate < full) {
+    // 2) (Good/OK) network: raise bitrate toward full.
+    if ((okNetwork || goodNetwork) && curBitrate < full) {
       final targetBitrate =
-          (curBitrate * 1.25).round().clamp((full / 4).round(), full);
+          (curBitrate * 1.35).round().clamp((full / 4).round(), full);
       if (targetBitrate > curBitrate &&
-          (nowMs - _adaptiveLastBitrateChangeAtMs) > 5500) {
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = targetBitrate;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
@@ -261,7 +275,7 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
 
     // 3) If receiver keeps up and we are near full bitrate, try raise FPS toward 30.
     final nearFullBitrate = curBitrate >= (full * 0.90).round();
-    if (goodNetwork && nearFullBitrate && currentFps < maxFps) {
+    if ((okNetwork || goodNetwork) && nearFullBitrate && currentFps < maxFps) {
       // Only step up if the receiver is already matching current FPS (i.e. not struggling).
       final canStepUp = _adaptiveRenderFpsEwma >= (currentFps - 1);
       if (canStepUp && (nowMs - _adaptiveLastFpsChangeAtMs) > 6500) {
