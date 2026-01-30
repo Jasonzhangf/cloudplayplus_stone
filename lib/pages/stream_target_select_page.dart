@@ -5,8 +5,10 @@ import 'package:cloudplayplus/services/quick_target_service.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
+import 'package:cloudplayplus/utils/iterm2/iterm2_crop.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'dart:typed_data';
 
 class StreamTargetSelectPage extends StatefulWidget {
   const StreamTargetSelectPage({super.key});
@@ -41,6 +43,13 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
         break;
       case StreamMode.iterm2:
         await _iterm2.requestPanels(_channel);
+        // Also request window thumbnails so we can render per-panel previews.
+        await _windows.requestWindowSources(
+          _channel,
+          thumbnail: true,
+          thumbnailWidth: 240,
+          thumbnailHeight: 135,
+        );
         break;
     }
   }
@@ -236,26 +245,46 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
                 if (panels.isEmpty) {
                   return const Center(child: Text('没有收到 iTerm2 panel 列表'));
                 }
-                return ListView.separated(
-                  itemCount: panels.length,
-                  separatorBuilder: (_, __) =>
-                      const Divider(height: 1, thickness: 0.5),
-                  itemBuilder: (context, index) {
-                    final p = panels[index];
-                    final target = QuickStreamTarget(
-                      mode: StreamMode.iterm2,
-                      id: p.id,
-                      label: p.title,
-                    );
-                    return ListTile(
-                      title: Text(p.title),
-                      subtitle: Text(
-                        p.detail,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      onTap: () => _apply(target),
-                      onLongPress: () => _saveAsFavorite(target),
+                return ValueListenableBuilder<List<RemoteDesktopSource>>(
+                  valueListenable: _windows.windowSources,
+                  builder: (context, windowSources, ____) {
+                    final itermWindows = windowSources
+                        .where((w) =>
+                            (w.appName ?? '').toLowerCase().contains('iterm') ||
+                            (w.appId ?? '').toLowerCase().contains('iterm'))
+                        .toList(growable: false);
+                    return ListView.separated(
+                      itemCount: panels.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, thickness: 0.5),
+                      itemBuilder: (context, index) {
+                        final p = panels[index];
+                        final target = QuickStreamTarget(
+                          mode: StreamMode.iterm2,
+                          id: p.id,
+                          label: p.title,
+                        );
+
+                        final crop = _computePanelCrop(p);
+                        final matchedWindow =
+                            _pickBestItermWindow(itermWindows, p);
+                        final thumb = matchedWindow?.thumbnailBytes;
+
+                        return ListTile(
+                          leading: _PanelThumbnail(
+                            thumbnailBytes: thumb,
+                            cropRectNorm: crop,
+                          ),
+                          title: Text(p.title),
+                          subtitle: Text(
+                            p.detail,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () => _apply(target),
+                          onLongPress: () => _saveAsFavorite(target),
+                        );
+                      },
                     );
                   },
                 );
@@ -265,5 +294,174 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
         );
       },
     );
+  }
+
+  Map<String, double>? _computePanelCrop(ITerm2PanelInfo p) {
+    final f = p.frame;
+    final wf = p.windowFrame;
+    if (f == null || wf == null) return null;
+    final fx = f['x'];
+    final fy = f['y'];
+    final fw = f['w'];
+    final fh = f['h'];
+    final wx = wf['x'] ?? 0.0;
+    final wy = wf['y'] ?? 0.0;
+    final ww = wf['w'];
+    final wh = wf['h'];
+    if (fx == null ||
+        fy == null ||
+        fw == null ||
+        fh == null ||
+        ww == null ||
+        wh == null) {
+      return null;
+    }
+    final res = computeIterm2CropRectNorm(
+      fx: fx,
+      fy: fy,
+      fw: fw,
+      fh: fh,
+      wx: wx,
+      wy: wy,
+      ww: ww,
+      wh: wh,
+    );
+    return res?.cropRectNorm;
+  }
+
+  RemoteDesktopSource? _pickBestItermWindow(
+    List<RemoteDesktopSource> windows,
+    ITerm2PanelInfo p,
+  ) {
+    if (windows.isEmpty) return null;
+    final wf = p.windowFrame;
+    if (wf == null) return windows.first;
+
+    double frameW(RemoteDesktopSource s) {
+      final f = s.frame;
+      if (f == null) return 0.0;
+      return f['width'] ?? f['w'] ?? 0.0;
+    }
+
+    double frameH(RemoteDesktopSource s) {
+      final f = s.frame;
+      if (f == null) return 0.0;
+      return f['height'] ?? f['h'] ?? 0.0;
+    }
+
+    final targetW = wf['w'] ?? 0.0;
+    final targetH = wf['h'] ?? 0.0;
+    if (targetW <= 0 || targetH <= 0) return windows.first;
+
+    RemoteDesktopSource? best;
+    double bestScore = double.infinity;
+    for (final s in windows) {
+      final w = frameW(s);
+      final h = frameH(s);
+      if (w <= 0 || h <= 0) continue;
+      const scales = <double>[1.0, 2.0, 0.5];
+      double bestSizeScore = double.infinity;
+      for (final scale in scales) {
+        final tw = targetW * scale;
+        final th = targetH * scale;
+        final score = (w - tw).abs() + (h - th).abs();
+        if (score < bestSizeScore) bestSizeScore = score;
+      }
+      final aspectPenalty = ((w / h) - (targetW / targetH)).abs() * 1200.0;
+      final score = bestSizeScore + aspectPenalty;
+      if (score < bestScore) {
+        bestScore = score;
+        best = s;
+      }
+    }
+    return best ?? windows.first;
+  }
+}
+
+class _PanelThumbnail extends StatelessWidget {
+  final Uint8List? thumbnailBytes;
+  final Map<String, double>? cropRectNorm;
+
+  const _PanelThumbnail({
+    required this.thumbnailBytes,
+    required this.cropRectNorm,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const w = 92.0;
+    const h = 52.0;
+
+    final bytes = thumbnailBytes;
+    if (bytes == null || bytes.isEmpty) {
+      return Container(
+        width: w,
+        height: h,
+        decoration: BoxDecoration(
+          color: Colors.black.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: Colors.black.withOpacity(0.12), width: 1),
+        ),
+        child: const Icon(Icons.terminal, size: 20),
+      );
+    }
+
+    final crop = cropRectNorm;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(8),
+      child: SizedBox(
+        width: w,
+        height: h,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            Image.memory(
+              bytes,
+              fit: BoxFit.cover,
+              gaplessPlayback: true,
+              filterQuality: FilterQuality.low,
+            ),
+            if (crop != null) CustomPaint(painter: _CropRectPainter(crop)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CropRectPainter extends CustomPainter {
+  final Map<String, double> crop;
+
+  const _CropRectPainter(this.crop);
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final x = (crop['x'] ?? 0.0).clamp(0.0, 1.0);
+    final y = (crop['y'] ?? 0.0).clamp(0.0, 1.0);
+    final w = (crop['w'] ?? 0.0).clamp(0.0, 1.0);
+    final h = (crop['h'] ?? 0.0).clamp(0.0, 1.0);
+    if (w <= 0 || h <= 0) return;
+
+    final rect = Rect.fromLTWH(
+      x * size.width,
+      y * size.height,
+      w * size.width,
+      h * size.height,
+    );
+    final paint = Paint()
+      ..color = Colors.redAccent.withOpacity(0.85)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 2;
+    canvas.drawRect(rect, paint);
+
+    final fill = Paint()
+      ..color = Colors.redAccent.withOpacity(0.12)
+      ..style = PaintingStyle.fill;
+    canvas.drawRect(rect, fill);
+  }
+
+  @override
+  bool shouldRepaint(covariant _CropRectPainter oldDelegate) {
+    return oldDelegate.crop != crop;
   }
 }

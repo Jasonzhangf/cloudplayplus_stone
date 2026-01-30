@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -11,6 +12,8 @@ class RemoteDesktopSource {
   final String? appId;
   final String? appName;
   final Map<String, double>? frame;
+  final Uint8List? thumbnailBytes;
+  final Map<String, int>? thumbnailSize;
 
   const RemoteDesktopSource({
     required this.id,
@@ -19,6 +22,8 @@ class RemoteDesktopSource {
     this.appId,
     this.appName,
     this.frame,
+    this.thumbnailBytes,
+    this.thumbnailSize,
   });
 
   factory RemoteDesktopSource.fromJson(Map<String, dynamic> json) {
@@ -28,6 +33,26 @@ class RemoteDesktopSource {
       frame =
           frameAny.map((k, v) => MapEntry(k.toString(), (v as num).toDouble()));
     }
+
+    Uint8List? thumb;
+    final b64 = json['thumbnailB64'];
+    if (b64 is String && b64.isNotEmpty) {
+      try {
+        thumb = base64Decode(b64);
+      } catch (_) {
+        thumb = null;
+      }
+    }
+
+    Map<String, int>? thumbSize;
+    final tsAny = json['thumbnailSize'];
+    if (tsAny is Map) {
+      final wAny = tsAny['width'];
+      final hAny = tsAny['height'];
+      if (wAny is num && hAny is num) {
+        thumbSize = {'width': wAny.toInt(), 'height': hAny.toInt()};
+      }
+    }
     return RemoteDesktopSource(
       id: json['id']?.toString() ?? '',
       windowId:
@@ -36,6 +61,8 @@ class RemoteDesktopSource {
       appId: json['appId']?.toString(),
       appName: json['appName']?.toString(),
       frame: frame,
+      thumbnailBytes: thumb,
+      thumbnailSize: thumbSize,
     );
   }
 }
@@ -55,7 +82,12 @@ class RemoteWindowService {
   final ValueNotifier<bool> loading = ValueNotifier<bool>(false);
   final ValueNotifier<String?> error = ValueNotifier<String?>(null);
 
-  Future<void> requestWindowSources(RTCDataChannel? channel) async {
+  Future<void> requestWindowSources(
+    RTCDataChannel? channel, {
+    bool thumbnail = false,
+    int thumbnailWidth = 240,
+    int thumbnailHeight = 135,
+  }) async {
     if (channel == null ||
         channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       error.value = 'DataChannel 未连接';
@@ -68,7 +100,12 @@ class RemoteWindowService {
         jsonEncode({
           'desktopSourcesRequest': {
             'types': ['window'],
-            'thumbnail': false,
+            'thumbnail': thumbnail,
+            if (thumbnail)
+              'thumbnailSize': {
+                'width': thumbnailWidth,
+                'height': thumbnailHeight,
+              },
           }
         }),
       ),
