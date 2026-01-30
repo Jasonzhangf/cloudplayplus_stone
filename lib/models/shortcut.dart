@@ -231,6 +231,18 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 9,
         ),
         ShortcutItem(
+          id: 'delete-all',
+          label: '全部删除',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'A', keyCode: 'KeyA'),
+            ShortcutKey(key: 'Backspace', keyCode: 'Backspace'),
+          ],
+          platform: platform,
+          order: 10,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
           icon: '',
@@ -239,7 +251,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 10,
+          order: 11,
         ),
         ShortcutItem(
           id: 'paste',
@@ -250,7 +262,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 11,
+          order: 12,
         ),
         ShortcutItem(
           id: 'cut',
@@ -262,7 +274,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 12,
+          order: 13,
         ),
         ShortcutItem(
           id: 'select-all',
@@ -273,8 +285,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'A', keyCode: 'KeyA')
           ],
           platform: platform,
-          enabled: false,
-          order: 13,
+          order: 14,
         ),
         ShortcutItem(
           id: 'save',
@@ -286,7 +297,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 14,
+          order: 15,
         ),
         ShortcutItem(
           id: 'find',
@@ -298,7 +309,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 15,
+          order: 16,
         ),
         ShortcutItem(
           id: 'undo',
@@ -310,7 +321,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 16,
+          order: 17,
         ),
         ShortcutItem(
           id: 'alt-tab',
@@ -322,7 +333,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 17,
+          order: 18,
         ),
         ShortcutItem(
           id: 'lock',
@@ -334,7 +345,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 18,
+          order: 19,
         ),
         ShortcutItem(
           id: 'task-manager',
@@ -347,7 +358,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 19,
+          order: 20,
         ),
       ];
 
@@ -432,6 +443,18 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 9,
         ),
         ShortcutItem(
+          id: 'delete-all',
+          label: '全部删除',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Cmd', keyCode: 'MetaLeft'),
+            ShortcutKey(key: 'A', keyCode: 'KeyA'),
+            ShortcutKey(key: 'Backspace', keyCode: 'Backspace'),
+          ],
+          platform: platform,
+          order: 10,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
           icon: '',
@@ -440,7 +463,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 10,
+          order: 11,
         ),
         ShortcutItem(
           id: 'paste',
@@ -451,7 +474,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 11,
+          order: 12,
         ),
         ShortcutItem(
           id: 'cut',
@@ -463,7 +486,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 12,
+          order: 13,
         ),
         ShortcutItem(
           id: 'select-all',
@@ -474,8 +497,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'A', keyCode: 'KeyA')
           ],
           platform: platform,
-          enabled: false,
-          order: 13,
+          order: 14,
         ),
         ShortcutItem(
           id: 'save',
@@ -487,7 +509,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 14,
+          order: 15,
         ),
         ShortcutItem(
           id: 'find',
@@ -499,7 +521,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 15,
+          order: 16,
         ),
         ShortcutItem(
           id: 'undo',
@@ -511,7 +533,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 16,
+          order: 17,
         ),
         ShortcutItem(
           id: 'cmd-tab',
@@ -523,7 +545,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 17,
+          order: 18,
         ),
         ShortcutItem(
           id: 'lock',
@@ -536,7 +558,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 18,
+          order: 19,
         ),
         ShortcutItem(
           id: 'screenshot',
@@ -549,7 +571,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 19,
+          order: 20,
         ),
       ];
 
@@ -634,6 +656,18 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 9,
         ),
         ShortcutItem(
+          id: 'delete-all',
+          label: '全部删除',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'A', keyCode: 'KeyA'),
+            ShortcutKey(key: 'Backspace', keyCode: 'Backspace'),
+          ],
+          platform: platform,
+          order: 10,
+        ),
+        ShortcutItem(
           id: 'copy',
           label: '复制',
           icon: '',
@@ -642,7 +676,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'C', keyCode: 'KeyC')
           ],
           platform: platform,
-          order: 10,
+          order: 11,
         ),
         ShortcutItem(
           id: 'paste',
@@ -653,7 +687,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'V', keyCode: 'KeyV')
           ],
           platform: platform,
-          order: 11,
+          order: 12,
         ),
         ShortcutItem(
           id: 'cut',
@@ -665,7 +699,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 12,
+          order: 13,
         ),
         ShortcutItem(
           id: 'select-all',
@@ -676,8 +710,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'A', keyCode: 'KeyA')
           ],
           platform: platform,
-          enabled: false,
-          order: 13,
+          order: 14,
         ),
         ShortcutItem(
           id: 'save',
@@ -689,7 +722,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 14,
+          order: 15,
         ),
         ShortcutItem(
           id: 'find',
@@ -701,7 +734,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 15,
+          order: 16,
         ),
         ShortcutItem(
           id: 'undo',
@@ -713,7 +746,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 16,
+          order: 17,
         ),
         ShortcutItem(
           id: 'alt-tab',
@@ -725,7 +758,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 17,
+          order: 18,
         ),
         ShortcutItem(
           id: 'lock',
@@ -737,7 +770,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 18,
+          order: 19,
         ),
         ShortcutItem(
           id: 'terminal',
@@ -750,7 +783,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           ],
           platform: platform,
           enabled: false,
-          order: 19,
+          order: 20,
         ),
       ];
   }
