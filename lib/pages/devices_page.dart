@@ -32,8 +32,18 @@ class _DevicesPageState extends State<DevicesPage> {
   // 更新列表的方法
   void _updateList(devicelist) {
     setState(() {
-      // 假设我们添加了一个新的Fantasy对象到列表
-      _deviceList.clear();
+      // 复用现有 Device 实例，避免列表刷新时替换对象导致：
+      // - DeviceDetailPage 还拿着旧对象
+      // - StreamingSession 更新的是另外一个对象的 connectionState
+      // 从而表现为“已经连上但界面还是原来的设置界面”。
+      final prevByConnId = <String, Device>{};
+      for (final d in _deviceList) {
+        if (d.websocketSessionid.isNotEmpty) {
+          prevByConnId[d.websocketSessionid] = d;
+        }
+      }
+
+      final nextList = <Device>[];
       for (Map device in devicelist) {
         //if (device['owner_id'] == ApplicationInfo.user.uid){
         //We set owner id to -1 to identify it is the device of ourself.
@@ -44,35 +54,48 @@ class _DevicesPageState extends State<DevicesPage> {
                 ApplicationInfo.thisDevice.websocketSessionid) {
           continue;
         }
-        Device deviceInstance;
-        if (WebrtcService.streams.containsKey(device['connection_id'])) {
-          //lastSelectedDevice不是已经串流的stream时，应当保留已经串流的stream的状态。
-          deviceInstance =
-              StreamingManager.sessions[device['connection_id']]!.controlled;
-          deviceInstance.devicename = device['device_name'];
-          deviceInstance.connective = device['connective'];
-          deviceInstance.screencount = device['screen_count'];
-        } else if (device['connection_id'] == DeviceSelectManager.lastSelectedDevice?.websocketSessionid
-          || (AppStateService.lastwebsocketSessionid != null && AppStateService.lastwebsocketSessionid == DeviceSelectManager.lastSelectedDevice?.websocketSessionid
-          && device['connection_id'] == AppStateService.websocketSessionid)) {
-          deviceInstance = DeviceSelectManager.lastSelectedDevice!;
-          deviceInstance.devicename = device['device_name'];
-          deviceInstance.connective = device['connective'];
-          deviceInstance.screencount = device['screen_count'];
-          deviceInstance.websocketSessionid = device['connection_id'];
+        final connId = (device['connection_id'] ?? '').toString();
+
+        Device? deviceInstance = prevByConnId[connId];
+        deviceInstance ??= StreamingManager.sessions[connId]?.controlled;
+
+        // 兼容“自身重连导致 connection_id 变化”：复用 lastSelectedDevice，
+        // 让当前详情页继续收到状态更新。
+        final lastSelected = DeviceSelectManager.lastSelectedDevice;
+        if (deviceInstance == null && lastSelected != null) {
+          final lastId = lastSelected.websocketSessionid;
+          final directMatch = connId == lastId;
+          final reconnectMatch = (AppStateService.lastwebsocketSessionid != null &&
+              AppStateService.lastwebsocketSessionid == lastId &&
+              connId == AppStateService.websocketSessionid);
+          if (directMatch || reconnectMatch) {
+            deviceInstance = lastSelected;
+          }
         }
-        else {
+
+        if (deviceInstance == null) {
           deviceInstance = Device(
-              uid: device['owner_id'],
-              nickname: device['owner_nickname'],
-              devicename: device['device_name'],
-              devicetype: device['device_type'],
-              websocketSessionid: device['connection_id'],
-              connective: device['connective'],
-              screencount: device['screen_count']);
+            uid: device['owner_id'],
+            nickname: device['owner_nickname'],
+            devicename: device['device_name'],
+            devicetype: device['device_type'],
+            websocketSessionid: connId,
+            connective: device['connective'],
+            screencount: device['screen_count'],
+          );
+        } else {
+          deviceInstance.devicename = device['device_name'];
+          deviceInstance.connective = device['connective'];
+          deviceInstance.screencount = device['screen_count'];
+          deviceInstance.websocketSessionid = connId;
         }
-        _deviceList.add(deviceInstance);
+
+        nextList.add(deviceInstance);
       }
+
+      _deviceList
+        ..clear()
+        ..addAll(nextList);
     });
     _maybeAutoRestoreLastConnection();
   }
