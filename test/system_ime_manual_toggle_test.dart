@@ -33,11 +33,17 @@ void main() {
       expect(ScreenController.systemImeActive.value, isFalse);
 
       // Explicit keyboard toggle shows/hides IME.
+      await tester.ensureVisible(
+        find.byKey(const Key('shortcutPanelKeyboardToggle')),
+      );
       await tester.tap(find.byKey(const Key('shortcutPanelKeyboardToggle')));
       await tester.pump();
       expect(tester.testTextInput.isVisible, isTrue);
       expect(ScreenController.systemImeActive.value, isTrue);
 
+      await tester.ensureVisible(
+        find.byKey(const Key('shortcutPanelKeyboardToggle')),
+      );
       await tester.tap(find.byKey(const Key('shortcutPanelKeyboardToggle')));
       await tester.pump();
       expect(tester.testTextInput.isVisible, isFalse);

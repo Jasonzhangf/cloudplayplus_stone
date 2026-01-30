@@ -35,21 +35,28 @@ TwoFingerGestureType decideTwoFingerGestureType({
   required bool isMobile,
   required double cumulativeDistanceChangeRatio,
   required double cumulativeCenterMovement,
+  required double cumulativeCenterDeltaX,
+  required double cumulativeCenterDeltaY,
 }) {
-  // “先本地判定、再发送”：移动端允许 pinch 时中心漂移更大，缩放意图明显时优先 zoom。
-  final zoomRatioThreshold = isMobile ? 0.10 : 0.02;
-  final scrollMoveThreshold = isMobile ? 12.0 : 15.0;
+  // “先本地判定、再发送”：
+  // - 两指缩放（pinch）在移动端经常伴随中心轻微漂移，所以优先根据 distance 变化判定 zoom；
+  // - 仅当 distance 基本不变且移动方向明显为垂直时，才判定为 scroll（否则会把缩放误发成滚轮）。
+  final zoomRatioThreshold = isMobile ? 0.04 : 0.02;
+  final scrollMoveThreshold = isMobile ? 16.0 : 15.0;
+  final scrollDistanceMaxRatio = isMobile ? 0.02 : 0.01;
 
-  if (cumulativeDistanceChangeRatio > zoomRatioThreshold) {
+  if (cumulativeDistanceChangeRatio >= zoomRatioThreshold) {
     return TwoFingerGestureType.zoom;
   }
-  if (cumulativeCenterMovement > scrollMoveThreshold &&
-      cumulativeDistanceChangeRatio < (zoomRatioThreshold * 0.5)) {
+
+  final verticalDominant =
+      cumulativeCenterDeltaY >= (cumulativeCenterDeltaX * 1.2);
+  if (verticalDominant &&
+      cumulativeCenterMovement >= scrollMoveThreshold &&
+      cumulativeDistanceChangeRatio <= scrollDistanceMaxRatio) {
     return TwoFingerGestureType.scroll;
   }
-  if (cumulativeCenterMovement > (scrollMoveThreshold * 2.2)) {
-    return TwoFingerGestureType.scroll;
-  }
+
   return TwoFingerGestureType.undecided;
 }
 
@@ -60,7 +67,7 @@ bool shouldActivateTwoFingerScroll({
   required double accumulatedScrollDistance,
   required Duration decisionDebounce,
 }) {
-  final activateDistance = isMobile ? 10.0 : 6.0;
+  final activateDistance = isMobile ? 14.0 : 6.0;
   return sinceStart >= decisionDebounce &&
       accumulatedScrollDistance >= activateDistance;
 }
@@ -544,14 +551,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         double cumulativeDistanceChangeRatio =
             (currentDistance - _initialPinchDistance!).abs() /
                 _initialPinchDistance!;
-        double cumulativeCenterMovement =
-            (center - _initialTwoFingerCenter!).distance;
+        final centerDelta = center - _initialTwoFingerCenter!;
+        final cumulativeCenterMovement = centerDelta.distance;
+        final cumulativeCenterDeltaX = centerDelta.dx.abs();
+        final cumulativeCenterDeltaY = centerDelta.dy.abs();
 
         // Android 上双指容易出现轻微 pinch 抖动，导致误判为缩放；
         _twoFingerGestureType = decideTwoFingerGestureType(
           isMobile: AppPlatform.isMobile,
           cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
           cumulativeCenterMovement: cumulativeCenterMovement,
+          cumulativeCenterDeltaX: cumulativeCenterDeltaX,
+          cumulativeCenterDeltaY: cumulativeCenterDeltaY,
         );
       }
 

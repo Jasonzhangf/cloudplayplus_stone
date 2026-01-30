@@ -13,7 +13,8 @@ void main() {
       await SharedPreferencesManager.init();
     });
 
-    testWidgets('keyboard/X stays in the top-right stream row', (tester) async {
+    testWidgets('keyboard/X floats above the panel (red-box position)',
+        (tester) async {
       await tester.pumpWidget(
         const MaterialApp(
           home: Scaffold(
@@ -34,14 +35,9 @@ void main() {
           tester.getRect(find.byKey(const Key('shortcutPanelKeyboardToggle')));
 
       expect(
-        keyboardRect.top,
-        greaterThanOrEqualTo(streamRect.top),
-        reason: 'Keyboard toggle should be inside the stream control row.',
-      );
-      expect(
         keyboardRect.bottom,
-        lessThanOrEqualTo(streamRect.bottom),
-        reason: 'Keyboard toggle should be inside the stream control row.',
+        lessThanOrEqualTo(panelRect.top),
+        reason: 'Keyboard toggle should float above the panel.',
       );
       expect(
         keyboardRect.right,
@@ -49,9 +45,9 @@ void main() {
         reason: 'Keyboard toggle should be inside the panel bounds.',
       );
       expect(
-        keyboardRect.right,
-        greaterThan(panelRect.right - 80),
-        reason: 'Keyboard toggle should be near the top-right corner.',
+        keyboardRect.bottom,
+        lessThanOrEqualTo(streamRect.top),
+        reason: 'Keyboard toggle should not cover the stream control row.',
       );
     });
   });

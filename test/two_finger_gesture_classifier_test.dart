@@ -8,6 +8,8 @@ void main() {
         isMobile: true,
         cumulativeDistanceChangeRatio: 0.12,
         cumulativeCenterMovement: 24,
+        cumulativeCenterDeltaX: 6,
+        cumulativeCenterDeltaY: 18,
       );
       expect(type, TwoFingerGestureType.zoom);
     });
@@ -19,8 +21,21 @@ void main() {
         isMobile: true,
         cumulativeDistanceChangeRatio: 0.01,
         cumulativeCenterMovement: 30,
+        cumulativeCenterDeltaX: 2,
+        cumulativeCenterDeltaY: 28,
       );
       expect(type, TwoFingerGestureType.scroll);
+    });
+
+    test('mobile avoids scroll when movement is not vertical-dominant', () {
+      final type = decideTwoFingerGestureType(
+        isMobile: true,
+        cumulativeDistanceChangeRatio: 0.01,
+        cumulativeCenterMovement: 40,
+        cumulativeCenterDeltaX: 30,
+        cumulativeCenterDeltaY: 10,
+      );
+      expect(type, TwoFingerGestureType.undecided);
     });
 
     test('scroll activation is debounced by time and distance', () {
@@ -49,6 +64,16 @@ void main() {
           isMobile: true,
           sinceStart: const Duration(milliseconds: 120),
           accumulatedScrollDistance: 12,
+          decisionDebounce: const Duration(milliseconds: 90),
+        ),
+        isFalse,
+      );
+
+      expect(
+        shouldActivateTwoFingerScroll(
+          isMobile: true,
+          sinceStart: const Duration(milliseconds: 120),
+          accumulatedScrollDistance: 14,
           decisionDebounce: const Duration(milliseconds: 90),
         ),
         isTrue,
