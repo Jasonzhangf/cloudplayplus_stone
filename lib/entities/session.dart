@@ -2224,7 +2224,13 @@ class StreamingSession {
         await _sendTextToIterm2Session(sessionId: sessionId, text: '\t');
         return true;
       case 0x0D: // Enter
-        await _sendTextToIterm2Session(sessionId: sessionId, text: '\r');
+        // Some apps running inside a terminal (or terminal integrations) differentiate
+        // between CR and LF. Treat Shift+Enter as LF to behave like "newline" in chat-like
+        // inputs while keeping plain Enter as CR for typical shells.
+        await _sendTextToIterm2Session(
+          sessionId: sessionId,
+          text: shift ? '\n' : '\r',
+        );
         return true;
       case 0x1B: // Escape
         await _sendTextToIterm2Session(sessionId: sessionId, text: '\x1b');

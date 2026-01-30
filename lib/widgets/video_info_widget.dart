@@ -102,6 +102,11 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
       previous: _previousVideoInfo,
       current: _videoInfo,
     );
+    final gopMs = computeGopMsFromSamples(
+      previous: _previousVideoInfo,
+      current: _videoInfo,
+    );
+    final gopText = formatGop(gopMs);
 
     return Container(
       margin: const EdgeInsets.all(8),
@@ -122,6 +127,7 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
               _buildInfoItem('分辨率', '${_videoInfo['width']}×${_videoInfo['height']}'),
               _buildInfoItem('帧率', '${(_videoInfo['fps'] as num).toStringAsFixed(1)} fps'),
               _buildInfoItem('码率', bitrateKbps > 0 ? '${bitrateKbps} kbps' : '-- kbps'),
+              _buildInfoItem('GOP', gopText),
               _buildInfoItem('编码', _videoInfo['codecType']?.toString() ?? '未知'),
               _buildInfoItem('解码器', _getDecoderDisplayName(_videoInfo['decoderImplementation'], _videoInfo)),
               _buildInfoItem('丢包率', '${_calculatePacketLossRate(_videoInfo).toStringAsFixed(1)}%'),
@@ -343,6 +349,11 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
       current: _videoInfo,
     );
     final bitrateText = bitrateKbps > 0 ? '${bitrateKbps}kbps' : '--kbps';
+    final gopMs = computeGopMsFromSamples(
+      previous: _previousVideoInfo,
+      current: _videoInfo,
+    );
+    final gopText = formatGop(gopMs);
 
     final host = WebrtcService.hostEncodingStatus.value;
     final hostMode = host?['mode']?.toString();
@@ -359,7 +370,7 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(
-        '${_videoInfo['width']}×${_videoInfo['height']} | 解码${fps}fps | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
+        '${_videoInfo['width']}×${_videoInfo['height']} | 解码${fps}fps | GOP$gopText | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
         style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
       ),
     );
@@ -523,6 +534,33 @@ int computeBitrateKbpsFromSamples({
   final deltaBytes = curBytes - prevBytes;
   final kbps = (deltaBytes * 8 * 1000 / dtMs / 1000).round(); // bits/ms -> kbps
   return kbps.clamp(0, 200000);
+}
+
+@visibleForTesting
+int computeGopMsFromSamples({
+  required Map<String, dynamic> previous,
+  required Map<String, dynamic> current,
+}) {
+  if (previous.isEmpty) return 0;
+  final prevKf = (previous['keyFramesDecoded'] as num?)?.toInt() ?? 0;
+  final curKf = (current['keyFramesDecoded'] as num?)?.toInt() ?? 0;
+  final prevAt = (previous['sampleAtMs'] as num?)?.toInt() ?? 0;
+  final curAt = (current['sampleAtMs'] as num?)?.toInt() ?? 0;
+  if (curKf <= prevKf) return 0;
+  if (prevAt <= 0 || curAt <= prevAt) return 0;
+
+  final dtMs = (curAt - prevAt).clamp(1, 60000);
+  final dkf = (curKf - prevKf).clamp(1, 1000000);
+  return (dtMs / dkf).round().clamp(1, 60000);
+}
+
+String formatGop(int gopMs) {
+  if (gopMs <= 0) return '--';
+  if (gopMs >= 1000) {
+    final s = gopMs / 1000.0;
+    return s >= 10 ? '${s.toStringAsFixed(0)}s' : '${s.toStringAsFixed(1)}s';
+  }
+  return '${gopMs}ms';
 }
 
 /// 判断是否为硬件解码器
