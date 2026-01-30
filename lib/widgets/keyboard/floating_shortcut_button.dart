@@ -471,133 +471,138 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ),
               ],
             ),
-            child: Stack(
-              clipBehavior: Clip.none,
+            child: Column(
               children: [
-                Column(
-                  children: [
-                    _StreamControlRow(
-                      enabled: channelOpen,
-                      onPickMode: () => _showStreamModePicker(context, channel),
-                      onPickTarget: () => _openTargetPicker(context),
-                      onPickModeAndTarget: () => _showStreamModePicker(
-                          context, channel,
-                          openTarget: true),
-                      onApplyFavorite: (target) {
-                        _applyQuickTarget(target);
-                      },
-                      onFavoriteAction: (slot, action) {
-                        _handleFavoriteAction(context, slot, action);
-                      },
-                    ),
-                    const SizedBox(height: 6),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          IconButton(
-                            icon: const Icon(Icons.settings),
-                            onPressed: () {
-                              showModalBottomSheet(
-                                context: context,
-                                isScrollControlled: true,
-                                builder: (_) => _ShortcutSettingsSheet(
-                                  settings: _settings,
-                                  onSettingsChanged: _handleSettingsChanged,
-                                  sendComposingText: _sendComposingText,
-                                  onSendComposingTextChanged: (v) =>
-                                      setState(() => _sendComposingText = v),
-                                  quickTargetService: _quick,
-                                ),
-                              );
-                            },
-                            iconSize: 18,
-                            padding: const EdgeInsets.all(4),
-                            constraints: const BoxConstraints.tightFor(
-                                width: 30, height: 30),
-                            color: Colors.white.withValues(alpha: 0.92),
+                SizedBox(
+                  height: 32,
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: _StreamControlRow(
+                          enabled: channelOpen,
+                          onPickMode: () =>
+                              _showStreamModePicker(context, channel),
+                          onPickTarget: () => _openTargetPicker(context),
+                          onPickModeAndTarget: () => _showStreamModePicker(
+                            context,
+                            channel,
+                            openTarget: true,
                           ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: SingleChildScrollView(
-                              scrollDirection: Axis.horizontal,
-                              dragStartBehavior: DragStartBehavior.down,
-                              physics: const BouncingScrollPhysics(),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  _ArrowRow(
-                                    left: left,
-                                    up: up,
-                                    down: down,
-                                    right: right,
-                                    onShortcutPressed: _handleShortcutPressed,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  ShortcutBar(
-                                    settings: settingsWithoutArrows,
-                                    onSettingsChanged: _handleSettingsChanged,
-                                    onShortcutPressed: _handleShortcutPressed,
-                                    showSettingsButton: false,
-                                    showBackground: false,
-                                    padding: EdgeInsets.zero,
-                                    scrollable: false,
-                                  ),
-                                  // Allow the last shortcut to be fully visible while scrolling.
-                                  const SizedBox(width: 16),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
+                          onApplyFavorite: (target) {
+                            _applyQuickTarget(target);
+                          },
+                          onFavoriteAction: (slot, action) {
+                            _handleFavoriteAction(context, slot, action);
+                          },
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-                Positioned(
-                  right: 6,
-                  // Keep these actions out of the shortcut row hit area.
-                  top: 6,
-                  child: _TopRightActions(
-                    useSystemKeyboard: _useSystemKeyboard,
-                    onToggleKeyboard: () {
-                      if (_useSystemKeyboard) {
-                        // Toggle IME visibility (manual only).
-                        final want = !_systemKeyboardWanted;
-                        setState(() => _systemKeyboardWanted = want);
-                        ScreenController.setSystemImeActive(want);
-                        if (want) {
+                      const SizedBox(width: 6),
+                      _TopRightActions(
+                        useSystemKeyboard: _useSystemKeyboard,
+                        onToggleKeyboard: () {
+                          if (_useSystemKeyboard) {
+                            // Toggle IME visibility (manual only).
+                            final want = !_systemKeyboardWanted;
+                            setState(() => _systemKeyboardWanted = want);
+                            ScreenController.setSystemImeActive(want);
+                            if (want) {
+                              ScreenController.setShowVirtualKeyboard(false);
+                              FocusScope.of(context)
+                                  .requestFocus(_systemKeyboardFocusNode);
+                              SystemChannels.textInput
+                                  .invokeMethod('TextInput.show');
+                            } else {
+                              SystemChannels.textInput
+                                  .invokeMethod('TextInput.hide');
+                              FocusScope.of(context).unfocus();
+                            }
+                            return;
+                          }
+                          // If currently in virtual keyboard mode, switch to system IME and show it.
+                          setState(() {
+                            _useSystemKeyboard = true;
+                            _systemKeyboardWanted = true;
+                          });
+                          ScreenController.setSystemImeActive(true);
                           ScreenController.setShowVirtualKeyboard(false);
                           FocusScope.of(context)
                               .requestFocus(_systemKeyboardFocusNode);
                           SystemChannels.textInput
                               .invokeMethod('TextInput.show');
-                        } else {
+                        },
+                        onClose: () {
+                          setState(() => _isPanelVisible = false);
+                          _systemKeyboardWanted = false;
+                          ScreenController.setSystemImeActive(false);
+                          ScreenController.setShowVirtualKeyboard(false);
+                          ScreenController.setShortcutOverlayHeight(0);
+                          FocusScope.of(context).unfocus();
                           SystemChannels.textInput
                               .invokeMethod('TextInput.hide');
-                          FocusScope.of(context).unfocus();
-                        }
-                        return;
-                      }
-                      // If currently in virtual keyboard mode, switch to system IME and show it.
-                      setState(() {
-                        _useSystemKeyboard = true;
-                        _systemKeyboardWanted = true;
-                      });
-                      ScreenController.setSystemImeActive(true);
-                      ScreenController.setShowVirtualKeyboard(false);
-                      FocusScope.of(context)
-                          .requestFocus(_systemKeyboardFocusNode);
-                      SystemChannels.textInput.invokeMethod('TextInput.show');
-                    },
-                    onClose: () {
-                      setState(() => _isPanelVisible = false);
-                      _systemKeyboardWanted = false;
-                      ScreenController.setSystemImeActive(false);
-                      ScreenController.setShowVirtualKeyboard(false);
-                      ScreenController.setShortcutOverlayHeight(0);
-                      FocusScope.of(context).unfocus();
-                      SystemChannels.textInput.invokeMethod('TextInput.hide');
-                    },
+                        },
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Expanded(
+                  child: Row(
+                    children: [
+                      IconButton(
+                        icon: const Icon(Icons.settings),
+                        onPressed: () {
+                          showModalBottomSheet(
+                            context: context,
+                            isScrollControlled: true,
+                            builder: (_) => _ShortcutSettingsSheet(
+                              settings: _settings,
+                              onSettingsChanged: _handleSettingsChanged,
+                              sendComposingText: _sendComposingText,
+                              onSendComposingTextChanged: (v) =>
+                                  setState(() => _sendComposingText = v),
+                              quickTargetService: _quick,
+                            ),
+                          );
+                        },
+                        iconSize: 18,
+                        padding: const EdgeInsets.all(4),
+                        constraints: const BoxConstraints.tightFor(
+                            width: 30, height: 30),
+                        color: Colors.white.withValues(alpha: 0.92),
+                      ),
+                      const SizedBox(width: 4),
+                      Expanded(
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          dragStartBehavior: DragStartBehavior.down,
+                          physics: const BouncingScrollPhysics(),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              _ArrowRow(
+                                left: left,
+                                up: up,
+                                down: down,
+                                right: right,
+                                onShortcutPressed: _handleShortcutPressed,
+                              ),
+                              const SizedBox(width: 8),
+                              ShortcutBar(
+                                settings: settingsWithoutArrows,
+                                onSettingsChanged: _handleSettingsChanged,
+                                onShortcutPressed: _handleShortcutPressed,
+                                showSettingsButton: false,
+                                showBackground: false,
+                                padding: EdgeInsets.zero,
+                                scrollable: false,
+                              ),
+                              // Allow the last shortcut to be fully visible while scrolling.
+                              const SizedBox(width: 16),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
@@ -742,49 +747,46 @@ class _TopRightActions extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: Colors.black.withValues(alpha: 0.78),
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        height: 30,
-        padding: const EdgeInsets.symmetric(horizontal: 4),
-        decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.14),
-            width: 1,
+    return Container(
+      height: 30,
+      padding: const EdgeInsets.symmetric(horizontal: 4),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: Colors.white.withValues(alpha: 0.14),
+          width: 1,
+        ),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          IconButton(
+            key: const Key('shortcutPanelKeyboardToggle'),
+            icon: Icon(
+              useSystemKeyboard
+                  ? Icons.keyboard_alt_outlined
+                  : Icons.keyboard_outlined,
+            ),
+            tooltip: useSystemKeyboard ? '手机键盘' : '电脑键盘',
+            onPressed: onToggleKeyboard,
+            iconSize: 18,
+            padding: const EdgeInsets.all(0),
+            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+            color: Colors.white.withValues(alpha: 0.92),
           ),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            IconButton(
-              key: const Key('shortcutPanelKeyboardToggle'),
-              icon: Icon(
-                useSystemKeyboard
-                    ? Icons.keyboard_alt_outlined
-                    : Icons.keyboard_outlined,
-              ),
-              tooltip: useSystemKeyboard ? '手机键盘' : '电脑键盘',
-              onPressed: onToggleKeyboard,
-              iconSize: 18,
-              padding: const EdgeInsets.all(0),
-              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-              color: Colors.white.withValues(alpha: 0.92),
-            ),
-            const SizedBox(width: 2),
-            IconButton(
-              key: const Key('shortcutPanelClose'),
-              icon: const Icon(Icons.close),
-              tooltip: '关闭快捷栏',
-              onPressed: onClose,
-              iconSize: 18,
-              padding: const EdgeInsets.all(0),
-              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-              color: Colors.white.withValues(alpha: 0.92),
-            ),
-          ],
-        ),
+          const SizedBox(width: 2),
+          IconButton(
+            key: const Key('shortcutPanelClose'),
+            icon: const Icon(Icons.close),
+            tooltip: '关闭快捷栏',
+            onPressed: onClose,
+            iconSize: 18,
+            padding: const EdgeInsets.all(0),
+            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+            color: Colors.white.withValues(alpha: 0.92),
+          ),
+        ],
       ),
     );
   }
@@ -812,80 +814,76 @@ class _StreamControlRow extends StatelessWidget {
     final quick = QuickTargetService.instance;
     return SizedBox(
       height: 32,
-      child: Padding(
-        // Leave room for the top-right keyboard/close actions.
-        padding: const EdgeInsets.only(right: 64),
-        child: SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          physics: const BouncingScrollPhysics(),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              _PillButton(
-                icon: Icons.movie_filter,
-                label: '模式',
-                enabled: enabled,
-                onTap: onPickMode,
-              ),
-              const SizedBox(width: 6),
-              ValueListenableBuilder<StreamMode>(
-                valueListenable: quick.mode,
-                builder: (context, mode, _) {
-                  final label = mode == StreamMode.desktop
-                      ? '桌面'
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _PillButton(
+              icon: Icons.movie_filter,
+              label: '模式',
+              enabled: enabled,
+              onTap: onPickMode,
+            ),
+            const SizedBox(width: 6),
+            ValueListenableBuilder<StreamMode>(
+              valueListenable: quick.mode,
+              builder: (context, mode, _) {
+                final label = mode == StreamMode.desktop
+                    ? '桌面'
+                    : mode == StreamMode.window
+                        ? '窗口'
+                        : 'iTerm2';
+                return _PillButton(
+                  icon: mode == StreamMode.desktop
+                      ? Icons.desktop_windows
                       : mode == StreamMode.window
-                          ? '窗口'
-                          : 'iTerm2';
-                  return _PillButton(
-                    icon: mode == StreamMode.desktop
-                        ? Icons.desktop_windows
-                        : mode == StreamMode.window
-                            ? Icons.window
-                            : Icons.terminal,
-                    label: label,
-                    enabled: enabled,
-                    onTap: onPickModeAndTarget,
-                  );
-                },
-              ),
-              const SizedBox(width: 6),
-              _PillButton(
-                icon: Icons.list_alt,
-                label: '选择',
-                enabled: enabled,
-                onTap: onPickTarget,
-              ),
-              const SizedBox(width: 6),
-              ValueListenableBuilder<List<QuickStreamTarget?>>(
-                valueListenable: quick.favorites,
-                builder: (context, favorites, _) {
-                  return Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      for (int i = 0; i < favorites.length; i++) ...[
-                        _FavoriteButton(
-                          slot: i,
-                          target: favorites[i],
-                          enabled: enabled,
-                          onTap: favorites[i] == null
-                              ? null
-                              : () => onApplyFavorite(favorites[i]!),
-                          onLongPress: favorites[i] == null
-                              ? null
-                              : () => _showFavoriteMenu(
-                                    context,
-                                    slot: i,
-                                    onAction: onFavoriteAction,
-                                  ),
-                        ),
-                        const SizedBox(width: 6),
-                      ],
+                          ? Icons.window
+                          : Icons.terminal,
+                  label: label,
+                  enabled: enabled,
+                  onTap: onPickModeAndTarget,
+                );
+              },
+            ),
+            const SizedBox(width: 6),
+            _PillButton(
+              icon: Icons.list_alt,
+              label: '选择',
+              enabled: enabled,
+              onTap: onPickTarget,
+            ),
+            const SizedBox(width: 6),
+            ValueListenableBuilder<List<QuickStreamTarget?>>(
+              valueListenable: quick.favorites,
+              builder: (context, favorites, _) {
+                return Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (int i = 0; i < favorites.length; i++) ...[
+                      _FavoriteButton(
+                        slot: i,
+                        target: favorites[i],
+                        enabled: enabled,
+                        onTap: favorites[i] == null
+                            ? null
+                            : () => onApplyFavorite(favorites[i]!),
+                        onLongPress: favorites[i] == null
+                            ? null
+                            : () => _showFavoriteMenu(
+                                  context,
+                                  slot: i,
+                                  onAction: onFavoriteAction,
+                                ),
+                      ),
+                      const SizedBox(width: 6),
                     ],
-                  );
-                },
-              ),
-            ],
-          ),
+                  ],
+                );
+              },
+            ),
+          ],
         ),
       ),
     );

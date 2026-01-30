@@ -638,7 +638,8 @@ class StreamingSession {
                 .map((e) => e['codec']?.toString())
                 .where((e) => e != null && e.isNotEmpty)
                 .toList();
-            VLOG0('[codec] offer video codecs=$vlist payloads=${vcaps?.payloads}');
+            VLOG0(
+                '[codec] offer video codecs=$vlist payloads=${vcaps?.payloads}');
           } catch (_) {}
         }
       }
@@ -1302,8 +1303,7 @@ class StreamingSession {
       (payload) {
         if (selfSessionType != SelfSessionType.controlled) return;
         final dc = channel;
-        if (dc == null ||
-            dc.state != RTCDataChannelState.RTCDataChannelOpen) {
+        if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
           return;
         }
 
@@ -1311,8 +1311,9 @@ class StreamingSession {
         final windowId = (payload['windowId'] is num)
             ? (payload['windowId'] as num).toInt()
             : null;
-        final width =
-            (payload['width'] is num) ? (payload['width'] as num).toInt() : null;
+        final width = (payload['width'] is num)
+            ? (payload['width'] as num).toInt()
+            : null;
         final height = (payload['height'] is num)
             ? (payload['height'] as num).toInt()
             : null;
@@ -1604,125 +1605,126 @@ iterm2.run_until_complete(main)
       }
 
       if (type == 'window') {
-      if (streamSettings != null) {
-        streamSettings!.captureTargetType = 'window';
-        streamSettings!.iterm2SessionId = null;
-        streamSettings!.cropRect = null;
-      }
-      final windowIdAny = (payload is Map) ? payload['windowId'] : null;
-      final expectedTitleAny =
-          (payload is Map) ? payload['expectedTitle'] : null;
-      final expectedAppIdAny =
-          (payload is Map) ? payload['expectedAppId'] : null;
-      final expectedAppNameAny =
-          (payload is Map) ? payload['expectedAppName'] : null;
-      final expectedTitle = expectedTitleAny?.toString() ?? '';
-      final expectedAppId = expectedAppIdAny?.toString() ?? '';
-      final expectedAppName = expectedAppNameAny?.toString() ?? '';
-      final sources =
-          await desktopCapturer.getSources(types: [SourceType.Window]);
-      DesktopCapturerSource? selected;
-      if (windowIdAny is num) {
-        final wid = windowIdAny.toInt();
-        for (final s in sources) {
-          if (s.windowId == wid) {
-            selected = s;
-            break;
-          }
+        if (streamSettings != null) {
+          streamSettings!.captureTargetType = 'window';
+          streamSettings!.iterm2SessionId = null;
+          streamSettings!.cropRect = null;
         }
-      }
-      bool mismatch = false;
-      if (selected != null) {
-        if (expectedTitle.isNotEmpty) {
-          final t = (selected!.name).trim();
-          if (t != expectedTitle.trim() &&
-              !t.toLowerCase().contains(expectedTitle.trim().toLowerCase())) {
-            mismatch = true;
-          }
-        }
-        if (!mismatch && expectedAppId.isNotEmpty) {
-          final aid = (selected!.appId ?? '').trim();
-          if (aid.isNotEmpty && aid != expectedAppId.trim()) {
-            mismatch = true;
-          }
-        }
-        if (!mismatch && expectedAppName.isNotEmpty) {
-          final an = (selected!.appName ?? '').trim().toLowerCase();
-          final en = expectedAppName.trim().toLowerCase();
-          if (an.isNotEmpty && an != en && !an.contains(en)) {
-            mismatch = true;
-          }
-        }
-      }
-
-      DesktopCapturerSource? bestMatchByHint() {
-        if (expectedTitle.isEmpty &&
-            expectedAppId.isEmpty &&
-            expectedAppName.isEmpty) {
-          return null;
-        }
-        int scoreFor(DesktopCapturerSource s) {
-          int score = 0;
-          final title = s.name.trim();
-          final titleL = title.toLowerCase();
-          final expTitle = expectedTitle.trim();
-          final expTitleL = expTitle.toLowerCase();
-          final aid = (s.appId ?? '').trim();
-          final an = (s.appName ?? '').trim();
-          final anL = an.toLowerCase();
-          final expAid = expectedAppId.trim();
-          final expAn = expectedAppName.trim();
-          final expAnL = expAn.toLowerCase();
-          if (expAid.isNotEmpty && aid.isNotEmpty && aid == expAid) score += 5;
-          if (expAnL.isNotEmpty && anL.isNotEmpty) {
-            if (anL == expAnL) {
-              score += 4;
-            } else if (anL.contains(expAnL)) {
-              score += 2;
+        final windowIdAny = (payload is Map) ? payload['windowId'] : null;
+        final expectedTitleAny =
+            (payload is Map) ? payload['expectedTitle'] : null;
+        final expectedAppIdAny =
+            (payload is Map) ? payload['expectedAppId'] : null;
+        final expectedAppNameAny =
+            (payload is Map) ? payload['expectedAppName'] : null;
+        final expectedTitle = expectedTitleAny?.toString() ?? '';
+        final expectedAppId = expectedAppIdAny?.toString() ?? '';
+        final expectedAppName = expectedAppNameAny?.toString() ?? '';
+        final sources =
+            await desktopCapturer.getSources(types: [SourceType.Window]);
+        DesktopCapturerSource? selected;
+        if (windowIdAny is num) {
+          final wid = windowIdAny.toInt();
+          for (final s in sources) {
+            if (s.windowId == wid) {
+              selected = s;
+              break;
             }
           }
-          if (expTitleL.isNotEmpty && titleL.isNotEmpty) {
-            if (title == expTitle) {
-              score += 6;
-            } else if (titleL == expTitleL) {
+        }
+        bool mismatch = false;
+        if (selected != null) {
+          if (expectedTitle.isNotEmpty) {
+            final t = (selected!.name).trim();
+            if (t != expectedTitle.trim() &&
+                !t.toLowerCase().contains(expectedTitle.trim().toLowerCase())) {
+              mismatch = true;
+            }
+          }
+          if (!mismatch && expectedAppId.isNotEmpty) {
+            final aid = (selected!.appId ?? '').trim();
+            if (aid.isNotEmpty && aid != expectedAppId.trim()) {
+              mismatch = true;
+            }
+          }
+          if (!mismatch && expectedAppName.isNotEmpty) {
+            final an = (selected!.appName ?? '').trim().toLowerCase();
+            final en = expectedAppName.trim().toLowerCase();
+            if (an.isNotEmpty && an != en && !an.contains(en)) {
+              mismatch = true;
+            }
+          }
+        }
+
+        DesktopCapturerSource? bestMatchByHint() {
+          if (expectedTitle.isEmpty &&
+              expectedAppId.isEmpty &&
+              expectedAppName.isEmpty) {
+            return null;
+          }
+          int scoreFor(DesktopCapturerSource s) {
+            int score = 0;
+            final title = s.name.trim();
+            final titleL = title.toLowerCase();
+            final expTitle = expectedTitle.trim();
+            final expTitleL = expTitle.toLowerCase();
+            final aid = (s.appId ?? '').trim();
+            final an = (s.appName ?? '').trim();
+            final anL = an.toLowerCase();
+            final expAid = expectedAppId.trim();
+            final expAn = expectedAppName.trim();
+            final expAnL = expAn.toLowerCase();
+            if (expAid.isNotEmpty && aid.isNotEmpty && aid == expAid)
               score += 5;
-            } else if (titleL.contains(expTitleL) ||
-                expTitleL.contains(titleL)) {
-              score += 3;
+            if (expAnL.isNotEmpty && anL.isNotEmpty) {
+              if (anL == expAnL) {
+                score += 4;
+              } else if (anL.contains(expAnL)) {
+                score += 2;
+              }
+            }
+            if (expTitleL.isNotEmpty && titleL.isNotEmpty) {
+              if (title == expTitle) {
+                score += 6;
+              } else if (titleL == expTitleL) {
+                score += 5;
+              } else if (titleL.contains(expTitleL) ||
+                  expTitleL.contains(titleL)) {
+                score += 3;
+              }
+            }
+            return score;
+          }
+
+          DesktopCapturerSource? best;
+          int bestScore = 0;
+          for (final s in sources) {
+            final sc = scoreFor(s);
+            if (sc > bestScore) {
+              bestScore = sc;
+              best = s;
             }
           }
-          return score;
+          if (bestScore <= 0) return null;
+          return best;
         }
 
-        DesktopCapturerSource? best;
-        int bestScore = 0;
-        for (final s in sources) {
-          final sc = scoreFor(s);
-          if (sc > bestScore) {
-            bestScore = sc;
-            best = s;
+        if (selected == null || mismatch) {
+          final hint = bestMatchByHint();
+          if (hint != null) {
+            selected = hint;
           }
         }
-        if (bestScore <= 0) return null;
-        return best;
-      }
-
-      if (selected == null || mismatch) {
-        final hint = bestMatchByHint();
-        if (hint != null) {
-          selected = hint;
-        }
-      }
-      if (selected == null) return;
-      await _switchCaptureToSource(
-        selected,
-        extraCaptureTarget: const {
-          'captureTargetType': 'window',
-          'iterm2SessionId': null,
-          'cropRect': null,
-        },
-      );
-      return;
+        if (selected == null) return;
+        await _switchCaptureToSource(
+          selected,
+          extraCaptureTarget: const {
+            'captureTargetType': 'window',
+            'iterm2SessionId': null,
+            'cropRect': null,
+          },
+        );
+        return;
       }
 
       if (type == 'screen') {
@@ -1734,44 +1736,46 @@ iterm2.run_until_complete(main)
         final screens =
             await desktopCapturer.getSources(types: [SourceType.Screen]);
         if (screens.isEmpty) return;
-      DesktopCapturerSource? selected;
-      final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
-      final sourceId = sourceIdAny?.toString() ?? '';
-      if (sourceId.isNotEmpty) {
-        for (final s in screens) {
-          if (s.id == sourceId) {
-            selected = s;
-            break;
+        DesktopCapturerSource? selected;
+        final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
+        final sourceId = sourceIdAny?.toString() ?? '';
+        if (sourceId.isNotEmpty) {
+          for (final s in screens) {
+            if (s.id == sourceId) {
+              selected = s;
+              break;
+            }
           }
         }
-      }
-      selected ??= () {
-        final idx = streamSettings?.screenId ?? 0;
-        return (idx >= 0 && idx < screens.length) ? screens[idx] : screens.first;
-      }();
-      await _switchCaptureToSource(
-        selected,
-        extraCaptureTarget: const {
-          'captureTargetType': 'screen',
-          'iterm2SessionId': null,
-          'cropRect': null,
-        },
-      );
-      return;
+        selected ??= () {
+          final idx = streamSettings?.screenId ?? 0;
+          return (idx >= 0 && idx < screens.length)
+              ? screens[idx]
+              : screens.first;
+        }();
+        await _switchCaptureToSource(
+          selected,
+          extraCaptureTarget: const {
+            'captureTargetType': 'screen',
+            'iterm2SessionId': null,
+            'cropRect': null,
+          },
+        );
+        return;
       }
 
       if (type == 'iterm2') {
-      final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
-      final sessionId = sessionIdAny?.toString() ?? '';
-      if (sessionId.isEmpty) return;
-      if (streamSettings != null) {
-        streamSettings!.captureTargetType = 'iterm2';
-        streamSettings!.iterm2SessionId = sessionId;
-      }
+        final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
+        final sessionId = sessionIdAny?.toString() ?? '';
+        if (sessionId.isEmpty) return;
+        if (streamSettings != null) {
+          streamSettings!.captureTargetType = 'iterm2';
+          streamSettings!.iterm2SessionId = sessionId;
+        }
 
-      const runner = HostCommandRunner();
-      const timeout = Duration(seconds: 2);
-      const script = r'''
+        const runner = HostCommandRunner();
+        const timeout = Duration(seconds: 2);
+        const script = r'''
 import json
 import sys
 
@@ -1846,192 +1850,203 @@ async def main(connection):
 iterm2.run_until_complete(main)
 ''';
 
-      HostCommandResult meta;
-      try {
-        meta = await runner.run('python3', ['-c', script, sessionId],
-            timeout: timeout);
-      } catch (e) {
-        return;
-      }
-      if (meta.exitCode != 0) return;
-
-      int? windowId;
-      Map<String, dynamic>? metaAny;
-      try {
-        final any = jsonDecode(meta.stdoutText.trim());
-        if (any is Map) {
-          metaAny = any.map((k, v) => MapEntry(k.toString(), v));
-          if (metaAny!['windowId'] is num) {
-            windowId = (metaAny!['windowId'] as num).toInt();
-          }
+        HostCommandResult meta;
+        try {
+          meta = await runner.run('python3', ['-c', script, sessionId],
+              timeout: timeout);
+        } catch (e) {
+          return;
         }
-      } catch (_) {}
+        if (meta.exitCode != 0) return;
 
-      Map<String, double>? cropRectNorm;
-      int? iterm2MinWidth;
-      int? iterm2MinHeight;
-      if (metaAny != null) {
-        final frameAny = metaAny!['frame'];
-        final windowFrameAny = metaAny!['windowFrame'];
-        if (frameAny is Map && windowFrameAny is Map) {
-          final fx =
-              (frameAny['x'] is num) ? (frameAny['x'] as num).toDouble() : null;
-          final fy =
-              (frameAny['y'] is num) ? (frameAny['y'] as num).toDouble() : null;
-          final fw =
-              (frameAny['w'] is num) ? (frameAny['w'] as num).toDouble() : null;
-          final fh =
-              (frameAny['h'] is num) ? (frameAny['h'] as num).toDouble() : null;
-          final wx = (windowFrameAny['x'] is num)
-              ? (windowFrameAny['x'] as num).toDouble()
-              : 0.0;
-          final wy = (windowFrameAny['y'] is num)
-              ? (windowFrameAny['y'] as num).toDouble()
-              : 0.0;
-          final ww = (windowFrameAny['w'] is num)
-              ? (windowFrameAny['w'] as num).toDouble()
-              : null;
-          final wh = (windowFrameAny['h'] is num)
-              ? (windowFrameAny['h'] as num).toDouble()
-              : null;
-          if (fx != null &&
-              fy != null &&
-              fw != null &&
-              fh != null &&
-              ww != null &&
-              wh != null &&
-              ww > 0 &&
-              wh > 0) {
-            final res = computeIterm2CropRectNorm(
-              fx: fx,
-              fy: fy,
-              fw: fw,
-              fh: fh,
-              wx: wx,
-              wy: wy,
-              ww: ww,
-              wh: wh,
-            );
-            if (res != null) {
-              iterm2MinWidth = res.windowMinWidth;
-              iterm2MinHeight = res.windowMinHeight;
-              cropRectNorm = res.cropRectNorm;
-              VLOG0(
-                  '[iTerm2] cropRectNorm=$cropRectNorm tag=${res.tag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny');
+        int? windowId;
+        Map<String, dynamic>? metaAny;
+        try {
+          final any = jsonDecode(meta.stdoutText.trim());
+          if (any is Map) {
+            metaAny = any.map((k, v) => MapEntry(k.toString(), v));
+            if (metaAny!['windowId'] is num) {
+              windowId = (metaAny!['windowId'] as num).toInt();
+            }
+          }
+        } catch (_) {}
+
+        Map<String, double>? cropRectNorm;
+        String? cropTag;
+        double? cropPenalty;
+        int? iterm2MinWidth;
+        int? iterm2MinHeight;
+        if (metaAny != null) {
+          final frameAny = metaAny!['frame'];
+          final windowFrameAny = metaAny!['windowFrame'];
+          if (frameAny is Map && windowFrameAny is Map) {
+            final fx = (frameAny['x'] is num)
+                ? (frameAny['x'] as num).toDouble()
+                : null;
+            final fy = (frameAny['y'] is num)
+                ? (frameAny['y'] as num).toDouble()
+                : null;
+            final fw = (frameAny['w'] is num)
+                ? (frameAny['w'] as num).toDouble()
+                : null;
+            final fh = (frameAny['h'] is num)
+                ? (frameAny['h'] as num).toDouble()
+                : null;
+            final wx = (windowFrameAny['x'] is num)
+                ? (windowFrameAny['x'] as num).toDouble()
+                : 0.0;
+            final wy = (windowFrameAny['y'] is num)
+                ? (windowFrameAny['y'] as num).toDouble()
+                : 0.0;
+            final ww = (windowFrameAny['w'] is num)
+                ? (windowFrameAny['w'] as num).toDouble()
+                : null;
+            final wh = (windowFrameAny['h'] is num)
+                ? (windowFrameAny['h'] as num).toDouble()
+                : null;
+            if (fx != null &&
+                fy != null &&
+                fw != null &&
+                fh != null &&
+                ww != null &&
+                wh != null &&
+                ww > 0 &&
+                wh > 0) {
+              final res = computeIterm2CropRectNorm(
+                fx: fx,
+                fy: fy,
+                fw: fw,
+                fh: fh,
+                wx: wx,
+                wy: wy,
+                ww: ww,
+                wh: wh,
+              );
+              if (res != null) {
+                iterm2MinWidth = res.windowMinWidth;
+                iterm2MinHeight = res.windowMinHeight;
+                cropRectNorm = res.cropRectNorm;
+                cropTag = res.tag;
+                cropPenalty = res.penalty;
+                VLOG0(
+                    '[iTerm2] cropRectNorm=$cropRectNorm tag=${res.tag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny');
+              }
             }
           }
         }
-      }
 
-      final sources =
-          await desktopCapturer.getSources(types: [SourceType.Window]);
-      DesktopCapturerSource? selected;
-      if (windowId != null) {
-        for (final s in sources) {
-          if (s.windowId == windowId) {
-            selected = s;
-            break;
+        final sources =
+            await desktopCapturer.getSources(types: [SourceType.Window]);
+        DesktopCapturerSource? selected;
+        if (windowId != null) {
+          for (final s in sources) {
+            if (s.windowId == windowId) {
+              selected = s;
+              break;
+            }
           }
         }
-      }
-      DesktopCapturerSource? bestItermWindowByFrameMatch() {
-        if (iterm2MinWidth == null || iterm2MinHeight == null) return null;
-        final targetW = iterm2MinWidth!.toDouble();
-        final targetH = iterm2MinHeight!.toDouble();
+        DesktopCapturerSource? bestItermWindowByFrameMatch() {
+          if (iterm2MinWidth == null || iterm2MinHeight == null) return null;
+          final targetW = iterm2MinWidth!.toDouble();
+          final targetH = iterm2MinHeight!.toDouble();
 
-        bool isIterm(DesktopCapturerSource s) {
-          final an = (s.appName ?? '').toLowerCase();
-          final aid = (s.appId ?? '').toLowerCase();
-          return an.contains('iterm') || aid.contains('iterm');
-        }
-
-        double frameW(DesktopCapturerSource s) {
-          final f = s.frame;
-          if (f == null) return 0;
-          final w = (f['width'] ?? f['w']);
-          return w ?? 0.0;
-        }
-
-        double frameH(DesktopCapturerSource s) {
-          final f = s.frame;
-          if (f == null) return 0;
-          final h = (f['height'] ?? f['h']);
-          return h ?? 0.0;
-        }
-
-        DesktopCapturerSource? best;
-        double bestScore = double.infinity;
-        for (final s in sources) {
-          // Prefer iTerm2 windows; but allow fallback if metadata is missing.
-          final w = frameW(s);
-          final h = frameH(s);
-          if (w <= 0 || h <= 0) continue;
-          // iTerm2 frame sizes may be in a different scale space (points vs pixels).
-          // Try a small set of scale factors and pick the best match.
-          const scales = <double>[1.0, 2.0, 0.5];
-          double bestSizeScore = double.infinity;
-          for (final scale in scales) {
-            final tw = targetW * scale;
-            final th = targetH * scale;
-            final score = (w - tw).abs() + (h - th).abs();
-            if (score < bestSizeScore) bestSizeScore = score;
+          bool isIterm(DesktopCapturerSource s) {
+            final an = (s.appName ?? '').toLowerCase();
+            final aid = (s.appId ?? '').toLowerCase();
+            return an.contains('iterm') || aid.contains('iterm');
           }
 
-          // Additional soft constraint: aspect ratio similarity.
-          final aspect = w / h;
-          final targetAspect = targetW / targetH;
-          final aspectPenalty = ((aspect - targetAspect).abs() * 1200.0);
+          double frameW(DesktopCapturerSource s) {
+            final f = s.frame;
+            if (f == null) return 0;
+            final w = (f['width'] ?? f['w']);
+            return w ?? 0.0;
+          }
 
-          final sizeScore = bestSizeScore + aspectPenalty;
-          final itermPenalty = isIterm(s) ? 0.0 : 5000.0;
-          final score = sizeScore + itermPenalty;
-          if (score < bestScore) {
-            bestScore = score;
-            best = s;
+          double frameH(DesktopCapturerSource s) {
+            final f = s.frame;
+            if (f == null) return 0;
+            final h = (f['height'] ?? f['h']);
+            return h ?? 0.0;
+          }
+
+          DesktopCapturerSource? best;
+          double bestScore = double.infinity;
+          for (final s in sources) {
+            // Prefer iTerm2 windows; but allow fallback if metadata is missing.
+            final w = frameW(s);
+            final h = frameH(s);
+            if (w <= 0 || h <= 0) continue;
+            // iTerm2 frame sizes may be in a different scale space (points vs pixels).
+            // Try a small set of scale factors and pick the best match.
+            const scales = <double>[1.0, 2.0, 0.5];
+            double bestSizeScore = double.infinity;
+            for (final scale in scales) {
+              final tw = targetW * scale;
+              final th = targetH * scale;
+              final score = (w - tw).abs() + (h - th).abs();
+              if (score < bestSizeScore) bestSizeScore = score;
+            }
+
+            // Additional soft constraint: aspect ratio similarity.
+            final aspect = w / h;
+            final targetAspect = targetW / targetH;
+            final aspectPenalty = ((aspect - targetAspect).abs() * 1200.0);
+
+            final sizeScore = bestSizeScore + aspectPenalty;
+            final itermPenalty = isIterm(s) ? 0.0 : 5000.0;
+            final score = sizeScore + itermPenalty;
+            if (score < bestScore) {
+              bestScore = score;
+              best = s;
+            }
+          }
+          return best;
+        }
+
+        // iTerm2's `TerminalWindow.window_id` is not guaranteed to match macOS CGWindowID.
+        // If we can't find the window by ID, fall back to best match by window size.
+        selected ??= bestItermWindowByFrameMatch();
+        if (selected == null) {
+          for (final s in sources) {
+            if ((s.appName ?? '').toLowerCase().contains('iterm')) {
+              selected = s;
+              break;
+            }
           }
         }
-        return best;
-      }
-
-      // iTerm2's `TerminalWindow.window_id` is not guaranteed to match macOS CGWindowID.
-      // If we can't find the window by ID, fall back to best match by window size.
-      selected ??= bestItermWindowByFrameMatch();
-      if (selected == null) {
-        for (final s in sources) {
-          if ((s.appName ?? '').toLowerCase().contains('iterm')) {
-            selected = s;
-            break;
-          }
+        selected ??= sources.isNotEmpty ? sources.first : null;
+        if (selected == null) return;
+        if (streamSettings != null) {
+          streamSettings!.cropRect = cropRectNorm;
         }
-      }
-      selected ??= sources.isNotEmpty ? sources.first : null;
-      if (selected == null) return;
-      if (streamSettings != null) {
-        streamSettings!.cropRect = cropRectNorm;
-      }
-      final selectionDebug = <String, dynamic>{
-        'iterm2MetaWindowId': windowId,
-        'iterm2WindowFrame': metaAny?['windowFrame'],
-        'iterm2SessionFrame': metaAny?['frame'],
-        'matchedWindowId': selected.windowId,
-        'matchedTitle': selected.name,
-        'matchedAppId': selected.appId,
-        'matchedAppName': selected.appName,
-        'matchedFrame': selected.frame,
-      };
-      await _switchCaptureToSource(
-        selected,
-        extraCaptureTarget: {
-          'captureTargetType': 'iterm2',
-          'iterm2SessionId': sessionId,
-          'cropRect': cropRectNorm,
-          'iterm2WindowSelection': selectionDebug,
-        },
-        cropRectNormalized: cropRectNorm,
-        minWidthConstraint: iterm2MinWidth,
-        minHeightConstraint: iterm2MinHeight,
-      );
-      return;
+        final selectionDebug = <String, dynamic>{
+          'iterm2MetaWindowId': windowId,
+          'iterm2WindowFrame': metaAny?['windowFrame'],
+          'iterm2SessionFrame': metaAny?['frame'],
+          'iterm2CropRectNorm': cropRectNorm,
+          'iterm2CropTag': cropTag,
+          'iterm2CropPenalty': cropPenalty,
+          'matchedWindowId': selected.windowId,
+          'matchedTitle': selected.name,
+          'matchedAppId': selected.appId,
+          'matchedAppName': selected.appName,
+          'matchedFrame': selected.frame,
+        };
+        await _switchCaptureToSource(
+          selected,
+          extraCaptureTarget: {
+            'captureTargetType': 'iterm2',
+            'iterm2SessionId': sessionId,
+            'cropRect': cropRectNorm,
+            'iterm2WindowSelection': selectionDebug,
+          },
+          cropRectNormalized: cropRectNorm,
+          minWidthConstraint: iterm2MinWidth,
+          minHeightConstraint: iterm2MinHeight,
+        );
+        return;
       }
     });
   }
@@ -2122,7 +2137,8 @@ iterm2.run_until_complete(main)
       if (captureTypeAny != null) {
         streamSettings!.captureTargetType = captureTypeAny.toString();
       } else {
-        streamSettings!.captureTargetType = desktopSourceTypeToString[source.type];
+        streamSettings!.captureTargetType =
+            desktopSourceTypeToString[source.type];
       }
       final iterm2SessionIdAny = extraCaptureTarget?['iterm2SessionId'];
       streamSettings!.iterm2SessionId =
@@ -2130,8 +2146,8 @@ iterm2.run_until_complete(main)
 
       final cropAny = extraCaptureTarget?['cropRect'];
       if (streamSettings!.captureTargetType == 'iterm2' && cropAny is Map) {
-        streamSettings!.cropRect = cropAny.map((k, v) => MapEntry(
-            k.toString(), (v is num) ? (v as num).toDouble() : 0.0));
+        streamSettings!.cropRect = cropAny.map((k, v) =>
+            MapEntry(k.toString(), (v is num) ? (v as num).toDouble() : 0.0));
       } else {
         streamSettings!.cropRect = null;
       }
@@ -2139,12 +2155,12 @@ iterm2.run_until_complete(main)
     inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
         windowId: streamSettings?.windowId, cropRect: streamSettings?.cropRect);
 
-    final capType =
-        (extraCaptureTarget?['captureTargetType'] ?? streamSettings?.captureTargetType)
-            ?.toString();
+    final capType = (extraCaptureTarget?['captureTargetType'] ??
+            streamSettings?.captureTargetType)
+        ?.toString();
     if (capType == 'iterm2' && cropRectNormalized != null) {
-      unawaited(_maybeRenegotiateAfterCaptureSwitch(
-          reason: 'iterm2-crop-switch'));
+      unawaited(
+          _maybeRenegotiateAfterCaptureSwitch(reason: 'iterm2-crop-switch'));
     }
 
     channel?.send(
@@ -2181,8 +2197,7 @@ iterm2.run_until_complete(main)
     _lastRenegotiateAtMs = nowMs;
 
     // Only renegotiate when signaling state is stable; otherwise we risk "glare".
-    if (pc!.signalingState !=
-        RTCSignalingState.RTCSignalingStateStable) {
+    if (pc!.signalingState != RTCSignalingState.RTCSignalingStateStable) {
       return;
     }
 
@@ -2216,7 +2231,8 @@ iterm2.run_until_complete(main)
       });
       InputDebugService.instance.log('HOST renegotiate sent reason=$reason');
     } catch (e) {
-      InputDebugService.instance.log('HOST renegotiate failed reason=$reason err=$e');
+      InputDebugService.instance
+          .log('HOST renegotiate failed reason=$reason err=$e');
     }
   }
 
@@ -2444,8 +2460,8 @@ iterm2.run_until_complete(main)
 ''';
 
     try {
-      final res = await runner.run('python3', ['-c', script, sessionId, textB64],
-          timeout: timeout);
+      final res = await runner
+          .run('python3', ['-c', script, sessionId, textB64], timeout: timeout);
       if (res.exitCode != 0) return false;
       final out = res.stdoutText.trim();
       if (out.isEmpty) return true;

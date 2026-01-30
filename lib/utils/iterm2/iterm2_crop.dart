@@ -81,12 +81,31 @@ Iterm2CropComputationResult? computeIterm2CropRectNorm({
       top: (wy + wh) - (fy + fh),
       tag: 'alt: leftFromRight, topFromBottom'
     ),
+    // Some iTerm2 builds appear to return Session.frame already relative to its
+    // window (i.e. origin within [0..ww],[0..wh]). In that case, subtracting
+    // windowFrame origin will clamp to 0 and show the wrong panel (often the
+    // first/upper panel). Include window-relative hypotheses as a fallback.
+    (left: fx, top: fy, tag: 'winRel: fx, fy'),
+    (left: fx, top: wh - (fy + fh), tag: 'winRel: fx, topFromBottom'),
+    (left: ww - (fx + fw), top: fy, tag: 'winRel: leftFromRight, fy'),
+    (
+      left: ww - (fx + fw),
+      top: wh - (fy + fh),
+      tag: 'winRel: leftFromRight, topFromBottom'
+    ),
   ];
 
   double bestPenalty = 1e18;
   double bestLeft = wx - fx;
   double bestTop = wy - fy;
   String bestTag = 'doc: wx-fx, wy-fy';
+
+  int _priority(String tag) {
+    if (tag.startsWith('winRel:')) return 3;
+    if (tag.startsWith('rel:')) return 2;
+    if (tag.startsWith('alt:')) return 1;
+    return 0; // doc / unknown
+  }
 
   double scoreCandidate(double left, double top) {
     final overflow = overflowPenalty(
@@ -98,14 +117,16 @@ Iterm2CropComputationResult? computeIterm2CropRectNorm({
     // Penalize heavy clamping (often indicates wrong coordinate space).
     final clampedLeft = left.clamp(0.0, ww - wPx);
     final clampedTop = top.clamp(0.0, wh - hPx);
-    final clampPenalty =
-        (left - clampedLeft).abs() + (top - clampedTop).abs();
+    final clampPenalty = (left - clampedLeft).abs() + (top - clampedTop).abs();
     return overflow + clampPenalty * 2.0;
   }
 
+  const eps = 1e-6;
   for (final c in candidates) {
     final p = scoreCandidate(c.left, c.top);
-    if (p < bestPenalty) {
+    if (p < bestPenalty - eps ||
+        ((p - bestPenalty).abs() <= eps &&
+            _priority(c.tag) > _priority(bestTag))) {
       bestPenalty = p;
       bestLeft = c.left;
       bestTop = c.top;
@@ -131,4 +152,3 @@ Iterm2CropComputationResult? computeIterm2CropRectNorm({
     windowMinHeight: wh.round(),
   );
 }
-

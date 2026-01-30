@@ -17,10 +17,10 @@ void main() {
         wh: 800,
       );
       expect(res, isNotNull);
-      expect(res!.tag, 'doc: wx-fx, wy-fy');
+      expect(res!.tag, 'winRel: fx, fy');
       expect(res.penalty, closeTo(0.0, 1e-9));
-      expect(res.cropRectNorm['x'], closeTo(0.05, 1e-9));
-      expect(res.cropRectNorm['y'], closeTo(0.0625, 1e-9));
+      expect(res.cropRectNorm['x'], closeTo(0.45, 1e-9));
+      expect(res.cropRectNorm['y'], closeTo(0.4375, 1e-9));
       expect(res.cropRectNorm['w'], closeTo(0.3, 1e-9));
       expect(res.cropRectNorm['h'], closeTo(0.25, 1e-9));
     });
@@ -37,9 +37,9 @@ void main() {
         wh: 600,
       );
       expect(res, isNotNull);
-      expect(res!.tag, 'rel: fx-wx, fy-wy');
-      expect(res.cropRectNorm['x'], closeTo(100 / 800, 1e-9));
-      expect(res.cropRectNorm['y'], closeTo(50 / 600, 1e-9));
+      expect(res!.tag, 'winRel: fx, fy');
+      expect(res.cropRectNorm['x'], closeTo(200 / 800, 1e-9));
+      expect(res.cropRectNorm['y'], closeTo(150 / 600, 1e-9));
       expect(res.cropRectNorm['w'], closeTo(300 / 800, 1e-9));
       expect(res.cropRectNorm['h'], closeTo(200 / 600, 1e-9));
     });
@@ -64,6 +64,28 @@ void main() {
       expect(c['w']!, greaterThan(0));
       expect(c['h']!, greaterThan(0));
     });
+
+    test('falls back to window-relative frame when window origin mismatches',
+        () {
+      // Simulate: windowFrame is in screen coordinates, but session frame is already
+      // window-relative. Using rel/doc candidates would clamp to y=0 and show the
+      // wrong (top) panel; window-relative should win with minimal penalty.
+      final res = computeIterm2CropRectNorm(
+        fx: 0,
+        fy: 300,
+        fw: 800,
+        fh: 300,
+        wx: 2000,
+        wy: 1200,
+        ww: 800,
+        wh: 900,
+      );
+      expect(res, isNotNull);
+      expect(res!.tag.startsWith('winRel:'), isTrue);
+      expect(res.cropRectNorm['x'], closeTo(0.0, 1e-9));
+      expect(res.cropRectNorm['y'], closeTo(300 / 900, 1e-9));
+      expect(res.cropRectNorm['w'], closeTo(1.0, 1e-9));
+      expect(res.cropRectNorm['h'], closeTo(300 / 900, 1e-9));
+    });
   });
 }
-
