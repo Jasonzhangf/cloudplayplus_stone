@@ -571,8 +571,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
           _settings.shortcuts.where((s) => !_arrowIds.contains(s.id)).toList(),
     );
     final session = WebrtcService.currentRenderingSession;
-    final channel = session?.channel;
-    final hasSession = session != null;
+    final channel = WebrtcService.activeDataChannel;
+    final hasSession = session != null || channel != null;
     final channelOpen = channel != null &&
         channel.state == RTCDataChannelState.RTCDataChannelOpen;
 
