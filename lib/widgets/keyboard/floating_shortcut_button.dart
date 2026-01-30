@@ -32,6 +32,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   late ShortcutSettings _settings;
   bool _isPanelVisible = false;
   bool _useSystemKeyboard = true;
+  bool _systemKeyboardWanted = false;
+  bool _lastImeVisible = false;
   static const _arrowIds = {
     'arrow-left',
     'arrow-right',
@@ -65,19 +67,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     _systemKeyboardFocusNode.addListener(() {
       InputDebugService.instance
           .log('IME focus=${_systemKeyboardFocusNode.hasFocus}');
-      // Keep the hidden text client focused while the panel is open.
-      // Otherwise many Android IMEs will only deliver KeyEvent-based keys
-      // (e.g. Space) and stop delivering committed text (including Chinese).
-      if (!_systemKeyboardFocusNode.hasFocus &&
-          _isPanelVisible &&
-          _useSystemKeyboard) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted) return;
-          if (!_isPanelVisible || !_useSystemKeyboard) return;
-          FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
-          SystemChannels.textInput.invokeMethod('TextInput.show');
-        });
-      }
     });
     _initShortcuts();
   }
@@ -260,11 +249,25 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     // Keep this in sync with the panel height/offset below.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      if (_isPanelVisible &&
-          _useSystemKeyboard &&
+      final imeVisible = bottomInset > 0;
+      if (_lastImeVisible != imeVisible) {
+        _lastImeVisible = imeVisible;
+        if (!imeVisible && _systemKeyboardWanted) {
+          // User dismissed the IME (e.g. back button). Keep it dismissed until
+          // they explicitly tap the keyboard button again.
+          _systemKeyboardWanted = false;
+          ScreenController.setSystemImeActive(false);
+          if (_systemKeyboardFocusNode.hasFocus) {
+            FocusScope.of(context).unfocus();
+          }
+        }
+      }
+      // If the user explicitly wants system IME and we don't have focus, restore focus,
+      // but avoid forcing `TextInput.show` repeatedly.
+      if (_useSystemKeyboard &&
+          _systemKeyboardWanted &&
           !_systemKeyboardFocusNode.hasFocus) {
         FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
-        SystemChannels.textInput.invokeMethod('TextInput.show');
       }
       // Keep this roughly in sync with the toolbar height to lift the remote video.
       final inset = _isPanelVisible ? 86.0 : 0.0;
@@ -287,16 +290,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   child: InkWell(
                     onTap: () {
                       setState(() => _isPanelVisible = true);
-                      // Default: show system soft keyboard.
-                      if (_useSystemKeyboard) {
-                        ScreenController.setShowVirtualKeyboard(false);
-                        FocusScope.of(context)
-                            .requestFocus(_systemKeyboardFocusNode);
-                        SystemChannels.textInput.invokeMethod('TextInput.show');
-                      } else {
-                        SystemChannels.textInput.invokeMethod('TextInput.hide');
-                        ScreenController.setShowVirtualKeyboard(true);
-                      }
+                      // Do not auto-show any keyboard here. User will explicitly tap the keyboard button.
                     },
                     borderRadius: BorderRadius.circular(28),
                     child: Container(
@@ -566,23 +560,39 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                   child: _TopRightActions(
                     useSystemKeyboard: _useSystemKeyboard,
                     onToggleKeyboard: () {
-                      setState(() => _useSystemKeyboard = !_useSystemKeyboard);
                       if (_useSystemKeyboard) {
-                        ScreenController.setShowVirtualKeyboard(false);
-                        FocusScope.of(context)
-                            .requestFocus(_systemKeyboardFocusNode);
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
+                        // Toggle IME visibility (manual only).
+                        final want = !_systemKeyboardWanted;
+                        setState(() => _systemKeyboardWanted = want);
+                        ScreenController.setSystemImeActive(want);
+                        if (want) {
+                          ScreenController.setShowVirtualKeyboard(false);
+                          FocusScope.of(context)
+                              .requestFocus(_systemKeyboardFocusNode);
                           SystemChannels.textInput
                               .invokeMethod('TextInput.show');
-                        });
-                      } else {
-                        SystemChannels.textInput.invokeMethod('TextInput.hide');
-                        FocusScope.of(context).unfocus();
-                        ScreenController.setShowVirtualKeyboard(true);
+                        } else {
+                          SystemChannels.textInput
+                              .invokeMethod('TextInput.hide');
+                          FocusScope.of(context).unfocus();
+                        }
+                        return;
                       }
+                      // If currently in virtual keyboard mode, switch to system IME and show it.
+                      setState(() {
+                        _useSystemKeyboard = true;
+                        _systemKeyboardWanted = true;
+                      });
+                      ScreenController.setSystemImeActive(true);
+                      ScreenController.setShowVirtualKeyboard(false);
+                      FocusScope.of(context)
+                          .requestFocus(_systemKeyboardFocusNode);
+                      SystemChannels.textInput.invokeMethod('TextInput.show');
                     },
                     onClose: () {
                       setState(() => _isPanelVisible = false);
+                      _systemKeyboardWanted = false;
+                      ScreenController.setSystemImeActive(false);
                       ScreenController.setShowVirtualKeyboard(false);
                       ScreenController.setShortcutOverlayHeight(0);
                       FocusScope.of(context).unfocus();
@@ -749,6 +759,7 @@ class _TopRightActions extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           children: [
             IconButton(
+              key: const Key('shortcutPanelKeyboardToggle'),
               icon: Icon(
                 useSystemKeyboard
                     ? Icons.keyboard_alt_outlined
@@ -763,6 +774,7 @@ class _TopRightActions extends StatelessWidget {
             ),
             const SizedBox(width: 2),
             IconButton(
+              key: const Key('shortcutPanelClose'),
               icon: const Icon(Icons.close),
               tooltip: '关闭快捷栏',
               onPressed: onClose,

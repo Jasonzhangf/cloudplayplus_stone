@@ -956,7 +956,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     _scrollController.onScroll = (dx, dy) {
       if (dx.abs() > 0 || dy.abs() > 0) {
         final anchor = _lastScrollAnchor;
-        WebrtcService.currentRenderingSession?.inputController?.requestMouseScroll(
+        WebrtcService.currentRenderingSession?.inputController
+            ?.requestMouseScroll(
           dx * 10,
           dy * 10,
           anchorX: anchor?.x,
@@ -1013,7 +1014,14 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         InputController.cursorPositionCallback =
             onHardwareCursorPositionUpdateRequested;
       }
-      focusNode.requestFocus();
+      // On mobile, avoid stealing focus while user explicitly requests the system IME,
+      // otherwise the IME may flicker / lose input connection.
+      if (AppPlatform.isMobile && ScreenController.systemImeActive.value) {
+        return;
+      }
+      if (!focusNode.hasFocus) {
+        focusNode.requestFocus();
+      }
     });
     /*WebrtcService.audioStateChanged = onAudioRenderStateChanged;*/
     return ValueListenableBuilder<int>(

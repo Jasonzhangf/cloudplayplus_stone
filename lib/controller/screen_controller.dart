@@ -3,7 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:fullscreen_window/fullscreen_window.dart';
 
-
 //Manage which screens will be shown.
 class ScreenController {
   //isFullScreen means borderless occupy the whole device screen.
@@ -50,6 +49,15 @@ class ScreenController {
     }
   }
 
+  /// Whether the system IME (Android/iOS) is explicitly requested by the user.
+  /// Used to prevent other widgets from stealing focus and causing IME flicker.
+  static ValueNotifier<bool> systemImeActive = ValueNotifier(false);
+  static void setSystemImeActive(bool value) {
+    if (systemImeActive.value != value) {
+      systemImeActive.value = value;
+    }
+  }
+
   // Extra bottom inset reserved for in-app overlays (e.g. shortcut toolbar, in-app keyboard),
   // used to lift the remote video so it won't be covered by input UIs.
   static ValueNotifier<double> bottomOverlayInset = ValueNotifier(0);
@@ -86,7 +94,7 @@ class ScreenController {
   }
 
   static ValueNotifier<bool> showVirtualMouse = ValueNotifier(false);
-  
+
   static ValueNotifier<bool> showVideoInfo = ValueNotifier(false);
   static void setShowVideoInfo(bool value) {
     if (showVideoInfo.value != value) {
