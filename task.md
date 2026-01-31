@@ -775,3 +775,35 @@ P1（比例与 pane）：
 - macOS 权限/前台：确认不再弹系统选择 UI
 - 缩略图性能：窗口多时保持流畅（节流）
 - 切换稳定性：多次切换无绿屏/崩溃
+
+---
+
+# iTerm2 Panel 编码矩阵（本地 loopback 证据）
+
+> 目的：对 **iTerm2 panel 1.1.2** 做“不同帧率/码率组合”的编码效果截图（本地 loopback，不依赖手机/远端网络），你再据此确定码率/帧率策略门槛。
+
+## 运行方式（macOS）
+
+1) 确保 iTerm2 正在运行，并开启 Python API（本项目已有 iTerm2 sources 脚本）。
+2) 运行编码矩阵验证 App（会自动执行并退出）：
+
+```bash
+ITERM2_PANEL_TITLE=1.1.2 \
+FPS_LIST=60,30,15 \
+BITRATE_KBPS_LIST=2000,1000,500,250,125,80 \
+flutter run -d macos -t scripts/verify/verify_iterm2_panel_encoding_matrix_app.dart
+```
+
+## 输出内容
+
+- 输出目录：`build/verify/iterm2_panel_matrix/<timestamp>/`
+- 每个组合会生成：
+  - `case_..._remote_preview.png`（RTCVideoView 截图）
+  - `case_..._remote_track.png`（`track.captureFrame()` 结果）
+  - `case_....json`（帧尺寸、fps、bytes、codec mimeType 等统计）
+- 汇总：`manifest.json`
+
+## 验收点
+
+- 组合切换过程中不黑屏（每个 case `looksNonBlack=true`）
+- cropRect 对应 panel 1.1.2 的内容稳定（不会跳到 1.1.1 等其它 panel）

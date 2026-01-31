@@ -68,6 +68,7 @@ Package.resolved
 *.tmp
 *.bak
 *.bak2
+work items/iterm2_crop_verify/
 
 # Build artifacts
 android/build/
