@@ -134,6 +134,31 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
             return '${frames}f ${(seconds as num).toStringAsFixed(2)}s$methodText';
           }();
 
+    final uiPerf = WebrtcService.controllerRenderPerf.value;
+    String uiFpsText() {
+      final v = uiPerf?['uiFps'];
+      if (v is num && v > 0) return '${v.toStringAsFixed(1)} fps';
+      return '-- fps';
+    }
+
+    String uiTimeText() {
+      final avg = uiPerf?['uiAvgMs'];
+      final build = uiPerf?['uiBuildMs'];
+      final raster = uiPerf?['uiRasterMs'];
+      if (avg is num && avg > 0) {
+        final b = (build is num) ? build.toStringAsFixed(1) : '--';
+        final r = (raster is num) ? raster.toStringAsFixed(1) : '--';
+        return '${avg.toStringAsFixed(1)}ms (avg) / $b build / $r raster';
+      }
+      return '--';
+    }
+
+    String bottleneckText() {
+      final b = uiPerf?['bottleneck']?.toString();
+      if (b != null && b.isNotEmpty) return b;
+      return '--';
+    }
+
     return Container(
       margin: const EdgeInsets.all(8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -152,8 +177,9 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
             children: [
               _buildInfoItem(
                   '分辨率', '${_videoInfo['width']}×${_videoInfo['height']}'),
-              _buildInfoItem(
-                  '帧率', '${(_videoInfo['fps'] as num).toStringAsFixed(1)} fps'),
+              _buildInfoItem('解码帧率',
+                  '${(_videoInfo['fps'] as num).toStringAsFixed(1)} fps'),
+              _buildInfoItem('渲染帧率', uiFpsText()),
               _buildInfoItem(
                   '码率', bitrateKbps > 0 ? '${bitrateKbps} kbps' : '-- kbps'),
               _buildInfoItem('GOP', gopText),
@@ -167,6 +193,8 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
               _buildInfoItem('往返时延',
                   '${((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0)} ms'),
               _buildInfoItem('Buffer', bufferText),
+              _buildInfoItem('瓶颈', bottleneckText()),
+              _buildInfoItem('渲染耗时', uiTimeText()),
               _buildInfoItem(
                 '解码时间',
                 instantDecodeMs > 0

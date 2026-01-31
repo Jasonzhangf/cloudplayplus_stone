@@ -19,6 +19,10 @@ class WebrtcService {
   // Host-side encoder target state (bitrate/fps/mode), reported via DataChannel.
   static final ValueNotifier<Map<String, dynamic>?> hostEncodingStatus =
       ValueNotifier<Map<String, dynamic>?>(null);
+  // Controller-side UI render performance sampled from Flutter frame timings.
+  // Updated by GlobalRemoteScreenRenderer once per second.
+  static final ValueNotifier<Map<String, dynamic>?> controllerRenderPerf =
+      ValueNotifier<Map<String, dynamic>?>(null);
 
   // DataChannel can exist even before we receive the first video track. Some UI
   // flows (target switching / iterm2 panel selection) rely on it. Keep a

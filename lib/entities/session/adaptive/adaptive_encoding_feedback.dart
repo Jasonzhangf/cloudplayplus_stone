@@ -119,7 +119,12 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     // Allow controller to disable adaptive feedback loop.
     if (mode == 'off') return;
 
-    final renderFpsAny = payload['renderFps'];
+    // Controller reports both:
+    // - rxFps: frames actually decoded (new video frames)
+    // - uiFps/renderFps: Flutter UI rendering fps (can remain high even when repeating frames)
+    final rxFpsAny =
+        payload['rxFps'] ?? payload['decodeFps'] ?? payload['renderFps'];
+    final uiFpsAny = payload['uiFps'] ?? payload['renderFps'];
     final widthAny = payload['width'];
     final heightAny = payload['height'];
     final rttAny = payload['rttMs'];
@@ -129,7 +134,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final freezeDeltaAny = payload['freezeDelta'];
     final decodeMsAny = payload['decodeMsPerFrame'];
 
-    final renderFps = (renderFpsAny is num) ? renderFpsAny.toDouble() : 0.0;
+    final rxFps = (rxFpsAny is num) ? rxFpsAny.toDouble() : 0.0;
+    final uiFps = (uiFpsAny is num) ? uiFpsAny.toDouble() : 0.0;
     final width = (widthAny is num) ? widthAny.toInt() : 0;
     final height = (heightAny is num) ? heightAny.toInt() : 0;
     final rttMs = (rttAny is num) ? rttAny.toDouble() : 0.0;
@@ -139,13 +145,27 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final freezeDelta = (freezeDeltaAny is num) ? freezeDeltaAny.toInt() : 0;
     final decodeMsPerFrame = (decodeMsAny is num) ? decodeMsAny.toInt() : 0;
 
-    if (renderFps <= 0 || width <= 0 || height <= 0) return;
+    if (rxFps <= 0 || width <= 0 || height <= 0) return;
+
+    if (uiFps > 0 &&
+        (DateTime.now().millisecondsSinceEpoch - _adaptiveLastFpsChangeAtMs) >
+            2200) {
+      // Optional debug signal (not used for decisions).
+      // Keep it lightweight: only log when it's clearly different.
+      final diff = (uiFps - rxFps).abs();
+      if (diff >= 10) {
+        InputDebugService.instance.log(
+            '[adaptive] stats rxFps=${rxFps.toStringAsFixed(1)} uiFps=${uiFps.toStringAsFixed(1)}');
+      }
+    }
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     // Smooth to avoid oscillations.
+    // NOTE: despite the name, this EWMA tracks receiver decoded FPS (rxFps),
+    // not Flutter UI fps (which may include repeated frames).
     _adaptiveRenderFpsEwma = _adaptiveRenderFpsEwma <= 0
-        ? renderFps
-        : (_adaptiveRenderFpsEwma * 0.65 + renderFps * 0.35);
+        ? rxFps
+        : (_adaptiveRenderFpsEwma * 0.65 + rxFps * 0.35);
     _adaptiveRttEwma = _adaptiveRttEwma <= 0
         ? rttMs
         : (_adaptiveRttEwma * 0.80 + rttMs * 0.20);

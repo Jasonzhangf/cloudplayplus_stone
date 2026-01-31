@@ -20,6 +20,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:hardware_simulator/hardware_simulator.dart';
@@ -126,6 +127,26 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   int _netBufferLastAppliedAtMs = 0;
   String _netBufferAppliedMethod = '';
   bool _netBufferUnsupported = false;
+
+  // Flutter UI render FPS/timing (separate from WebRTC decode FPS).
+  int _uiFramesSinceLastSample = 0;
+  int _uiJankSinceLastSample = 0;
+  int _uiTotalUsSinceLastSample = 0;
+  int _uiBuildUsSinceLastSample = 0;
+  int _uiRasterUsSinceLastSample = 0;
+  int _uiLastSampleAtMs = 0;
+
+  void _onFrameTimings(List<FrameTiming> timings) {
+    for (final t in timings) {
+      _uiFramesSinceLastSample++;
+      final totalUs = t.totalSpan.inMicroseconds;
+      _uiTotalUsSinceLastSample += totalUs;
+      _uiBuildUsSinceLastSample += t.buildDuration.inMicroseconds;
+      _uiRasterUsSinceLastSample += t.rasterDuration.inMicroseconds;
+      // "Jank" heuristic: > 34ms (worse than 30fps budget).
+      if (totalUs > 34000) _uiJankSinceLastSample++;
+    }
+  }
 
   void _resetTouchpadGestureState({bool lockSingleFinger = false}) {
     _touchpadPointers.clear();
@@ -336,11 +357,65 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
           }
         }
 
+        // Sample Flutter UI render FPS for diagnostics (separate from decode FPS).
+        final uiDtMs =
+            (_uiLastSampleAtMs > 0) ? (nowMs - _uiLastSampleAtMs) : 0;
+        final uiFrames = _uiFramesSinceLastSample;
+        final uiFps =
+            (uiDtMs > 0 && uiFrames > 0) ? (uiFrames * 1000.0 / uiDtMs) : 0.0;
+        final uiAvgMs = uiFrames > 0
+            ? (_uiTotalUsSinceLastSample / uiFrames) / 1000.0
+            : 0.0;
+        final uiBuildMs = uiFrames > 0
+            ? (_uiBuildUsSinceLastSample / uiFrames) / 1000.0
+            : 0.0;
+        final uiRasterMs = uiFrames > 0
+            ? (_uiRasterUsSinceLastSample / uiFrames) / 1000.0
+            : 0.0;
+        final uiJank = _uiJankSinceLastSample;
+
+        String bottleneck() {
+          if (lossFraction >= 0.03 || rttMs >= 450 || jitterMs >= 80) {
+            return '网络';
+          }
+          if (decodeMsPerFrame > 0 && decodeMsPerFrame >= 35) return '解码';
+          if (uiAvgMs > 0 && uiAvgMs >= 35) return '渲染';
+          if (freezeDelta > 0) return '卡顿';
+          return '正常';
+        }
+
+        WebrtcService.controllerRenderPerf.value = {
+          'uiFps': uiFps,
+          'uiAvgMs': uiAvgMs,
+          'uiBuildMs': uiBuildMs,
+          'uiRasterMs': uiRasterMs,
+          'uiJank': uiJank,
+          'rxFps': fps,
+          'decodeMsPerFrame': decodeMsPerFrame,
+          'freezeDelta': freezeDelta,
+          'lossFraction': lossFraction,
+          'rttMs': rttMs,
+          'jitterMs': jitterMs,
+          'rxKbps': rxKbps,
+          'bottleneck': bottleneck(),
+          'ts': nowMs,
+        };
+
+        _uiLastSampleAtMs = nowMs;
+        _uiFramesSinceLastSample = 0;
+        _uiJankSinceLastSample = 0;
+        _uiTotalUsSinceLastSample = 0;
+        _uiBuildUsSinceLastSample = 0;
+        _uiRasterUsSinceLastSample = 0;
+
         channel.send(
           RTCDataChannelMessage(
             jsonEncode({
               'adaptiveEncoding': {
-                'renderFps': fps,
+                // Backward-compatible: host should prefer rxFps when present.
+                'rxFps': fps,
+                'renderFps': uiFps,
+                'uiFps': uiFps,
                 'width': width,
                 'height': height,
                 'rttMs': rttMs,
@@ -1298,6 +1373,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   @override
   void initState() {
     super.initState();
+    SchedulerBinding.instance.addTimingsCallback(_onFrameTimings);
     _scrollController.onScroll = (dx, dy) {
       if (dx.abs() > 0 || dy.abs() > 0) {
         final anchor = _lastScrollAnchor;
@@ -2059,6 +2135,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   @override
   void dispose() {
     _adaptiveEncodingTimer?.cancel();
+    try {
+      SchedulerBinding.instance.removeTimingsCallback(_onFrameTimings);
+    } catch (_) {}
     focusNode.dispose();
     if (AppPlatform.isWindows) {
       HardwareSimulator.putImmersiveModeEnabled(false);
