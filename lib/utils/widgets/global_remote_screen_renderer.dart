@@ -29,6 +29,7 @@ import '../../controller/platform_key_map.dart';
 import '../../controller/screen_controller.dart';
 import '../../utils/input/ime_inset.dart';
 import '../../utils/input/two_finger_gesture.dart';
+import '../../utils/network/video_buffer_policy.dart';
 import 'cursor_change_widget.dart';
 import 'on_screen_remote_mouse.dart';
 import 'virtual_gamepad/control_event.dart';
@@ -115,6 +116,13 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   int _adaptivePrevPacketsReceived = 0;
   int _adaptivePrevPacketsLost = 0;
   int _adaptivePrevBytesReceived = 0;
+  int _adaptivePrevFreezeCount = 0;
+
+  int _netBufferTargetSeconds = 1;
+  int _netBufferLastAppliedSeconds = -1;
+  int _netBufferLastAppliedAtMs = 0;
+  String _netBufferAppliedMethod = '';
+  bool _netBufferUnsupported = false;
 
   void _resetTouchpadGestureState({bool lockSingleFinger = false}) {
     _touchpadPointers.clear();
@@ -161,6 +169,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         int packetsLost = 0;
         int bytesReceived = 0;
         double rttMs = 0.0;
+        double jitterMs = 0.0;
+        int freezeCount = 0;
 
         for (final report in stats) {
           if (report.type == 'inbound-rtp') {
@@ -174,6 +184,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   (values['packetsReceived'] as num?)?.toInt() ?? 0;
               packetsLost = (values['packetsLost'] as num?)?.toInt() ?? 0;
               bytesReceived = (values['bytesReceived'] as num?)?.toInt() ?? 0;
+              final jitterSec = (values['jitter'] as num?)?.toDouble() ?? 0.0;
+              jitterMs = jitterSec * 1000.0;
+              freezeCount = (values['freezeCount'] as num?)?.toInt() ?? 0;
             }
           } else if (report.type == 'candidate-pair') {
             final values = Map<String, dynamic>.from(report.values);
@@ -224,6 +237,65 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         _adaptivePrevPacketsReceived = packetsReceived;
         _adaptivePrevPacketsLost = packetsLost;
         _adaptivePrevBytesReceived = bytesReceived;
+
+        // Controller-side network buffer (Android best-effort).
+        if (!_netBufferUnsupported &&
+            StreamingSettings.enableNetworkBuffer &&
+            AppPlatform.isAndroid) {
+          final freezeDelta =
+              (freezeCount - _adaptivePrevFreezeCount).clamp(0, 1 << 30);
+          _adaptivePrevFreezeCount = freezeCount;
+          final want = computeTargetBufferSeconds(
+            input: VideoBufferPolicyInput(
+              jitterMs: jitterMs,
+              lossFraction: lossFraction,
+              rttMs: rttMs,
+              freezeDelta: freezeDelta,
+            ),
+            prevSeconds: _netBufferTargetSeconds,
+            minSeconds: StreamingSettings.networkBufferMinSeconds,
+            maxSeconds: StreamingSettings.networkBufferMaxSeconds,
+          );
+          _netBufferTargetSeconds = want;
+
+          // Avoid spamming platform calls.
+          final shouldApply = (want != _netBufferLastAppliedSeconds) &&
+              (nowMs - _netBufferLastAppliedAtMs) >= 900;
+          if (shouldApply) {
+            try {
+              final receivers = await session.pc!.getReceivers();
+              RTCRtpReceiver? video;
+              for (final r in receivers) {
+                if (r.track?.kind == 'video') {
+                  video = r;
+                  break;
+                }
+              }
+              video ??= receivers.isNotEmpty ? receivers.first : null;
+              if (video == null) return;
+
+              final res =
+                  await (video as dynamic).setJitterBufferMinimumDelay(
+                want.toDouble(),
+              );
+              bool ok = false;
+              String method = '';
+              if (res is ({bool ok, String method})) {
+                ok = res.ok;
+                method = res.method;
+              }
+              _netBufferLastAppliedSeconds = want;
+              _netBufferLastAppliedAtMs = nowMs;
+              _netBufferAppliedMethod = method;
+              if (!ok) {
+                // If unsupported, stop trying.
+                _netBufferUnsupported = true;
+              }
+            } catch (_) {
+              // Ignore failures; keep streaming.
+            }
+          }
+        }
 
         channel.send(
           RTCDataChannelMessage(

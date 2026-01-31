@@ -76,6 +76,13 @@ class StreamingSettings {
   // Adaptive encoding mode (controller -> host feedback loop).
   static EncodingMode encodingMode = EncodingMode.dynamic;
 
+  // Network smoothing buffer (controller-side, Android best-effort):
+  // When network fluctuates, increase minimum playout delay (1~10s) to reduce stutter.
+  // Note: This increases end-to-end latency significantly; keep it user-tunable.
+  static bool enableNetworkBuffer = true;
+  static int networkBufferMinSeconds = 1;
+  static int networkBufferMaxSeconds = 10;
+
   // 触控模式：0=触摸(默认), 1=触控板, 2=鼠标
   // 仅对触摸输入控制Windows设备有效
   static int touchInputMode = TouchInputMode.touch.index;
@@ -219,6 +226,21 @@ class StreamingSettings {
     isStreamingStateEnabled =
         SharedPreferencesManager.getBool('streamingState') ?? false;
     ScreenController.setShowVideoInfo(isStreamingStateEnabled!);
+
+    // Network buffer defaults:
+    enableNetworkBuffer =
+        SharedPreferencesManager.getBool('enableNetworkBuffer') ??
+            (AppPlatform.isMobile || AppPlatform.isAndroidTV);
+    networkBufferMinSeconds =
+        (SharedPreferencesManager.getInt('networkBufferMinSeconds') ?? 1)
+            .clamp(1, 10);
+    networkBufferMaxSeconds =
+        (SharedPreferencesManager.getInt('networkBufferMaxSeconds') ?? 10)
+            .clamp(1, 10);
+    if (networkBufferMinSeconds >= networkBufferMaxSeconds) {
+      networkBufferMinSeconds = 1;
+      networkBufferMaxSeconds = 10;
+    }
   }
 
   //Screen id setting is not global, so we need to call before start streaming.

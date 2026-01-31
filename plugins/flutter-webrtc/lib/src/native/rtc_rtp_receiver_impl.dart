@@ -46,6 +46,31 @@ class RTCRtpReceiverNative extends RTCRtpReceiver {
     }
   }
 
+  /// Best-effort: request WebRTC to increase the minimum jitter buffer delay
+  /// (Android only; other platforms may return ok=false).
+  Future<({bool ok, String method})> setJitterBufferMinimumDelay(
+      double delaySeconds) async {
+    try {
+      final response = await WebRTC.invokeMethod(
+        'rtpReceiverSetJitterBufferMinimumDelay',
+        <String, dynamic>{
+          'peerConnectionId': _peerConnectionId,
+          'rtpReceiverId': receiverId,
+          'delaySeconds': delaySeconds,
+        },
+      );
+      final ok = (response is Map && response['ok'] is bool)
+          ? (response['ok'] as bool)
+          : false;
+      final method = (response is Map && response['method'] != null)
+          ? response['method'].toString()
+          : '';
+      return (ok: ok, method: method);
+    } on PlatformException catch (_) {
+      return (ok: false, method: '');
+    }
+  }
+
   /// private:
   String _id;
   String _peerConnectionId;

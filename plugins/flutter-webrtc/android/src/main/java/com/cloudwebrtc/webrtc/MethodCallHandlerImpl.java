@@ -69,6 +69,7 @@ import org.webrtc.PeerConnectionFactory;
 import org.webrtc.PeerConnectionFactory.InitializationOptions;
 import org.webrtc.PeerConnectionFactory.Options;
 import org.webrtc.RtpCapabilities;
+import org.webrtc.RtpReceiver;
 import org.webrtc.RtpSender;
 import org.webrtc.SdpObserver;
 import org.webrtc.SessionDescription;
@@ -88,6 +89,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.UUID;
+import java.lang.reflect.Method;
 
 import io.flutter.plugin.common.BinaryMessenger;
 import io.flutter.plugin.common.EventChannel;
@@ -916,6 +918,13 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
       case "getReceivers": {
         String peerConnectionId = call.argument("peerConnectionId");
         getReceivers(peerConnectionId, result);
+        break;
+      }
+      case "rtpReceiverSetJitterBufferMinimumDelay": {
+        String peerConnectionId = call.argument("peerConnectionId");
+        String rtpReceiverId = call.argument("rtpReceiverId");
+        Double delaySeconds = call.argument("delaySeconds");
+        rtpReceiverSetJitterBufferMinimumDelay(peerConnectionId, rtpReceiverId, delaySeconds, result);
         break;
       }
       case "getTransceivers": {
@@ -2174,6 +2183,56 @@ public class MethodCallHandlerImpl implements MethodCallHandler, StateProvider {
     } else {
       pco.getReceivers(result);
     }
+  }
+
+  public void rtpReceiverSetJitterBufferMinimumDelay(
+      String peerConnectionId,
+      String rtpReceiverId,
+      Double delaySeconds,
+      Result result) {
+    PeerConnectionObserver pco = mPeerConnectionObservers.get(peerConnectionId);
+    if (pco == null || pco.getPeerConnection() == null) {
+      resultError("rtpReceiverSetJitterBufferMinimumDelay", "peerConnection is null", result);
+      return;
+    }
+    if (rtpReceiverId == null || rtpReceiverId.length() == 0) {
+      resultError("rtpReceiverSetJitterBufferMinimumDelay", "rtpReceiverId is null", result);
+      return;
+    }
+    if (delaySeconds == null || delaySeconds.isNaN() || delaySeconds.isInfinite()) {
+      resultError("rtpReceiverSetJitterBufferMinimumDelay", "delaySeconds is invalid", result);
+      return;
+    }
+
+    RtpReceiver receiver = pco.getRtpReceiverById(rtpReceiverId);
+    if (receiver == null) {
+      resultError("rtpReceiverSetJitterBufferMinimumDelay", "rtpReceiver is null", result);
+      return;
+    }
+
+    boolean ok = false;
+    String used = "";
+    // Best-effort: this API exists on some WebRTC Android builds.
+    // Use reflection so we don't hard-couple to a specific libwebrtc version.
+    try {
+      Method m = receiver.getClass().getMethod("setJitterBufferMinimumDelay", double.class);
+      m.invoke(receiver, delaySeconds.doubleValue());
+      ok = true;
+      used = "setJitterBufferMinimumDelay(double)";
+    } catch (Exception ignore) {}
+    if (!ok) {
+      try {
+        Method m = receiver.getClass().getMethod("setJitterBufferMinimumDelayMs", int.class);
+        m.invoke(receiver, (int) Math.round(delaySeconds.doubleValue() * 1000.0));
+        ok = true;
+        used = "setJitterBufferMinimumDelayMs(int)";
+      } catch (Exception ignore) {}
+    }
+
+    ConstraintsMap out = new ConstraintsMap();
+    out.putBoolean("ok", ok);
+    out.putString("method", used);
+    result.success(out.toMap());
   }
 
   public void getTransceivers(String peerConnectionId, Result result) {
