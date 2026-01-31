@@ -129,6 +129,10 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
         // When the built-in PC keyboard is shown, ensure system soft keyboard is hidden
         // to prevent layout overlap.
         WidgetsBinding.instance.addPostFrameCallback((_) {
+          // Do not auto-hide IME when user is editing local UI text (rename dialogs, etc).
+          if (ScreenController.localTextEditing.value) return;
+          // If the user explicitly requested the system IME (remote input), don't fight it.
+          if (ScreenController.systemImeActive.value) return;
           SystemChannels.textInput.invokeMethod('TextInput.hide');
         });
 

@@ -6,9 +6,11 @@ import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/utils/iterm2/iterm2_crop.dart';
+import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:typed_data';
+import 'package:flutter/services.dart';
 
 class StreamTargetSelectPage extends StatefulWidget {
   const StreamTargetSelectPage({super.key});
@@ -114,66 +116,15 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
     if (slot == null) return;
     final controller = TextEditingController(
         text: _quick.favorites.value[slot]?.alias ?? target.displayLabel);
+    ScreenController.setLocalTextEditing(true);
     final alias = await showModalBottomSheet<String>(
       context: context,
       isScrollControlled: true,
       builder: (context) {
-        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-        return AnimatedPadding(
-          duration: const Duration(milliseconds: 180),
-          curve: Curves.easeOut,
-          padding: EdgeInsets.only(bottom: bottomInset),
-          child: SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Align(
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      '设置快捷名称',
-                      style: TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: controller,
-                    autofocus: true,
-                    decoration: const InputDecoration(
-                      hintText: '最多5个汉字（可留空使用默认标题）',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(context),
-                          child: const Text('取消'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          onPressed: () =>
-                              Navigator.pop(context, controller.text.trim()),
-                          child: const Text('保存'),
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        );
+        return _ManualImeAliasSheet(controller: controller);
       },
     );
+    ScreenController.setLocalTextEditing(false);
     if (alias == null) return;
     final trimmed = alias.trim();
     await _quick.setFavorite(
@@ -266,9 +217,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
                           const Divider(height: 1, thickness: 0.5),
                       itemBuilder: (context, index) {
                         final s = sources[index];
-                        final title = s.title.isNotEmpty
-                            ? s.title
-                            : '屏幕 ${index + 1}';
+                        final title =
+                            s.title.isNotEmpty ? s.title : '屏幕 ${index + 1}';
                         final target = QuickStreamTarget(
                           mode: StreamMode.desktop,
                           id: s.id,
@@ -611,5 +561,125 @@ class _CropRectPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _CropRectPainter oldDelegate) {
     return oldDelegate.crop != crop;
+  }
+}
+
+class _ManualImeAliasSheet extends StatefulWidget {
+  final TextEditingController controller;
+
+  const _ManualImeAliasSheet({required this.controller});
+
+  @override
+  State<_ManualImeAliasSheet> createState() => _ManualImeAliasSheetState();
+}
+
+class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
+  final FocusNode _focusNode = FocusNode();
+  bool _imeEnabled = false;
+
+  @override
+  void dispose() {
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _toggleIme() {
+    final want = !_imeEnabled;
+    setState(() => _imeEnabled = want);
+    if (!want) {
+      try {
+        FocusScope.of(context).unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      } catch (_) {}
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        FocusScope.of(context).requestFocus(_focusNode);
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      } catch (_) {}
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  const Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        '设置快捷名称',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
+                    icon: Icon(
+                      _imeEnabled
+                          ? Icons.keyboard_hide_outlined
+                          : Icons.keyboard_alt_outlined,
+                    ),
+                    onPressed: _toggleIme,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: widget.controller,
+                focusNode: _focusNode,
+                autofocus: false,
+                readOnly: !_imeEnabled,
+                showCursor: _imeEnabled,
+                keyboardType:
+                    _imeEnabled ? TextInputType.text : TextInputType.none,
+                decoration: const InputDecoration(
+                  hintText: '点右上角键盘按钮开始输入（最多5个汉字，可留空）',
+                  border: OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          Navigator.pop(context, widget.controller.text.trim()),
+                      child: const Text('保存'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }

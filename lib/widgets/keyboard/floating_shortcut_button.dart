@@ -56,6 +56,49 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       TextEditingController();
   String _lastSystemKeyboardValue = '';
 
+  Future<T?> _runWithLocalTextEditing<T>(
+    BuildContext context,
+    Future<T?> Function() run,
+  ) async {
+    final prevLocal = ScreenController.localTextEditing.value;
+    final prevWanted = _systemKeyboardWanted;
+    final prevUseSystem = _useSystemKeyboard;
+
+    // Suspend remote-input IME management and virtual keyboard while editing local text.
+    ScreenController.setLocalTextEditing(true);
+    ScreenController.setShowVirtualKeyboard(false);
+    ScreenController.setSystemImeActive(false);
+
+    if (mounted) {
+      setState(() {
+        _systemKeyboardWanted = false;
+        _forceImeShowUntilMs = 0;
+      });
+    }
+    try {
+      FocusScope.of(context).unfocus();
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+
+    try {
+      return await run();
+    } finally {
+      ScreenController.setLocalTextEditing(prevLocal);
+      if (mounted) {
+        setState(() {
+          _useSystemKeyboard = prevUseSystem;
+          _systemKeyboardWanted = prevWanted;
+          if (prevWanted && _useSystemKeyboard) {
+            // Best effort: restore previously requested IME without oscillation.
+            _forceImeShowUntilMs = DateTime.now().millisecondsSinceEpoch + 900;
+          } else {
+            _forceImeShowUntilMs = 0;
+          }
+        });
+      }
+    }
+  }
+
   static const _modifierKeyCodes = <int>{
     0xA0, // ShiftLeft
     0xA1, // ShiftRight
@@ -899,66 +942,21 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         if (current == null) return;
         final controller =
             TextEditingController(text: current.alias ?? current.label);
-        final alias = await showModalBottomSheet<String>(
-          context: context,
-          isScrollControlled: true,
-          builder: (context) {
-            final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-            return AnimatedPadding(
-              duration: const Duration(milliseconds: 180),
-              curve: Curves.easeOut,
-              padding: EdgeInsets.only(bottom: bottomInset),
-              child: SafeArea(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '编辑名称',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w700,
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      TextField(
-                        controller: controller,
-                        autofocus: true,
-                        decoration: const InputDecoration(
-                          hintText: '显示名称（最多一行）',
-                          border: OutlineInputBorder(),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton(
-                              onPressed: () => Navigator.pop(context),
-                              child: const Text('取消'),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: ElevatedButton(
-                              onPressed: () => Navigator.pop(
-                                  context, controller.text.trim()),
-                              child: const Text('保存'),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
+        final alias =
+            await _runWithLocalTextEditing<String?>(context, () async {
+          return showModalBottomSheet<String>(
+            context: context,
+            isScrollControlled: true,
+            builder: (context) {
+              return _ManualImeTextEditSheet(
+                title: '编辑名称',
+                controller: controller,
+                hintText: '点右上角键盘按钮开始输入（最多一行）',
+                okText: '保存',
+              );
+            },
+          );
+        });
         if (alias == null) return;
         await _quick.renameFavorite(slot, alias);
         break;
@@ -966,6 +964,137 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         await _quick.deleteFavorite(slot);
         break;
     }
+  }
+}
+
+class _ManualImeTextEditSheet extends StatefulWidget {
+  final String title;
+  final TextEditingController controller;
+  final String hintText;
+  final String okText;
+
+  const _ManualImeTextEditSheet({
+    required this.title,
+    required this.controller,
+    required this.hintText,
+    required this.okText,
+  });
+
+  @override
+  State<_ManualImeTextEditSheet> createState() =>
+      _ManualImeTextEditSheetState();
+}
+
+class _ManualImeTextEditSheetState extends State<_ManualImeTextEditSheet> {
+  final FocusNode _focusNode = FocusNode();
+  bool _imeEnabled = false;
+
+  @override
+  void dispose() {
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _toggleIme() {
+    final want = !_imeEnabled;
+    setState(() => _imeEnabled = want);
+    if (!want) {
+      try {
+        FocusScope.of(context).unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      } catch (_) {}
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        FocusScope.of(context).requestFocus(_focusNode);
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      } catch (_) {}
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    return AnimatedPadding(
+      duration: const Duration(milliseconds: 180),
+      curve: Curves.easeOut,
+      padding: EdgeInsets.only(bottom: bottomInset),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        widget.title,
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
+                    icon: Icon(
+                      _imeEnabled
+                          ? Icons.keyboard_hide_outlined
+                          : Icons.keyboard_alt_outlined,
+                    ),
+                    onPressed: _toggleIme,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: widget.controller,
+                focusNode: _focusNode,
+                autofocus: false,
+                readOnly: !_imeEnabled,
+                showCursor: _imeEnabled,
+                keyboardType:
+                    _imeEnabled ? TextInputType.text : TextInputType.none,
+                enableSuggestions: _imeEnabled,
+                autocorrect: _imeEnabled,
+                decoration: InputDecoration(
+                  hintText: widget.hintText,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton(
+                      onPressed: () => Navigator.pop(context),
+                      child: const Text('取消'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: ElevatedButton(
+                      onPressed: () =>
+                          Navigator.pop(context, widget.controller.text.trim()),
+                      child: Text(widget.okText),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 }
 

@@ -58,6 +58,15 @@ class ScreenController {
     }
   }
 
+  /// Whether the app is currently showing a local text editor (e.g. rename dialog).
+  /// While this is true, remote-input IME management should not interfere.
+  static ValueNotifier<bool> localTextEditing = ValueNotifier(false);
+  static void setLocalTextEditing(bool value) {
+    if (localTextEditing.value != value) {
+      localTextEditing.value = value;
+    }
+  }
+
   // Extra bottom inset reserved for in-app overlays (e.g. shortcut toolbar, in-app keyboard),
   // used to lift the remote video so it won't be covered by input UIs.
   static ValueNotifier<double> bottomOverlayInset = ValueNotifier(0);
