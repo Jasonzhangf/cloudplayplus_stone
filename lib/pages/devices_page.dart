@@ -9,6 +9,7 @@ import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/services/lan/lan_address_service.dart';
 import 'package:cloudplayplus/services/lan/lan_connect_history_service.dart';
+import 'package:cloudplayplus/services/lan/lan_device_hint_codec.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:flutter/material.dart';
@@ -86,44 +87,57 @@ class _DevicesPageState extends State<DevicesPage> {
         }
 
         if (deviceInstance == null) {
-          deviceInstance = Device(
-            uid: device['owner_id'],
-            nickname: device['owner_nickname'],
-            devicename: device['device_name'],
-            devicetype: device['device_type'],
-            websocketSessionid: connId,
-            connective: device['connective'],
-            screencount: device['screen_count'],
-            lanAddrs: (device['lanAddrs'] is List)
-                ? (device['lanAddrs'] as List)
-                    .map((e) => e?.toString() ?? '')
-                    .where((e) => e.isNotEmpty)
-                    .toList(growable: false)
-                : const <String>[],
-            lanPort: (device['lanPort'] is num)
-                ? (device['lanPort'] as num).toInt()
-                : null,
-            lanEnabled: (device['lanEnabled'] is bool)
-                ? (device['lanEnabled'] as bool)
-                : false,
+          final decoded = LanDeviceNameCodec.decode(
+            (device['device_name'] ?? '').toString(),
           );
-        } else {
-          deviceInstance.devicename = device['device_name'];
-          deviceInstance.connective = device['connective'];
-          deviceInstance.screencount = device['screen_count'];
-          deviceInstance.websocketSessionid = connId;
-          deviceInstance.lanAddrs = (device['lanAddrs'] is List)
+          final hints = decoded.hints;
+          final lanEnabledFromPayload = (device['lanEnabled'] is bool)
+              ? (device['lanEnabled'] as bool)
+              : false;
+          final lanAddrsFromPayload = (device['lanAddrs'] is List)
               ? (device['lanAddrs'] as List)
                   .map((e) => e?.toString() ?? '')
                   .where((e) => e.isNotEmpty)
                   .toList(growable: false)
               : const <String>[];
-          deviceInstance.lanPort = (device['lanPort'] is num)
+          final lanPortFromPayload = (device['lanPort'] is num)
               ? (device['lanPort'] as num).toInt()
               : null;
+          deviceInstance = Device(
+            uid: device['owner_id'],
+            nickname: device['owner_nickname'],
+            devicename: decoded.name,
+            devicetype: device['device_type'],
+            websocketSessionid: connId,
+            connective: device['connective'],
+            screencount: device['screen_count'],
+            lanAddrs:
+                lanAddrsFromPayload.isNotEmpty ? lanAddrsFromPayload : (hints?.lanAddrs ?? const <String>[]),
+            lanPort: lanPortFromPayload ?? hints?.lanPort,
+            lanEnabled: lanEnabledFromPayload || (hints?.lanEnabled ?? false),
+          );
+        } else {
+          final decoded =
+              LanDeviceNameCodec.decode((device['device_name'] ?? '').toString());
+          deviceInstance.devicename = decoded.name;
+          deviceInstance.connective = device['connective'];
+          deviceInstance.screencount = device['screen_count'];
+          deviceInstance.websocketSessionid = connId;
+          final lanAddrsFromPayload = (device['lanAddrs'] is List)
+              ? (device['lanAddrs'] as List)
+                  .map((e) => e?.toString() ?? '')
+                  .where((e) => e.isNotEmpty)
+                  .toList(growable: false)
+              : const <String>[];
+          deviceInstance.lanAddrs = lanAddrsFromPayload.isNotEmpty
+              ? lanAddrsFromPayload
+              : (decoded.hints?.lanAddrs ?? const <String>[]);
+          deviceInstance.lanPort = (device['lanPort'] is num)
+              ? (device['lanPort'] as num).toInt()
+              : decoded.hints?.lanPort;
           deviceInstance.lanEnabled = (device['lanEnabled'] is bool)
               ? (device['lanEnabled'] as bool)
-              : false;
+              : (decoded.hints?.lanEnabled ?? false);
         }
 
         nextList.add(deviceInstance);

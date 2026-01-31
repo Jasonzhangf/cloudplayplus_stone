@@ -20,6 +20,7 @@ import '../utils/websocket.dart'
     if (dart.library.js) '../utils/websocket_web.dart';
 import 'app_info_service.dart';
 import 'lan/lan_address_service.dart';
+import 'lan/lan_device_hint_codec.dart';
 import 'lan/lan_signaling_host_server_platform.dart';
 import 'secure_storage_manager.dart';
 
@@ -244,7 +245,12 @@ class WebSocketService {
     } catch (_) {}
 
     send('updateDeviceInfo', {
-      'deviceName': ApplicationInfo.deviceName,
+      'deviceName': LanDeviceNameCodec.encode(
+        displayName: ApplicationInfo.deviceName,
+        lanEnabled: lanEnabled,
+        lanPort: lanPort,
+        lanAddrs: lanAddrs,
+      ),
       'deviceType': ApplicationInfo.deviceTypeName,
       'connective': ApplicationInfo.connectable,
       'screenCount': ApplicationInfo.screenCount,

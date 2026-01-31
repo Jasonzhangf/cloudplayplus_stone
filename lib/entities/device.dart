@@ -1,4 +1,5 @@
 import 'package:cloudplayplus/entities/session.dart';
+import 'package:cloudplayplus/services/lan/lan_device_hint_codec.dart';
 import 'package:flutter/foundation.dart';
 
 class Device {
@@ -37,6 +38,9 @@ class Device {
         lanEnabled = lanEnabled ?? false;
 
   static Device fromJson(Map<String, dynamic> deviceinfo) {
+    final decoded = LanDeviceNameCodec.decode(
+      (deviceinfo['device_name'] ?? '').toString(),
+    );
     final addrsAny = deviceinfo['lanAddrs'];
     final addrs = <String>[];
     if (addrsAny is List) {
@@ -45,21 +49,24 @@ class Device {
         if (s.isNotEmpty) addrs.add(s);
       }
     }
+    final hints = decoded.hints;
+    final lanEnabledAny = deviceinfo['lanEnabled'];
+    final lanEnabledFromPayload =
+        (lanEnabledAny is bool) ? lanEnabledAny : false;
+    final lanPortFromPayload = (deviceinfo['lanPort'] is num)
+        ? (deviceinfo['lanPort'] as num).toInt()
+        : null;
     return Device(
       uid: deviceinfo['owner_id'] as int,
       nickname: deviceinfo['owner_nickname'] as String,
-      devicename: deviceinfo['device_name'] as String,
+      devicename: decoded.name,
       devicetype: deviceinfo['device_type'] as String,
       websocketSessionid: deviceinfo['connection_id'] as String,
       connective: deviceinfo['connective'] as bool,
       screencount: deviceinfo['screen_count'] as int,
-      lanAddrs: addrs,
-      lanPort: (deviceinfo['lanPort'] is num)
-          ? (deviceinfo['lanPort'] as num).toInt()
-          : null,
-      lanEnabled: (deviceinfo['lanEnabled'] is bool)
-          ? (deviceinfo['lanEnabled'] as bool)
-          : false,
+      lanAddrs: addrs.isNotEmpty ? addrs : (hints?.lanAddrs ?? const <String>[]),
+      lanPort: lanPortFromPayload ?? hints?.lanPort,
+      lanEnabled: lanEnabledFromPayload || (hints?.lanEnabled ?? false),
     );
   }
 }

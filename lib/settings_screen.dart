@@ -937,6 +937,10 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                         _lanIpsFuture = LanSignalingHostServer.instance
                             .listLocalIpAddressesForDisplay();
                       });
+                      // Propagate LAN capability to other devices via cloud device list.
+                      try {
+                        WebSocketService.updateDeviceInfo();
+                      } catch (_) {}
                     },
                   ),
                   SettingsTile(
@@ -979,6 +983,9 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
                         _lanIpsFuture = LanSignalingHostServer.instance
                             .listLocalIpAddressesForDisplay();
                       });
+                      try {
+                        WebSocketService.updateDeviceInfo();
+                      } catch (_) {}
                     },
                   ),
                   SettingsTile(
