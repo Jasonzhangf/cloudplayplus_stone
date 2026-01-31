@@ -15,6 +15,7 @@ import '../../services/shared_preferences_manager.dart';
 import '../../services/webrtc_service.dart';
 import '../../services/stream_monkey_service.dart';
 import '../../controller/screen_controller.dart';
+import '../../services/streaming_manager.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/system_keyboard_delta.dart';
 import '../../utils/input/input_debug.dart';
@@ -487,7 +488,43 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     ScreenController.setShowVirtualKeyboard(false);
                     FocusScope.of(context)
                         .requestFocus(_systemKeyboardFocusNode);
-                    SystemChannels.textInput.invokeMethod('TextInput.show');
+                      SystemChannels.textInput.invokeMethod('TextInput.show');
+                  },
+                  onDisconnect: () async {
+                    final session = WebrtcService.currentRenderingSession;
+                    final device = session?.controlled;
+                    if (device == null) return;
+                    final ok = await showDialog<bool>(
+                          context: context,
+                          builder: (ctx) => AlertDialog(
+                            title: const Text('断开连接？'),
+                            content: const Text('将停止当前串流连接。'),
+                            actions: [
+                              TextButton(
+                                onPressed: () => Navigator.of(ctx).pop(false),
+                                child: const Text('取消'),
+                              ),
+                              ElevatedButton(
+                                onPressed: () => Navigator.of(ctx).pop(true),
+                                child: const Text('断开'),
+                              ),
+                            ],
+                          ),
+                        ) ??
+                        false;
+                    if (!ok) return;
+                    try {
+                      StreamingManager.stopStreaming(device);
+                    } catch (_) {}
+                    if (!mounted) return;
+                    setState(() => _isPanelVisible = false);
+                    _systemKeyboardWanted = false;
+                    _forceImeShowUntilMs = 0;
+                    ScreenController.setSystemImeActive(false);
+                    ScreenController.setShowVirtualKeyboard(false);
+                    ScreenController.setShortcutOverlayHeight(0);
+                    FocusScope.of(context).unfocus();
+                    SystemChannels.textInput.invokeMethod('TextInput.hide');
                   },
                   onClose: () {
                     setState(() => _isPanelVisible = false);
@@ -924,11 +961,13 @@ enum _FavoriteAction { rename, delete }
 class _TopRightActions extends StatelessWidget {
   final bool useSystemKeyboard;
   final VoidCallback onToggleKeyboard;
+  final VoidCallback onDisconnect;
   final VoidCallback onClose;
 
   const _TopRightActions({
     required this.useSystemKeyboard,
     required this.onToggleKeyboard,
+    required this.onDisconnect,
     required this.onClose,
   });
 
@@ -961,6 +1000,17 @@ class _TopRightActions extends StatelessWidget {
             padding: const EdgeInsets.all(0),
             constraints: const BoxConstraints.tightFor(width: 26, height: 26),
             color: Colors.white.withValues(alpha: 0.92),
+          ),
+          const SizedBox(width: 2),
+          IconButton(
+            key: const Key('shortcutPanelDisconnect'),
+            icon: const Icon(Icons.link_off),
+            tooltip: '断开连接',
+            onPressed: onDisconnect,
+            iconSize: 18,
+            padding: const EdgeInsets.all(0),
+            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+            color: Colors.redAccent.withValues(alpha: 0.95),
           ),
           const SizedBox(width: 2),
           IconButton(

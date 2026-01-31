@@ -268,6 +268,117 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
       // Best-effort: UI already has connection debug.
     }
   }
+
+  String _lanSummary(Device device) {
+    final addrs = device.lanAddrs;
+    if (addrs.isEmpty) return device.lanEnabled ? '已开启（等待同步 IP）' : '未开启';
+    final ranked = LanAddressService.instance.rankHostsForConnect(addrs);
+    final first = ranked.isNotEmpty ? ranked.first : addrs.first;
+    final extra = addrs.length > 1 ? ' +${addrs.length - 1}' : '';
+    final port = device.lanPort ?? kDefaultLanPort;
+    return '$first$extra :$port';
+  }
+
+  Future<void> _showLanInfoSheet(Device device) async {
+    final addrs = device.lanAddrs;
+    final ranked = addrs.isEmpty
+        ? const <String>[]
+        : LanAddressService.instance.rankHostsForConnect(addrs);
+    final port = device.lanPort ?? kDefaultLanPort;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) {
+        final canConnect = device.lanEnabled && addrs.isNotEmpty;
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.wifi_tethering),
+                title: const Text('局域网连接 (LAN/Tailscale)'),
+                subtitle: Text(
+                  device.lanEnabled ? 'Host 已开启，端口 $port' : 'Host 未开启局域网模式',
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: addrs.isEmpty
+                            ? null
+                            : () async {
+                                await Clipboard.setData(
+                                  ClipboardData(text: ranked.join('\n')),
+                                );
+                                if (!mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(content: Text('已复制 IP 列表')),
+                                );
+                              },
+                        icon: const Icon(Icons.copy),
+                        label: const Text('复制'),
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton.icon(
+                        onPressed: canConnect
+                            ? () async {
+                                Navigator.of(ctx).pop();
+                                await _connectViaLan(device);
+                              }
+                            : null,
+                        icon: const Icon(Icons.wifi_tethering),
+                        label: const Text('直连'),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              if (addrs.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                  child: Text(
+                    '暂无可用 IP（需要同账号设备在线同步，或在 Host 开启局域网模式）',
+                    style: TextStyle(color: Colors.grey),
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    itemCount: ranked.length,
+                    itemBuilder: (ctx, i) {
+                      final ip = ranked[i];
+                      return ListTile(
+                        leading: const Icon(Icons.lan),
+                        title: Text(ip),
+                        subtitle: Text('端口 $port'),
+                        trailing: IconButton(
+                          tooltip: '复制',
+                          icon: const Icon(Icons.copy),
+                          onPressed: () async {
+                            await Clipboard.setData(ClipboardData(text: ip));
+                            if (!mounted) return;
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(content: Text('已复制 IP')),
+                            );
+                          },
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
   /*void setAspectRatio(double ratio) {
     if (aspectRatio == ratio) return;
     aspectRatio = ratio;
@@ -467,8 +578,8 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                 if (!AppPlatform.isAndroidTV)
                   FloatingMenuPanel(
                     panelIcon: AppIcons.mainIcon,
-                    backgroundColor: Color(0xff00b0cb).withValues(alpha: 0.4),
-                    contentColor: Colors.white.withValues(alpha: 0.8),
+                    backgroundColor: Colors.black.withValues(alpha: 0.55),
+                    contentColor: Colors.white.withValues(alpha: 0.92),
                     onPressed: (index) async {
                       if (index == 0) {
                         await ScreenController.setIsFullScreen(
@@ -483,30 +594,19 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                             !ScreenController.onlyShowRemoteScreen);
                       }
                       if (index == 2) {
-                        ScreenController.setShowVirtualKeyboard(
-                            !ScreenController.showVirtualKeyboard.value);
-                      }
-                      if (index == 3) {
                         ScreenController.setShowVirtualMouse(
                             !ScreenController.showVirtualMouse.value);
                       }
-                      if (index == 4) {
+                      if (index == 3) {
                         ScreenController.setshowVirtualGamePad(
                             !ScreenController.showVirtualGamePad.value);
-                      }
-                      if (index == 5) {
-                        ScreenController.setshowDetailUseScrollView(true);
-                        ScreenController.setOnlyShowRemoteScreen(false);
-                        StreamingManager.stopStreaming(activeDevice);
                       }
                     },
                     buttons: const [
                       Icons.crop_free,
                       Icons.open_in_full,
-                      Icons.keyboard,
                       Icons.mouse,
                       Icons.gamepad,
-                      Icons.close,
                     ],
                   ),
               ],
@@ -637,6 +737,40 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                             ),
                           ],
                         ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Icon(Icons.wifi_tethering,
+                                size: 24, color: _iconColor),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    '局域网连接',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: Colors.grey,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    _lanSummary(widget.device),
+                                    style: const TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            TextButton(
+                              onPressed: () => _showLanInfoSheet(widget.device),
+                              child: const Text('查看'),
+                            ),
+                          ],
+                        ),
                       ],
                     ),
                   ),
@@ -726,19 +860,17 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                                   style: TextStyle(fontSize: 16)),
                             ),
                           ),
-                          if (widget.device.lanEnabled &&
-                              widget.device.lanAddrs.isNotEmpty)
-                            const SizedBox(height: 10),
-                          if (widget.device.lanEnabled &&
-                              widget.device.lanAddrs.isNotEmpty)
-                            SizedBox(
-                              width: double.infinity,
-                              child: OutlinedButton.icon(
-                                onPressed: () => _connectViaLan(widget.device),
-                                icon: const Icon(Icons.wifi_tethering),
-                                label: const Text('局域网直连 (LAN/Tailscale)'),
-                              ),
+                          const SizedBox(height: 10),
+                          SizedBox(
+                            width: double.infinity,
+                            child: OutlinedButton.icon(
+                              onPressed: widget.device.lanAddrs.isNotEmpty
+                                  ? () => _showLanInfoSheet(widget.device)
+                                  : null,
+                              icon: const Icon(Icons.wifi_tethering),
+                              label: const Text('局域网连接 (LAN/Tailscale)'),
                             ),
+                          ),
                           if (widget.device.devicetype == 'Windows')
                             const SizedBox(height: 12),
                           if (widget.device.devicetype == 'Windows')

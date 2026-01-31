@@ -214,17 +214,26 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
             style: TextStyle(color: Colors.white70, fontSize: 10)),
       );
 
-  Widget _buildInfoItem(String label, String value) => Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text('$label: ',
-              style: TextStyle(color: Colors.white70, fontSize: 10)),
-          Text(value,
+  Widget _buildInfoItem(String label, String value) => Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(
+              text: '$label: ',
+              style: TextStyle(color: Colors.white70, fontSize: 10),
+            ),
+            TextSpan(
+              text: value,
               style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 10,
-                  fontWeight: FontWeight.w500)),
-        ],
+                color: Colors.white,
+                fontSize: 10,
+                fontWeight: FontWeight.w500,
+              ),
+            ),
+          ],
+        ),
+        softWrap: true,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
       );
 
   double _calculatePacketLossRate(Map<String, dynamic> videoInfo) {
@@ -358,6 +367,10 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
       current: _videoInfo,
     );
     final bitrateText = bitrateKbps > 0 ? '${bitrateKbps}kbps' : '--kbps';
+    final instantDecodeMs = computeInstantDecodeTimeMsFromSamples(
+      previous: _previousVideoInfo,
+      current: _videoInfo,
+    );
     final gopMs = computeGopMsFromSamples(
       previous: _previousVideoInfo,
       current: _videoInfo,
@@ -378,9 +391,13 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
         color: Colors.black.withOpacity(0.6),
         borderRadius: BorderRadius.circular(4),
       ),
-      child: Text(
-        '${_videoInfo['width']}×${_videoInfo['height']} | 解码${fps}fps | GOP$gopText | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
-        style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Text(
+          '${_videoInfo['width']}×${_videoInfo['height']} | 解码${fps}fps | 解码${instantDecodeMs > 0 ? '${instantDecodeMs}ms' : '--'} | GOP$gopText | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
+          style: TextStyle(
+              color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
+        ),
       ),
     );
   }
