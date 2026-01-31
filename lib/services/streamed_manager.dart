@@ -292,10 +292,34 @@ class StreamedManager {
           };
         } else {
           if (AppPlatform.isDeskTop) {
-            // Default policy: always start with full desktop (screen) capture.
-            // Window capture (if needed) is switched at runtime via datachannel from controller.
-            settings.desktopSourceId = null;
-            settings.sourceType = 'screen';
+            // Respect controller-requested capture target on connect.
+            // Defaulting to full desktop can be too heavy (4K) for mobile decoders.
+            //
+            // If controller requests iTerm2 but didn't provide a concrete window,
+            // best-effort choose an iTerm2 window as the initial capture to avoid
+            // a full-screen 4K stream before panel crop is applied.
+            final ct = (settings.captureTargetType ?? settings.sourceType)
+                ?.toString()
+                .trim()
+                .toLowerCase();
+            if (ct == 'iterm2' &&
+                (settings.desktopSourceId == null ||
+                    settings.desktopSourceId!.isEmpty)) {
+              try {
+                final sources0 = await desktopCapturer.getSources(
+                  types: [SourceType.Window],
+                );
+                final iterm = sources0.where((s) {
+                  final app = (s.appName ?? '').toLowerCase();
+                  final name = (s.name ?? '').toLowerCase();
+                  return app.contains('iterm') || name.contains('iterm');
+                }).toList();
+                if (iterm.isNotEmpty) {
+                  settings.desktopSourceId = iterm.first.id;
+                  settings.sourceType = 'window';
+                }
+              } catch (_) {}
+            }
           }
           var sources = await desktopCapturer
               .getSources(types: [SourceType.Screen, SourceType.Window]);

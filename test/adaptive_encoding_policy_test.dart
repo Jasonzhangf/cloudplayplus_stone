@@ -16,8 +16,9 @@ void main() {
 
     test('target fps steps down to buckets', () {
       expect(pickAdaptiveTargetFps(renderFps: 28, currentFps: 60), 30);
-      expect(pickAdaptiveTargetFps(renderFps: 21, currentFps: 30), 20);
+      expect(pickAdaptiveTargetFps(renderFps: 21, currentFps: 30), 15);
       expect(pickAdaptiveTargetFps(renderFps: 10, currentFps: 30), 15);
+      expect(pickAdaptiveTargetFps(renderFps: 4, currentFps: 15), 5);
     });
 
     test('dynamic bitrate clamps to [1/4, full]', () {

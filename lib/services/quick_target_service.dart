@@ -82,7 +82,9 @@ class QuickTargetService {
 
   Future<void> init() async {
     final savedMode = SharedPreferencesManager.getInt(_kMode);
-    if (savedMode != null && savedMode >= 0 && savedMode < StreamMode.values.length) {
+    if (savedMode != null &&
+        savedMode >= 0 &&
+        savedMode < StreamMode.values.length) {
       mode.value = StreamMode.values[savedMode];
     }
 
@@ -158,7 +160,8 @@ class QuickTargetService {
     );
     lastDeviceHint.value = hint;
     await setLastDeviceUid(uid);
-    await SharedPreferencesManager.setString(_kLastDeviceHint, jsonEncode(hint.toJson()));
+    await SharedPreferencesManager.setString(
+        _kLastDeviceHint, jsonEncode(hint.toJson()));
   }
 
   Future<void> recordLastConnectedFromCaptureTargetChanged({
@@ -168,13 +171,11 @@ class QuickTargetService {
     // Persist last connected device for "resume reconnect" and UX restoration.
     await setLastDeviceUid(deviceUid);
 
-    final captureType =
-        (payload['captureTargetType'] ?? payload['sourceType'])
-            ?.toString()
-            .trim()
-            .toLowerCase();
-    final sourceType =
-        (payload['sourceType'])?.toString().trim().toLowerCase();
+    final captureType = (payload['captureTargetType'] ?? payload['sourceType'])
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final sourceType = (payload['sourceType'])?.toString().trim().toLowerCase();
 
     StreamMode targetMode = StreamMode.desktop;
     if (captureType == 'iterm2') {
@@ -188,22 +189,29 @@ class QuickTargetService {
     QuickStreamTarget? target;
     if (targetMode == StreamMode.iterm2) {
       final sessionId =
-          (payload['iterm2SessionId'] ?? payload['sessionId'])?.toString() ?? '';
+          (payload['iterm2SessionId'] ?? payload['sessionId'])?.toString() ??
+              '';
+      final widAny = payload['windowId'];
+      final wid = (widAny is num) ? widAny.toInt() : int.tryParse('$widAny');
       if (sessionId.isNotEmpty) {
         target = QuickStreamTarget(
           mode: StreamMode.iterm2,
           id: sessionId,
           label: 'iTerm2',
           appName: 'iTerm2',
+          windowId: wid,
         );
       }
     } else if (targetMode == StreamMode.window) {
       final windowIdAny = payload['windowId'];
-      final title = payload['title']?.toString() ?? payload['label']?.toString() ?? '';
+      final title =
+          payload['title']?.toString() ?? payload['label']?.toString() ?? '';
       final appId = payload['appId']?.toString();
       final appName = payload['appName']?.toString();
       final windowId = (windowIdAny is num) ? windowIdAny.toInt() : null;
-      final id = (windowId != null) ? windowId.toString() : (payload['desktopSourceId']?.toString() ?? '');
+      final id = (windowId != null)
+          ? windowId.toString()
+          : (payload['desktopSourceId']?.toString() ?? '');
       if (id.isNotEmpty) {
         target = QuickStreamTarget(
           mode: StreamMode.window,
@@ -262,7 +270,8 @@ class QuickTargetService {
     await SharedPreferencesManager.setStringList(_kFavorites, encoded);
   }
 
-  Future<void> applyTarget(RTCDataChannel? channel, QuickStreamTarget target) async {
+  Future<void> applyTarget(
+      RTCDataChannel? channel, QuickStreamTarget target) async {
     lastTarget.value = target;
     await SharedPreferencesManager.setString(_kLastTarget, target.encode());
     await setMode(target.mode);
@@ -280,11 +289,11 @@ class QuickTargetService {
         break;
       case StreamMode.window:
         if (target.windowId != null) {
-          await RemoteWindowService.instance
-              .selectWindow(channel, windowId: target.windowId!,
-                  expectedTitle: target.label,
-                  expectedAppId: target.appId,
-                  expectedAppName: target.appName);
+          await RemoteWindowService.instance.selectWindow(channel,
+              windowId: target.windowId!,
+              expectedTitle: target.label,
+              expectedAppId: target.appId,
+              expectedAppName: target.appName);
         }
         break;
       case StreamMode.iterm2:

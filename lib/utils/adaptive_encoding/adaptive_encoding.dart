@@ -26,21 +26,20 @@ int computeHighQualityBitrateKbps({
 ///
 /// Strategy:
 /// - If render FPS is lower than current, step down to a nearby bucket.
-/// - Keep a minimum of 15 fps.
+/// - Buckets tuned for "latency first" UX: 60 -> 30 -> 15 -> 5.
 int pickAdaptiveTargetFps({
   required double renderFps,
   required int currentFps,
-  int minFps = 15,
+  int minFps = 5,
 }) {
   final cur = currentFps <= 0 ? 30 : currentFps;
   if (renderFps <= 0) return cur;
 
   int bucket(double fps) {
-    if (fps >= 52) return 60;
-    if (fps >= 37) return 45;
-    if (fps >= 25) return 30;
-    if (fps >= 17) return 20;
-    return 15;
+    if (fps >= 50) return 60;
+    if (fps >= 22) return 30;
+    if (fps >= 10) return 15;
+    return 5;
   }
 
   final want = bucket(renderFps).clamp(minFps, cur);
@@ -79,14 +78,17 @@ int computeDynamicBitrateKbps({
 /// Adaptive minimum bitrate floor:
 /// - default: clamp to [full/4, full]
 /// - when encoder FPS already dropped to minimum (typically 15fps), allow
-///   going lower (full/8) to prioritize smoothness/latency.
+///   going lower (full/10) to prioritize smoothness/latency.
 int computeAdaptiveMinBitrateKbps({
   required int fullBitrateKbps,
   required int targetFps,
   int minFps = 15,
 }) {
-  final full = fullBitrateKbps.clamp(250, 20000);
-  final scale = (targetFps <= minFps) ? 0.125 : 0.25;
-  final min = (full * scale).round().clamp(250, full);
+  // Allow going below the legacy 250kbps floor so full/10 can actually take
+  // effect for 1080p-ish baselines (e.g. 2000kbps -> 200kbps).
+  const minAbsKbps = 80;
+  final full = fullBitrateKbps.clamp(minAbsKbps, 20000);
+  final scale = (targetFps <= minFps) ? 0.10 : 0.25;
+  final min = (full * scale).round().clamp(minAbsKbps, full);
   return min;
 }

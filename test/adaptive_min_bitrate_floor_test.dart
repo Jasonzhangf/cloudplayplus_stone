@@ -13,15 +13,14 @@ void main() {
     );
   });
 
-  test('computeAdaptiveMinBitrateKbps uses full/8 at min fps', () {
+  test('computeAdaptiveMinBitrateKbps uses full/10 at min fps', () {
     expect(
       computeAdaptiveMinBitrateKbps(
         fullBitrateKbps: 2000,
         targetFps: 15,
         minFps: 15,
       ),
-      250,
+      200,
     );
   });
 }
-

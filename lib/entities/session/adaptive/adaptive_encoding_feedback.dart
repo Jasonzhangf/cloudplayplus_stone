@@ -1,16 +1,20 @@
 part of streaming_session;
 
 extension _StreamingSessionAdaptiveEncoding on StreamingSession {
-  int _computeFullBitrateKbpsForCaptureType({
-    required int width,
-    required int height,
-  }) {
+  bool _isWindowLikeCaptureType() {
     final captureType =
         (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
             ?.toString()
             .trim()
             .toLowerCase();
-    final windowLike = captureType == 'window' || captureType == 'iterm2';
+    return captureType == 'window' || captureType == 'iterm2';
+  }
+
+  int _computeFullBitrateKbpsForCaptureType({
+    required int width,
+    required int height,
+  }) {
+    final windowLike = _isWindowLikeCaptureType();
 
     // For low-resolution window/panel streams, keep a higher bitrate floor
     // to preserve text clarity (especially terminals/chat apps).
@@ -24,13 +28,23 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     );
   }
 
+  int _computeBestBitrateKbpsForCaptureType({
+    required int fullBitrateKbps,
+  }) {
+    // "Best" bitrate only matters for full-desktop (often 4K) where we want to
+    // prefer 60fps when network allows. For window/panel, avoid overshooting.
+    if (_isWindowLikeCaptureType()) return fullBitrateKbps;
+    return (fullBitrateKbps * 1.5).round().clamp(fullBitrateKbps, 20000);
+  }
+
   void _sendHostEncodingStatus({
     required String mode,
     int? fullBitrateKbps,
     String? reason,
   }) {
     final dc = channel;
-    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen)
+      return;
     try {
       dc.send(
         RTCDataChannelMessage(
@@ -127,12 +141,17 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     _adaptiveRttEwma = _adaptiveRttEwma <= 0
         ? rttMs
         : (_adaptiveRttEwma * 0.80 + rttMs * 0.20);
-    _adaptiveLossEwma =
-        (_adaptiveLossEwma <= 0) ? loss : (_adaptiveLossEwma * 0.80 + loss * 0.20);
+    _adaptiveLossEwma = (_adaptiveLossEwma <= 0)
+        ? loss
+        : (_adaptiveLossEwma * 0.80 + loss * 0.20);
 
     final currentFpsRaw = streamSettings!.framerate ?? 30;
     final currentFps = currentFpsRaw <= 0 ? 30 : currentFpsRaw;
-    final minFps = 15;
+    // Two floors:
+    // - quality floor: 15fps (start allowing bitrate to drop below full/4)
+    // - absolute floor: 5fps (last resort)
+    const qualityFloorFps = 15;
+    const minFps = 5;
     const maxFps = 60;
 
     // Compute full bitrate baseline from rendered resolution.
@@ -142,8 +161,9 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         ? computedFull
         : ((_adaptiveFullBitrateKbps! * 0.70) + (computedFull * 0.30)).round();
     final full = _adaptiveFullBitrateKbps!;
+    final best = _computeBestBitrateKbpsForCaptureType(fullBitrateKbps: full);
 
-    final curBitrate = (streamSettings!.bitrate ?? full).clamp(250, 20000);
+    final curBitrate = (streamSettings!.bitrate ?? full).clamp(80, 20000);
     final rxKbpsAny = payload['rxKbps'];
     final rxKbps = (rxKbpsAny is num) ? rxKbpsAny.toDouble() : 0.0;
 
@@ -152,13 +172,15 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
 
     // High quality mode: keep bitrate at baseline (area-scaled), only adjust FPS down.
     if (mode == 'highquality' || mode == 'high_quality' || mode == 'hq') {
-      if (curBitrate != full && (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
-        streamSettings!.bitrate = full;
+      if (curBitrate != best &&
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
+        streamSettings!.bitrate = best;
         _adaptiveLastBitrateChangeAtMs = nowMs;
-        InputDebugService.instance.log('[adaptive] HQ bitrate -> ${full}kbps');
+        InputDebugService.instance.log('[adaptive] HQ bitrate -> ${best}kbps');
         _sendHostEncodingStatus(
             mode: mode, fullBitrateKbps: full, reason: 'hq-bitrate');
-        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-hq-bitrate');
+        await _maybeRenegotiateAfterCaptureSwitch(
+            reason: 'adaptive-hq-bitrate');
       }
       // HQ still allowed to adjust FPS down when receiver cannot keep up AND loss is low.
       final wantDown = pickAdaptiveTargetFps(
@@ -188,7 +210,8 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       InputDebugService.instance.log('[adaptive] init bitrate -> ${full}kbps');
       _sendHostEncodingStatus(
           mode: mode, fullBitrateKbps: full, reason: 'init-bitrate');
-      await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-init-bitrate');
+      await _maybeRenegotiateAfterCaptureSwitch(
+          reason: 'adaptive-init-bitrate');
     }
 
     // Policy:
@@ -209,26 +232,54 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final okRtt = _adaptiveRttEwma <= 380;
     final goodNetwork = veryLowLoss && goodRtt;
     final okNetwork = lowLoss && okRtt;
+    final maxAllowedBitrate = goodNetwork ? best : full;
 
     // Only treat low rxKbps as a congestion signal when *also* seeing
     // non-trivial loss or elevated RTT.
     final rxLooksLimited = rxKbps > 0 && rxKbps < (curBitrate * 0.60);
-    final maybeCongestedByRx =
-        rxLooksLimited && (_adaptiveLossEwma >= 0.012 || _adaptiveRttEwma >= 380);
+    final maybeCongestedByRx = rxLooksLimited &&
+        (_adaptiveLossEwma >= 0.012 || _adaptiveRttEwma >= 380);
 
-    final badNetwork =
-        _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 450 || maybeCongestedByRx;
+    final badNetwork = _adaptiveLossEwma >= 0.03 ||
+        _adaptiveRttEwma >= 450 ||
+        maybeCongestedByRx;
 
     // 1) Network bad: lower bitrate (down to a floor). When encoder FPS already
     // reached the minimum bucket (typically 15fps) and it's still not smooth,
     // allow lowering bitrate further (full/8) to prioritize smoothness/latency.
     if (badNetwork) {
+      // If we were in "best" bitrate, drop back to standard first.
+      if (curBitrate > full &&
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
+        streamSettings!.bitrate = full;
+        _adaptiveLastBitrateChangeAtMs = nowMs;
+        InputDebugService.instance
+            .log('[adaptive] net bad: drop best->$full (was $curBitrate)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'net-bad-drop-best');
+        await _maybeRenegotiateAfterCaptureSwitch(
+            reason: 'adaptive-net-bad-drop-best');
+        return;
+      }
+
+      // If we are trying 60fps and the network turns bad, drop to 30fps first.
+      if (currentFps > 30 && (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
+        streamSettings!.framerate = 30;
+        _adaptiveLastFpsChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[adaptive] net bad fps $currentFps -> 30 (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'net-bad-fps-30');
+        await _reapplyCurrentCaptureForAdaptiveFps();
+        return;
+      }
+
       final minBitrate = computeAdaptiveMinBitrateKbps(
         fullBitrateKbps: full,
         targetFps: currentFps,
-        minFps: minFps,
+        minFps: qualityFloorFps,
       );
-      final downFactor = (currentFps <= minFps) ? 0.65 : 0.80;
+      final downFactor = (currentFps <= qualityFloorFps) ? 0.65 : 0.80;
       final targetBitrate =
           (curBitrate * downFactor).round().clamp(minBitrate, full);
       if (targetBitrate < curBitrate &&
@@ -239,69 +290,95 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
             '[adaptive] net bad (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full)');
         _sendHostEncodingStatus(
             mode: mode, fullBitrateKbps: full, reason: 'net-bad-bitrate-down');
-        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-down');
+        await _maybeRenegotiateAfterCaptureSwitch(
+            reason: 'adaptive-bitrate-down');
         return;
       }
 
-      // If already near min bitrate but still bad, then reduce FPS a step.
-      final wantDown = pickAdaptiveTargetFps(
-        renderFps: _adaptiveRenderFpsEwma,
-        currentFps: currentFps,
-        minFps: minFps,
-      );
-      if (wantDown < currentFps &&
-          (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
-        streamSettings!.framerate = wantDown;
-        _adaptiveLastFpsChangeAtMs = nowMs;
-        InputDebugService.instance.log(
-            '[adaptive] net bad fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)})');
-        _sendHostEncodingStatus(
-            mode: mode, fullBitrateKbps: full, reason: 'net-bad-fps-down');
-        await _reapplyCurrentCaptureForAdaptiveFps();
+      // If already near min bitrate but still bad, then reduce FPS a step
+      // (30 -> 15 -> 5).
+      final nearMinBitrate = curBitrate <= (minBitrate * 1.05);
+      if (nearMinBitrate &&
+          (nowMs - _adaptiveLastFpsChangeAtMs) > 2500 &&
+          currentFps > minFps) {
+        int stepDown(int cur) {
+          if (cur > 30) return 30;
+          if (cur > qualityFloorFps) return qualityFloorFps;
+          return minFps;
+        }
+
+        final wantDown = stepDown(currentFps).clamp(minFps, currentFps);
+        if (wantDown < currentFps) {
+          streamSettings!.framerate = wantDown;
+          _adaptiveLastFpsChangeAtMs = nowMs;
+          InputDebugService.instance.log(
+              '[adaptive] net bad fps $currentFps -> $wantDown (minBitrate=$minBitrate render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)})');
+          _sendHostEncodingStatus(
+              mode: mode, fullBitrateKbps: full, reason: 'net-bad-fps-down');
+          await _reapplyCurrentCaptureForAdaptiveFps();
+        }
       }
       return;
     }
 
+    // If network is only OK (not "good"), do not keep the extra "best" headroom.
+    if (!goodNetwork &&
+        curBitrate > full &&
+        (nowMs - _adaptiveLastBitrateChangeAtMs) > 3500) {
+      streamSettings!.bitrate = full;
+      _adaptiveLastBitrateChangeAtMs = nowMs;
+      InputDebugService.instance
+          .log('[adaptive] net ok: clamp bitrate $curBitrate -> $full');
+      _sendHostEncodingStatus(
+          mode: mode, fullBitrateKbps: full, reason: 'net-ok-clamp-bitrate');
+      await _maybeRenegotiateAfterCaptureSwitch(
+          reason: 'adaptive-net-ok-clamp');
+      return;
+    }
+
     // 2) (Good/OK) network: raise bitrate toward full.
-    if ((okNetwork || goodNetwork) && curBitrate < full) {
-      final targetBitrate =
-          (curBitrate * 1.35).round().clamp(computeAdaptiveMinBitrateKbps(
-                fullBitrateKbps: full,
-                targetFps: currentFps,
-                minFps: minFps,
-              ), full);
+    if ((okNetwork || goodNetwork) && curBitrate < maxAllowedBitrate) {
+      final targetBitrate = (curBitrate * 1.35).round().clamp(
+          computeAdaptiveMinBitrateKbps(
+            fullBitrateKbps: full,
+            targetFps: currentFps,
+            minFps: qualityFloorFps,
+          ),
+          maxAllowedBitrate);
       if (targetBitrate > curBitrate &&
           (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = targetBitrate;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
-            '[adaptive] net good (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full)');
+            '[adaptive] net good (loss~${lossPct.toStringAsFixed(2)}% rtt~${_adaptiveRttEwma.toStringAsFixed(0)}ms) bitrate $curBitrate -> $targetBitrate (full=$full max=$maxAllowedBitrate)');
         _sendHostEncodingStatus(
             mode: mode, fullBitrateKbps: full, reason: 'net-good-bitrate-up');
-        await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-up');
+        await _maybeRenegotiateAfterCaptureSwitch(
+            reason: 'adaptive-bitrate-up');
         // Let bitrate settle before increasing fps.
         return;
       }
     }
 
-    // 2.5) If encoder FPS is already at minimum but receiver still can't keep up,
+    // 2.5) If encoder FPS is already at (quality) minimum but receiver still can't keep up,
     // reduce bitrate further even when loss/RTT look fine. This helps avoid
     // queue buildup (e.g. due to jitter buffer / decoder pressure).
-    if (currentFps <= minFps &&
+    if (currentFps <= qualityFloorFps &&
         _adaptiveRenderFpsEwma > 0 &&
-        _adaptiveRenderFpsEwma < (minFps - 1.5) &&
+        _adaptiveRenderFpsEwma < (qualityFloorFps - 1.5) &&
         (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
       final minBitrate = computeAdaptiveMinBitrateKbps(
         fullBitrateKbps: full,
         targetFps: currentFps,
-        minFps: minFps,
+        minFps: qualityFloorFps,
       );
-      final targetBitrate = (curBitrate * 0.65).round().clamp(minBitrate, full);
+      final targetBitrate =
+          (curBitrate * 0.65).round().clamp(minBitrate, maxAllowedBitrate);
       if (targetBitrate < curBitrate) {
         streamSettings!.bitrate = targetBitrate;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
-            '[adaptive] min fps but receiver low (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)}) bitrate $curBitrate -> $targetBitrate (full=$full)');
+            '[adaptive] min fps but receiver low (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)}) bitrate $curBitrate -> $targetBitrate (full=$full max=$maxAllowedBitrate)');
         _sendHostEncodingStatus(
             mode: mode, fullBitrateKbps: full, reason: 'min-fps-bitrate-down');
         await _maybeRenegotiateAfterCaptureSwitch(
@@ -311,15 +388,14 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     }
 
     // 3) If receiver keeps up and we are near full bitrate, try raise FPS toward 30.
-    final nearFullBitrate = curBitrate >= (full * 0.90).round();
-    if ((okNetwork || goodNetwork) && nearFullBitrate && currentFps < maxFps) {
+    final nearMaxBitrate = curBitrate >= (maxAllowedBitrate * 0.90).round();
+    if ((okNetwork || goodNetwork) && nearMaxBitrate && currentFps < maxFps) {
       // Only step up if the receiver is already matching current FPS (i.e. not struggling).
       final canStepUp = _adaptiveRenderFpsEwma >= (currentFps - 1);
       if (canStepUp && (nowMs - _adaptiveLastFpsChangeAtMs) > 6500) {
         int nextFps(int cur) {
-          if (cur < 20) return 20;
+          if (cur < qualityFloorFps) return qualityFloorFps;
           if (cur < 30) return 30;
-          if (cur < 45) return 45;
           return 60;
         }
 

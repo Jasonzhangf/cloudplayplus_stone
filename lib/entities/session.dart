@@ -397,7 +397,8 @@ class StreamingSession {
               if (selfSessionType == SelfSessionType.controller &&
                   (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
                 final quick = QuickTargetService.instance;
-                final desired = _restoreTargetSnapshot ?? quick.lastTarget.value;
+                final desired =
+                    _restoreTargetSnapshot ?? quick.lastTarget.value;
                 final shouldRestore =
                     (desired != null) && quick.restoreLastTargetOnConnect.value;
                 if (shouldRestore && channel != null) {
@@ -449,6 +450,11 @@ class StreamingSession {
               settings['captureTargetType'] = 'window';
             } else if (t.mode == StreamMode.iterm2) {
               // Start with iTerm2 intent; capture will be refined once datachannel opens.
+              if (t.windowId != null) {
+                settings['sourceType'] = 'window';
+                settings['windowId'] = t.windowId;
+                settings['desktopSourceId'] = t.windowId.toString();
+              }
               settings['captureTargetType'] = 'iterm2';
               settings['iterm2SessionId'] = t.id;
             } else {
@@ -597,8 +603,10 @@ class StreamingSession {
                 ?.toString()
                 .trim()
                 .toLowerCase();
-        final mode =
-            (streamSettings?.encodingMode ?? '').toString().trim().toLowerCase();
+        final mode = (streamSettings?.encodingMode ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
 
         final b = (streamSettings!.bitrate ?? 2000).clamp(250, 20000);
         streamSettings!.bitrate = b;
@@ -2375,8 +2383,8 @@ class StreamingSession {
             streamSettings?.captureTargetType)
         ?.toString();
     if (capType == 'iterm2' && cropRectNormalized != null) {
-      unawaited(
-          this._maybeRenegotiateAfterCaptureSwitch(reason: 'iterm2-crop-switch'));
+      unawaited(this
+          ._maybeRenegotiateAfterCaptureSwitch(reason: 'iterm2-crop-switch'));
     }
 
     channel?.send(
