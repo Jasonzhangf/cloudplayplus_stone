@@ -296,8 +296,8 @@ class StreamedManager {
             // Defaulting to full desktop can be too heavy (4K) for mobile decoders.
             //
             // If controller requests iTerm2 but didn't provide a concrete window,
-            // best-effort choose an iTerm2 window as the initial capture to avoid
-            // a full-screen 4K stream before panel crop is applied.
+            // choose the first window as the initial capture to avoid a
+            // full-screen 4K stream before panel crop is applied.
             final ct = (settings.captureTargetType ?? settings.sourceType)
                 ?.toString()
                 .trim()
@@ -309,13 +309,8 @@ class StreamedManager {
                 final sources0 = await desktopCapturer.getSources(
                   types: [SourceType.Window],
                 );
-                final iterm = sources0.where((s) {
-                  final app = (s.appName ?? '').toLowerCase();
-                  final name = (s.name ?? '').toLowerCase();
-                  return app.contains('iterm') || name.contains('iterm');
-                }).toList();
-                if (iterm.isNotEmpty) {
-                  settings.desktopSourceId = iterm.first.id;
+                if (sources0.isNotEmpty) {
+                  settings.desktopSourceId = sources0.first.id;
                   settings.sourceType = 'window';
                 }
               } catch (_) {}
