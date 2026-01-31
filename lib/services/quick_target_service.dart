@@ -269,7 +269,14 @@ class QuickTargetService {
 
     switch (target.mode) {
       case StreamMode.desktop:
-        await RemoteWindowService.instance.selectScreen(channel);
+        // If we have a concrete screen source id (from last captureTargetChanged),
+        // pass it through; otherwise host-side "no sourceId" is idempotent and
+        // cannot switch when already in screen mode.
+        final sid = target.id.trim();
+        await RemoteWindowService.instance.selectScreen(
+          channel,
+          sourceId: (sid.isEmpty || sid == 'screen') ? null : sid,
+        );
         break;
       case StreamMode.window:
         if (target.windowId != null) {

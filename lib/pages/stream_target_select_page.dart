@@ -54,6 +54,7 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
     if (!_channelOpen) return;
     switch (_quick.mode.value) {
       case StreamMode.desktop:
+        await _windows.requestScreenSources(_channel);
         return;
       case StreamMode.window:
         await _windows.requestWindowSources(_channel);
@@ -228,23 +229,7 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
             builder: (context, mode, _) {
               switch (mode) {
                 case StreamMode.desktop:
-                  return Center(
-                    child: ElevatedButton.icon(
-                      icon: const Icon(Icons.desktop_windows),
-                      label: const Text('切回整个桌面'),
-                      onPressed: () async {
-                        await _quick.applyTarget(
-                          _channel,
-                          const QuickStreamTarget(
-                            mode: StreamMode.desktop,
-                            id: 'screen',
-                            label: '整个桌面',
-                          ),
-                        );
-                        if (context.mounted) Navigator.pop(context);
-                      },
-                    ),
-                  );
+                  return _buildScreenList();
                 case StreamMode.window:
                   return _buildWindowList();
                 case StreamMode.iterm2:
@@ -254,6 +239,70 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
           );
         },
       ),
+    );
+  }
+
+  Widget _buildScreenList() {
+    return ValueListenableBuilder<bool>(
+      valueListenable: _windows.loading,
+      builder: (context, loading, _) {
+        if (loading) return const Center(child: CircularProgressIndicator());
+        return ValueListenableBuilder<String?>(
+          valueListenable: _windows.error,
+          builder: (context, err, __) {
+            if (err != null) return Center(child: Text(err));
+            return ValueListenableBuilder<List<RemoteDesktopSource>>(
+              valueListenable: _windows.screenSources,
+              builder: (context, sources, ___) {
+                if (sources.isEmpty) {
+                  return const Center(child: Text('没有收到屏幕列表'));
+                }
+                return ValueListenableBuilder<String?>(
+                  valueListenable: _windows.selectedScreenSourceId,
+                  builder: (context, selectedId, ____) {
+                    return ListView.separated(
+                      itemCount: sources.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, thickness: 0.5),
+                      itemBuilder: (context, index) {
+                        final s = sources[index];
+                        final title = s.title.isNotEmpty
+                            ? s.title
+                            : '屏幕 ${index + 1}';
+                        final target = QuickStreamTarget(
+                          mode: StreamMode.desktop,
+                          id: s.id,
+                          label: title,
+                        );
+                        final isSelected =
+                            selectedId != null && selectedId == s.id;
+                        return ListTile(
+                          leading: const Icon(Icons.desktop_windows),
+                          title: Text(
+                            title,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          subtitle: Text(
+                            'sourceId=${s.id}',
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          trailing: isSelected
+                              ? const Icon(Icons.check, color: Colors.green)
+                              : null,
+                          onTap: () => _apply(target),
+                          onLongPress: () => _saveAsFavorite(target),
+                        );
+                      },
+                    );
+                  },
+                );
+              },
+            );
+          },
+        );
+      },
     );
   }
 

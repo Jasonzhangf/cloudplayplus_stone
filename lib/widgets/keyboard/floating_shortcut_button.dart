@@ -9,6 +9,7 @@ import '../../models/stream_mode.dart';
 import '../../pages/remote_window_select_page.dart';
 import '../../pages/stream_target_select_page.dart';
 import '../../services/quick_target_service.dart';
+import '../../services/remote_window_service.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/shared_preferences_manager.dart';
 import '../../services/webrtc_service.dart';
@@ -178,6 +179,52 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         inputController.requestKeyEvent(code, false);
       }
     });
+  }
+
+  Future<void> _quickNextScreen() async {
+    final channel = WebrtcService.activeDataChannel;
+    if (channel == null ||
+        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('连接未就绪：无法切换屏幕')),
+      );
+      return;
+    }
+
+    final windows = RemoteWindowService.instance;
+    final screens = windows.screenSources.value;
+    if (screens.isEmpty) {
+      // Best-effort: request once and prompt user to open picker.
+      try {
+        await windows.requestScreenSources(channel);
+      } catch (_) {}
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('未获取到屏幕列表，请点“选择”手动选择屏幕')),
+      );
+      return;
+    }
+
+    final currentId = windows.selectedScreenSourceId.value ??
+        WebrtcService.currentRenderingSession?.streamSettings?.desktopSourceId ??
+        '';
+    int idx = screens.indexWhere((s) => s.id == currentId);
+    if (idx < 0) idx = 0;
+    final next = screens[(idx + 1) % screens.length];
+    final label = next.title.isNotEmpty ? next.title : '屏幕';
+    final target = QuickStreamTarget(
+      mode: StreamMode.desktop,
+      id: next.id,
+      label: label,
+    );
+    await _quick.rememberTarget(target);
+    await _quick.applyTarget(channel, target);
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已切换：$label')),
+    );
   }
 
   void _handleSettingsChanged(ShortcutSettings newSettings) {
@@ -613,6 +660,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       channel,
                       openTarget: true,
                     ),
+                    onQuickNextScreen: _quickNextScreen,
                     onApplyFavorite: (target) {
                       _applyQuickTarget(target);
                     },
@@ -936,6 +984,7 @@ class _StreamControlRow extends StatelessWidget {
   final VoidCallback onPickMode;
   final VoidCallback onPickModeAndTarget;
   final VoidCallback onPickTarget;
+  final VoidCallback onQuickNextScreen;
   final ValueChanged<QuickStreamTarget> onApplyFavorite;
   final void Function(int slot, _FavoriteAction action) onFavoriteAction;
 
@@ -944,6 +993,7 @@ class _StreamControlRow extends StatelessWidget {
     required this.onPickMode,
     required this.onPickModeAndTarget,
     required this.onPickTarget,
+    required this.onQuickNextScreen,
     required this.onApplyFavorite,
     required this.onFavoriteAction,
   });
@@ -992,6 +1042,24 @@ class _StreamControlRow extends StatelessWidget {
             onTap: onPickTarget,
           ),
           const SizedBox(width: 6),
+          ValueListenableBuilder<StreamMode>(
+            valueListenable: quick.mode,
+            builder: (context, mode, _) {
+              if (mode != StreamMode.desktop) return const SizedBox.shrink();
+              return Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  _PillButton(
+                    icon: Icons.monitor,
+                    label: '切屏',
+                    enabled: enabled,
+                    onTap: onQuickNextScreen,
+                  ),
+                  const SizedBox(width: 6),
+                ],
+              );
+            },
+          ),
           ValueListenableBuilder<List<QuickStreamTarget?>>(
             valueListenable: quick.favorites,
             builder: (context, favorites, _) {
