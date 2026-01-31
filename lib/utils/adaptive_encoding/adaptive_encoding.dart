@@ -58,7 +58,10 @@ int computeDynamicBitrateKbps({
   required double rttMs,
 }) {
   final full = fullBitrateKbps.clamp(250, 20000);
-  final min = (full / 4).round().clamp(250, full);
+  final min = computeAdaptiveMinBitrateKbps(
+    fullBitrateKbps: full,
+    targetFps: targetFps,
+  );
   final fps = renderFps <= 0 ? targetFps.toDouble() : renderFps;
   final baseRatio = _clampDouble(fps / targetFps, 0.25, 1.0);
 
@@ -71,4 +74,19 @@ int computeDynamicBitrateKbps({
 
   final want = (full * baseRatio * rttFactor).round();
   return want.clamp(min, full);
+}
+
+/// Adaptive minimum bitrate floor:
+/// - default: clamp to [full/4, full]
+/// - when encoder FPS already dropped to minimum (typically 15fps), allow
+///   going lower (full/8) to prioritize smoothness/latency.
+int computeAdaptiveMinBitrateKbps({
+  required int fullBitrateKbps,
+  required int targetFps,
+  int minFps = 15,
+}) {
+  final full = fullBitrateKbps.clamp(250, 20000);
+  final scale = (targetFps <= minFps) ? 0.125 : 0.25;
+  final min = (full * scale).round().clamp(250, full);
+  return min;
 }

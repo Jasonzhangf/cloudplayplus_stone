@@ -38,7 +38,7 @@ void main() {
           targetFps: 15,
           rttMs: 30,
         ),
-        inInclusiveRange(500, 2000),
+        inInclusiveRange(250, 2000),
       );
       // High RTT should reduce bitrate vs low RTT.
       final lowRtt = computeDynamicBitrateKbps(

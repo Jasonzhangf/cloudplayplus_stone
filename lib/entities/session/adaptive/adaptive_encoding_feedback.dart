@@ -219,11 +219,18 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final badNetwork =
         _adaptiveLossEwma >= 0.03 || _adaptiveRttEwma >= 450 || maybeCongestedByRx;
 
-    // 1) Network bad: lower bitrate (down to full/4).
+    // 1) Network bad: lower bitrate (down to a floor). When encoder FPS already
+    // reached the minimum bucket (typically 15fps) and it's still not smooth,
+    // allow lowering bitrate further (full/8) to prioritize smoothness/latency.
     if (badNetwork) {
-      final minBitrate = (full / 4).round().clamp(250, full);
+      final minBitrate = computeAdaptiveMinBitrateKbps(
+        fullBitrateKbps: full,
+        targetFps: currentFps,
+        minFps: minFps,
+      );
+      final downFactor = (currentFps <= minFps) ? 0.65 : 0.80;
       final targetBitrate =
-          (curBitrate * 0.80).round().clamp(minBitrate, full);
+          (curBitrate * downFactor).round().clamp(minBitrate, full);
       if (targetBitrate < curBitrate &&
           (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
         streamSettings!.bitrate = targetBitrate;
@@ -258,7 +265,11 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     // 2) (Good/OK) network: raise bitrate toward full.
     if ((okNetwork || goodNetwork) && curBitrate < full) {
       final targetBitrate =
-          (curBitrate * 1.35).round().clamp((full / 4).round(), full);
+          (curBitrate * 1.35).round().clamp(computeAdaptiveMinBitrateKbps(
+                fullBitrateKbps: full,
+                targetFps: currentFps,
+                minFps: minFps,
+              ), full);
       if (targetBitrate > curBitrate &&
           (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = targetBitrate;
@@ -269,6 +280,32 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
             mode: mode, fullBitrateKbps: full, reason: 'net-good-bitrate-up');
         await _maybeRenegotiateAfterCaptureSwitch(reason: 'adaptive-bitrate-up');
         // Let bitrate settle before increasing fps.
+        return;
+      }
+    }
+
+    // 2.5) If encoder FPS is already at minimum but receiver still can't keep up,
+    // reduce bitrate further even when loss/RTT look fine. This helps avoid
+    // queue buildup (e.g. due to jitter buffer / decoder pressure).
+    if (currentFps <= minFps &&
+        _adaptiveRenderFpsEwma > 0 &&
+        _adaptiveRenderFpsEwma < (minFps - 1.5) &&
+        (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
+      final minBitrate = computeAdaptiveMinBitrateKbps(
+        fullBitrateKbps: full,
+        targetFps: currentFps,
+        minFps: minFps,
+      );
+      final targetBitrate = (curBitrate * 0.65).round().clamp(minBitrate, full);
+      if (targetBitrate < curBitrate) {
+        streamSettings!.bitrate = targetBitrate;
+        _adaptiveLastBitrateChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[adaptive] min fps but receiver low (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)}) bitrate $curBitrate -> $targetBitrate (full=$full)');
+        _sendHostEncodingStatus(
+            mode: mode, fullBitrateKbps: full, reason: 'min-fps-bitrate-down');
+        await _maybeRenegotiateAfterCaptureSwitch(
+            reason: 'adaptive-min-fps-bitrate-down');
         return;
       }
     }
