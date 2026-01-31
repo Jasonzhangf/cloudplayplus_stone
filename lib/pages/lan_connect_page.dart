@@ -130,8 +130,12 @@ class _LanConnectPageState extends State<LanConnectPage> {
       }
 
       // Only persist "last" and history after a successful connection.
-      await _history.recordSuccess(host: host, port: port);
-      await _loadHistory();
+      try {
+        await _history.recordSuccess(host: host, port: port);
+        await _loadHistory();
+      } catch (_) {
+        // Don't block a successful connection due to local persistence failures.
+      }
 
       if (!mounted) return;
       Navigator.of(context).pushReplacement(

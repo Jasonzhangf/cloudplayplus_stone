@@ -190,7 +190,8 @@ class LanConnectHistoryService {
   }
 
   static List<LanConnectEntry> _sort(List<LanConnectEntry> entries) {
-    final list = entries.toList(growable: false);
+    // Must be growable: callers may add/remove entries before saving.
+    final list = entries.toList(growable: true);
     list.sort((a, b) {
       if (a.favorite != b.favorite) return a.favorite ? -1 : 1;
       final t = b.lastSuccessAtMs.compareTo(a.lastSuccessAtMs);
@@ -204,4 +205,3 @@ class LanConnectHistoryService {
   int getLastPort(int fallback) =>
       SharedPreferencesManager.getInt(_kLastPort) ?? fallback;
 }
-
