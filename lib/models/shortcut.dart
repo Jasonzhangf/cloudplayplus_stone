@@ -573,6 +573,31 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           enabled: false,
           order: 20,
         ),
+        // Some apps (e.g. terminals, remote apps, cross-platform editors) use
+        // Ctrl-based copy/paste even on macOS. Keep these available in the
+        // shortcut bar in addition to Cmd+C/V.
+        ShortcutItem(
+          id: 'ctrl-copy',
+          label: 'Ctrl+C',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'C', keyCode: 'KeyC')
+          ],
+          platform: platform,
+          order: 21,
+        ),
+        ShortcutItem(
+          id: 'ctrl-paste',
+          label: 'Ctrl+V',
+          icon: '',
+          keys: [
+            ShortcutKey(key: 'Ctrl', keyCode: 'ControlLeft'),
+            ShortcutKey(key: 'V', keyCode: 'KeyV')
+          ],
+          platform: platform,
+          order: 22,
+        ),
       ];
 
     case ShortcutPlatform.linux:
