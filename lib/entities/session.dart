@@ -20,6 +20,7 @@ import 'package:cloudplayplus/services/signaling/cloud_signaling_transport.dart'
 import 'package:cloudplayplus/services/signaling/signaling_transport.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/utils/host/host_command_runner.dart';
+import 'package:cloudplayplus/utils/network/bandwidth_tier_strategy.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
 import 'package:cloudplayplus/models/quick_stream_target.dart';
 import 'package:cloudplayplus/models/stream_mode.dart';
@@ -238,6 +239,14 @@ class StreamingSession {
   double _adaptiveLossEwma = 0.0;
   int? _adaptiveFullBitrateKbps;
 
+  // Host-side bandwidth estimate (BWE) for tiered window/panel strategy.
+  final List<int> _adaptiveHostBweSamplesKbps = <int>[];
+  int _adaptiveHostBweSmoothKbps = 0;
+  int _adaptiveHostBweLastSampleAtMs = 0;
+
+  // Tiered bandwidth strategy state (window/panel, EncodingMode.dynamic).
+  BandwidthTierState _adaptiveTierState = const BandwidthTierState.initial();
+
   // 添加生命周期监听器
   static final _lifecycleObserver = _AppLifecycleObserver();
 
@@ -255,7 +264,8 @@ class StreamingSession {
 
   void _sendCaptureTargetSwitchResult(Map<String, dynamic> payload) {
     final dc = channel;
-    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen)
+      return;
     try {
       dc.send(RTCDataChannelMessage(jsonEncode({
         'captureTargetSwitchResult': payload,
@@ -700,17 +710,18 @@ class StreamingSession {
             .trim()
             .toLowerCase();
 
-        final b = (streamSettings!.bitrate ?? 2000).clamp(250, 20000);
+        final windowLike = captureType == 'window' || captureType == 'iterm2';
+
+        int b = streamSettings!.bitrate ?? (windowLike ? 250 : 2000);
+        if (b > 50000) b = windowLike ? 250 : 2000; // legacy huge defaults
+        // Allow very low bitrate floors for window/panel under poor networks.
+        b = b.clamp(25, 20000);
         streamSettings!.bitrate = b;
 
-        if (captureType == 'window' || captureType == 'iterm2') {
-          // For window/panel capture, prioritize clarity (text) by keeping higher
-          // bitrate and allowing higher FPS, then let adaptive loop step down.
-          if (streamSettings!.bitrate! < 2000) streamSettings!.bitrate = 2000;
-          if (mode != 'off') {
-            final f = streamSettings!.framerate ?? 30;
-            if (f < 60) streamSettings!.framerate = 60;
-          }
+        if (mode != 'off') {
+          int f = streamSettings!.framerate ?? (windowLike ? 15 : 30);
+          f = f.clamp(5, 60);
+          streamSettings!.framerate = f;
         }
       } catch (_) {}
 
@@ -2071,8 +2082,7 @@ class StreamingSession {
       if (payload is Map) {
         _pendingCaptureTargetPayload =
             payload.map((k, v) => MapEntry(k.toString(), v));
-        _pendingCaptureTargetQueuedAtMs =
-            DateTime.now().millisecondsSinceEpoch;
+        _pendingCaptureTargetQueuedAtMs = DateTime.now().millisecondsSinceEpoch;
         _pendingCaptureTargetRetryCount = 0;
         _sendCaptureTargetSwitchResult({
           'ok': false,
@@ -2108,8 +2118,7 @@ class StreamingSession {
               'status': 'ignored',
               'type': 'screen',
               'sourceId': streamSettings!.desktopSourceId,
-              'durationMs':
-                  DateTime.now().millisecondsSinceEpoch - startedAtMs,
+              'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
             });
             return;
           }
@@ -2124,8 +2133,7 @@ class StreamingSession {
               'status': 'ignored',
               'type': 'window',
               'windowId': streamSettings!.windowId,
-              'durationMs':
-                  DateTime.now().millisecondsSinceEpoch - startedAtMs,
+              'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
             });
             return;
           }
@@ -2141,8 +2149,7 @@ class StreamingSession {
               'status': 'ignored',
               'type': 'iterm2',
               'sessionId': sessionId,
-              'durationMs':
-                  DateTime.now().millisecondsSinceEpoch - startedAtMs,
+              'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
             });
             return;
           }
@@ -2262,8 +2269,9 @@ class StreamingSession {
             selected = hint;
           }
         }
-        final windowId =
-            (windowIdAny is num) ? windowIdAny.toInt() : int.tryParse('$windowIdAny');
+        final windowId = (windowIdAny is num)
+            ? windowIdAny.toInt()
+            : int.tryParse('$windowIdAny');
         if (selected == null) {
           _sendCaptureTargetSwitchResult({
             'ok': false,

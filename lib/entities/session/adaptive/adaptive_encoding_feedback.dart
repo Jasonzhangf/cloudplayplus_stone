@@ -1,6 +1,49 @@
 part of streaming_session;
 
 extension _StreamingSessionAdaptiveEncoding on StreamingSession {
+  int _medianKbps(List<int> samples) {
+    if (samples.isEmpty) return 0;
+    final s = List<int>.from(samples)..sort();
+    return s[s.length ~/ 2];
+  }
+
+  Future<int> _sampleHostBweKbps() async {
+    if (pc == null) return _adaptiveHostBweSmoothKbps;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (_adaptiveHostBweSmoothKbps > 0 &&
+        (nowMs - _adaptiveHostBweLastSampleAtMs) < 800) {
+      return _adaptiveHostBweSmoothKbps;
+    }
+    _adaptiveHostBweLastSampleAtMs = nowMs;
+
+    int kbps = 0;
+    try {
+      final stats = await pc!.getStats();
+      for (final report in stats) {
+        if (report.type != 'candidate-pair') continue;
+        final values = Map<String, dynamic>.from(report.values);
+        if (values['state'] != 'succeeded' || values['nominated'] != true) {
+          continue;
+        }
+        final bps =
+            (values['availableOutgoingBitrate'] as num?)?.toDouble() ?? 0.0;
+        if (bps > 0) {
+          kbps = (bps / 1000.0).round().clamp(0, 200000);
+          break;
+        }
+      }
+    } catch (_) {}
+
+    if (kbps > 0) {
+      _adaptiveHostBweSamplesKbps.add(kbps);
+      if (_adaptiveHostBweSamplesKbps.length > 10) {
+        _adaptiveHostBweSamplesKbps.removeAt(0);
+      }
+      _adaptiveHostBweSmoothKbps = _medianKbps(_adaptiveHostBweSamplesKbps);
+    }
+    return _adaptiveHostBweSmoothKbps;
+  }
+
   bool _isWindowLikeCaptureType() {
     final captureType =
         (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
@@ -41,6 +84,10 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     required String mode,
     int? fullBitrateKbps,
     String? reason,
+    int? bweKbps,
+    int? tierFps,
+    int? tierBitrateKbps,
+    int? effectiveBandwidthKbps,
   }) {
     final dc = channel;
     if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen)
@@ -57,6 +104,11 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
               'renderFpsEwma': _adaptiveRenderFpsEwma,
               'lossEwma': _adaptiveLossEwma,
               'rttEwmaMs': _adaptiveRttEwma,
+              if (bweKbps != null) 'bweKbps': bweKbps,
+              if (effectiveBandwidthKbps != null)
+                'effectiveBandwidthKbps': effectiveBandwidthKbps,
+              if (tierFps != null) 'tierFps': tierFps,
+              if (tierBitrateKbps != null) 'tierBitrateKbps': tierBitrateKbps,
               if (reason != null) 'reason': reason,
               'ts': DateTime.now().millisecondsSinceEpoch,
             }
@@ -172,6 +224,84 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     _adaptiveLossEwma = (_adaptiveLossEwma <= 0)
         ? loss
         : (_adaptiveLossEwma * 0.80 + loss * 0.20);
+
+    // Tiered bandwidth strategy for window/panel capture in dynamic mode.
+    if (_isWindowLikeCaptureType() &&
+        (mode == 'dynamic' || mode == 'dyn' || mode == 'auto')) {
+      final bweKbps = await _sampleHostBweKbps();
+      final decision = decideBandwidthTier(
+        previous: _adaptiveTierState,
+        input: BandwidthTierInput(
+          bweKbps: bweKbps,
+          lossFraction: _adaptiveLossEwma,
+          rttMs: _adaptiveRttEwma,
+          freezeDelta: freezeDelta,
+          width: width,
+          height: height,
+        ),
+        nowMs: nowMs,
+      );
+      _adaptiveTierState = decision.state;
+
+      final wantFps = decision.fpsTier.clamp(5, 60);
+      final wantBitrate = decision.targetBitrateKbps.clamp(25, 20000);
+
+      final curFpsRaw = streamSettings!.framerate ?? 30;
+      final curFps = curFpsRaw <= 0 ? 30 : curFpsRaw;
+      final curBitrate = (streamSettings!.bitrate ?? 250).clamp(25, 20000);
+
+      final willChangeFps = wantFps != curFps;
+      final willChangeBitrate = wantBitrate != curBitrate;
+
+      if (willChangeBitrate &&
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 1800) {
+        streamSettings!.bitrate = wantBitrate;
+        _adaptiveLastBitrateChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[tier] bitrate $curBitrate -> $wantBitrate kbps (bwe=$bweKbps effB=${decision.effectiveBandwidthKbps}) reason=${decision.reason}');
+        _sendHostEncodingStatus(
+          mode: mode,
+          fullBitrateKbps: wantBitrate,
+          bweKbps: bweKbps,
+          effectiveBandwidthKbps: decision.effectiveBandwidthKbps,
+          tierFps: wantFps,
+          tierBitrateKbps: wantBitrate,
+          reason: 'tier-bitrate',
+        );
+        await _maybeRenegotiateAfterCaptureSwitch(reason: 'tier-bitrate');
+      }
+
+      if (willChangeFps && (nowMs - _adaptiveLastFpsChangeAtMs) > 1800) {
+        streamSettings!.framerate = wantFps;
+        _adaptiveLastFpsChangeAtMs = nowMs;
+        InputDebugService.instance.log(
+            '[tier] fps $curFps -> $wantFps (bwe=$bweKbps effB=${decision.effectiveBandwidthKbps}) reason=${decision.reason}');
+        _sendHostEncodingStatus(
+          mode: mode,
+          fullBitrateKbps: wantBitrate,
+          bweKbps: bweKbps,
+          effectiveBandwidthKbps: decision.effectiveBandwidthKbps,
+          tierFps: wantFps,
+          tierBitrateKbps: wantBitrate,
+          reason: 'tier-fps',
+        );
+        await _reapplyCurrentCaptureForAdaptiveFps();
+      }
+
+      if (!willChangeFps && !willChangeBitrate) {
+        _sendHostEncodingStatus(
+          mode: mode,
+          fullBitrateKbps: wantBitrate,
+          bweKbps: bweKbps,
+          effectiveBandwidthKbps: decision.effectiveBandwidthKbps,
+          tierFps: wantFps,
+          tierBitrateKbps: wantBitrate,
+          reason: 'tier-hold',
+        );
+      }
+
+      return;
+    }
 
     final currentFpsRaw = streamSettings!.framerate ?? 30;
     final currentFps = currentFpsRaw <= 0 ? 30 : currentFpsRaw;
