@@ -763,7 +763,28 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     onApplyFavorite: (target) {
                       _applyQuickTarget(target);
                     },
-                    onAddFavorite: () => _openTargetPicker(context),
+                    onAddFavorite: () async {
+                      final ok = await _quick.addFavoriteSlot();
+                      if (!ok) {
+                        if (!mounted) return;
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          const SnackBar(
+                            content: Text('快捷切换已达上限（最多 20 个）'),
+                            duration: Duration(seconds: 2),
+                          ),
+                        );
+                        return;
+                      }
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(
+                              '已新增快捷 ${_quick.favorites.value.length}（在列表里长按保存）'),
+                          duration: const Duration(seconds: 2),
+                        ),
+                      );
+                      _openTargetPicker(context);
+                    },
                     onFavoriteAction: (slot, action) {
                       _handleFavoriteAction(context, slot, action);
                     },

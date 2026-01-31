@@ -77,6 +77,7 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   Future<int?> _pickFavoriteSlot(BuildContext context) async {
     final list = _quick.favorites.value;
     final initial = _quick.firstEmptySlot();
+    final canAddMore = list.length < QuickTargetService.maxFavoriteSlots;
     return showModalBottomSheet<int>(
       context: context,
       builder: (context) {
@@ -103,6 +104,14 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
                   trailing: i == initial ? const Text('推荐') : null,
                   onTap: () => Navigator.pop(context, i),
                 ),
+              if (canAddMore && initial >= list.length)
+                ListTile(
+                  leading: const Icon(Icons.add_circle_outline),
+                  title: Text('新增快捷 ${list.length + 1}'),
+                  subtitle: const Text('添加一个新的快捷按钮槽位'),
+                  trailing: const Text('推荐'),
+                  onTap: () => Navigator.pop(context, list.length),
+                ),
               const SizedBox(height: 8),
             ],
           ),
@@ -112,8 +121,21 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   }
 
   Future<void> _saveAsFavorite(QuickStreamTarget target) async {
-    final slot = await _pickFavoriteSlot(context);
-    if (slot == null) return;
+    final picked = await _pickFavoriteSlot(context);
+    if (picked == null) return;
+
+    int slot = picked;
+    if (slot >= _quick.favorites.value.length) {
+      final ok = await _quick.addFavoriteSlot();
+      if (!ok) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('快捷切换已达上限（最多 20 个）')),
+        );
+        return;
+      }
+      slot = _quick.favorites.value.length - 1;
+    }
     final controller = TextEditingController(
         text: _quick.favorites.value[slot]?.alias ?? target.displayLabel);
     ScreenController.setLocalTextEditing(true);

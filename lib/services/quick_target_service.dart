@@ -66,7 +66,9 @@ class QuickTargetService {
   static const _kFavorites = 'controller.favorites.v1';
   static const _kToolbarOpacity = 'controller.toolbarOpacity.v1';
   static const _kRestoreOnConnect = 'controller.restoreLastTargetOnConnect.v1';
-  static const int defaultFavoriteSlots = 8;
+  // Start small to keep the toolbar compact; user can add more via "+".
+  static const int defaultFavoriteSlots = 4;
+  static const int maxFavoriteSlots = 20;
 
   final ValueNotifier<StreamMode> mode = ValueNotifier(StreamMode.desktop);
   final ValueNotifier<int?> lastDeviceUid = ValueNotifier<int?>(null);
@@ -106,8 +108,10 @@ class QuickTargetService {
 
     final favRaw = SharedPreferencesManager.getStringList(_kFavorites);
     if (favRaw != null && favRaw.isNotEmpty) {
-      final list = List<QuickStreamTarget?>.filled(defaultFavoriteSlots, null);
-      for (int i = 0; i < favRaw.length && i < list.length; i++) {
+      final wantLen =
+          favRaw.length.clamp(defaultFavoriteSlots, maxFavoriteSlots).toInt();
+      final list = List<QuickStreamTarget?>.filled(wantLen, null);
+      for (int i = 0; i < favRaw.length && i < wantLen; i++) {
         list[i] = QuickStreamTarget.tryParse(favRaw[i]);
       }
       favorites.value = list;
@@ -259,6 +263,18 @@ class QuickTargetService {
     await SharedPreferencesManager.setStringList(_kFavorites, encoded);
   }
 
+  /// Add one empty favorite slot (up to [maxFavoriteSlots]).
+  /// Returns true if a slot was added.
+  Future<bool> addFavoriteSlot() async {
+    final list = List<QuickStreamTarget?>.from(favorites.value);
+    if (list.length >= maxFavoriteSlots) return false;
+    list.add(null);
+    favorites.value = list;
+    final encoded = list.map((e) => e?.encode() ?? '').toList();
+    await SharedPreferencesManager.setStringList(_kFavorites, encoded);
+    return true;
+  }
+
   Future<void> deleteFavorite(int slot) async {
     await setFavorite(slot, null);
   }
@@ -313,6 +329,8 @@ class QuickTargetService {
     for (int i = 0; i < list.length; i++) {
       if (list[i] == null) return i;
     }
+    // No empty slots: suggest adding a new slot if possible.
+    if (list.length < maxFavoriteSlots) return list.length;
     return 0;
   }
 }
