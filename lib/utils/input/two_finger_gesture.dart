@@ -16,12 +16,32 @@ bool shouldPreferZoom({
   required double currentScale,
   required double cumulativeDistanceChangeRatio,
   required double cumulativeDistanceChangePx,
+  required double cumulativeCenterMovement,
+  required double cumulativeCenterDeltaX,
+  required double cumulativeCenterDeltaY,
 }) {
   final zoomed = currentScale > 1.02;
-  final ratioThreshold = isMobile ? (zoomed ? 0.045 : 0.075) : 0.03;
-  final pxThreshold = isMobile ? (zoomed ? 6.0 : 10.0) : 6.0;
-  return cumulativeDistanceChangeRatio >= ratioThreshold &&
+  // On mobile, two-finger scroll often contains minor pinch jitter.
+  // Keep pinch (zoom) thresholds reasonably high to avoid misclassifying scroll
+  // as zoom, especially when already zoomed in.
+  final ratioThreshold = isMobile ? (zoomed ? 0.060 : 0.090) : 0.03;
+  final pxThreshold = isMobile ? (zoomed ? 8.0 : 12.0) : 6.0;
+
+  final distanceSuggestsZoom = cumulativeDistanceChangeRatio >= ratioThreshold &&
       cumulativeDistanceChangePx >= pxThreshold;
+  if (!distanceSuggestsZoom) return false;
+
+  if (!isMobile) return true;
+
+  // If movement is strongly scroll-like (both fingers moving together),
+  // require a more obvious pinch before forcing zoom.
+  final verticalDominant =
+      cumulativeCenterDeltaY >= (cumulativeCenterDeltaX * 1.2);
+  final scrollLike = verticalDominant && cumulativeCenterMovement >= 18.0;
+  if (!scrollLike) return true;
+
+  return cumulativeDistanceChangeRatio >= 0.11 &&
+      cumulativeDistanceChangePx >= 18.0;
 }
 
 @visibleForTesting
@@ -39,12 +59,12 @@ TwoFingerGestureType decideTwoFingerGestureType({
 
   // Tuned for Android: two-finger gestures often contain minor pinch jitter.
   // We require both ratio and absolute pixel delta before classifying as zoom.
-  final zoomRatioThreshold = isMobile ? 0.075 : 0.03;
-  final zoomDeltaPxThreshold = isMobile ? 10.0 : 6.0;
+  final zoomRatioThreshold = isMobile ? 0.090 : 0.03;
+  final zoomDeltaPxThreshold = isMobile ? 12.0 : 6.0;
 
   final scrollMoveThreshold = isMobile ? 12.0 : 10.0;
-  final scrollDistanceMaxRatio = isMobile ? 0.035 : 0.015;
-  final scrollDistanceMaxPx = isMobile ? 8.0 : 5.0;
+  final scrollDistanceMaxRatio = isMobile ? 0.060 : 0.015;
+  final scrollDistanceMaxPx = isMobile ? 14.0 : 5.0;
 
   if (cumulativeDistanceChangeRatio >= zoomRatioThreshold &&
       cumulativeDistanceChangePx >= zoomDeltaPxThreshold) {

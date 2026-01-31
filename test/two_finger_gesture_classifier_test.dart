@@ -41,6 +41,18 @@ void main() {
       expect(type, TwoFingerGestureType.undecided);
     });
 
+    test('mobile tolerates moderate pinch jitter and still scrolls', () {
+      final type = decideTwoFingerGestureType(
+        isMobile: true,
+        cumulativeDistanceChangeRatio: 0.05,
+        cumulativeDistanceChangePx: 12,
+        cumulativeCenterMovement: 44,
+        cumulativeCenterDeltaX: 4,
+        cumulativeCenterDeltaY: 40,
+      );
+      expect(type, TwoFingerGestureType.scroll);
+    });
+
     test('scroll activation is debounced by time and distance', () {
       expect(
         shouldActivateTwoFingerScroll(

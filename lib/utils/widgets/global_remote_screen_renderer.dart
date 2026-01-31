@@ -744,6 +744,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
           currentScale: _videoScale,
           cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
           cumulativeDistanceChangePx: cumulativeDistanceChangePx,
+          cumulativeCenterMovement: cumulativeCenterMovement,
+          cumulativeCenterDeltaX: cumulativeCenterDeltaX,
+          cumulativeCenterDeltaY: cumulativeCenterDeltaY,
         )) {
           _twoFingerGestureType = TwoFingerGestureType.zoom;
         } else {
@@ -769,11 +772,18 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 _initialPinchDistance!;
         final cumulativeDistanceChangePx =
             (currentDistance - _initialPinchDistance!).abs();
+        final centerDelta = center - _initialTwoFingerCenter!;
+        final cumulativeCenterMovement = centerDelta.distance;
+        final cumulativeCenterDeltaX = centerDelta.dx.abs();
+        final cumulativeCenterDeltaY = centerDelta.dy.abs();
         if (shouldPreferZoom(
           isMobile: AppPlatform.isMobile,
           currentScale: _videoScale,
           cumulativeDistanceChangeRatio: cumulativeDistanceChangeRatio,
           cumulativeDistanceChangePx: cumulativeDistanceChangePx,
+          cumulativeCenterMovement: cumulativeCenterMovement,
+          cumulativeCenterDeltaX: cumulativeCenterDeltaX,
+          cumulativeCenterDeltaY: cumulativeCenterDeltaY,
         )) {
           _twoFingerGestureType = TwoFingerGestureType.zoom;
           _twoFingerScrollActivated = false;

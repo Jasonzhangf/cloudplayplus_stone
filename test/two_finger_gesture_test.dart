@@ -11,18 +11,39 @@ void main() {
       final prefer = shouldPreferZoom(
         isMobile: true,
         currentScale: 2.0,
-        cumulativeDistanceChangeRatio: 0.055,
-        cumulativeDistanceChangePx: 7.0,
+        cumulativeDistanceChangeRatio: 0.070,
+        cumulativeDistanceChangePx: 9.0,
+        cumulativeCenterMovement: 6.0,
+        cumulativeCenterDeltaX: 2.0,
+        cumulativeCenterDeltaY: 4.0,
       );
       expect(prefer, isTrue);
 
       final notPrefer = shouldPreferZoom(
         isMobile: true,
         currentScale: 1.0,
-        cumulativeDistanceChangeRatio: 0.055,
-        cumulativeDistanceChangePx: 7.0,
+        cumulativeDistanceChangeRatio: 0.070,
+        cumulativeDistanceChangePx: 9.0,
+        cumulativeCenterMovement: 6.0,
+        cumulativeCenterDeltaX: 2.0,
+        cumulativeCenterDeltaY: 4.0,
       );
       expect(notPrefer, isFalse);
+    });
+
+    test('prefer zoom does not override scroll-like movement (mobile zoomed)', () {
+      // Even when already zoomed, a strongly scroll-like gesture should not be
+      // forced into zoom unless the pinch is very obvious.
+      final prefer = shouldPreferZoom(
+        isMobile: true,
+        currentScale: 2.0,
+        cumulativeDistanceChangeRatio: 0.070,
+        cumulativeDistanceChangePx: 9.0,
+        cumulativeCenterMovement: 40.0,
+        cumulativeCenterDeltaX: 4.0,
+        cumulativeCenterDeltaY: 36.0,
+      );
+      expect(prefer, isFalse);
     });
 
     test('prefers scroll when pinch change is small', () {
