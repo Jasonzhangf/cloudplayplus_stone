@@ -4,44 +4,22 @@ import 'package:flutter/foundation.dart';
 
 enum TwoFingerGestureType { undecided, zoom, scroll }
 
-/// Whether we should treat the two-finger gesture as zoom (pinch).
-///
-/// On mobile, when the view is already zoomed in, users often do small pinch
-/// adjustments to zoom back out. If we keep the same high thresholds, the
-/// gesture can be misclassified as scroll (due to center drift), making it hard
-/// to zoom out.
 @visibleForTesting
-bool shouldPreferZoom({
-  required bool isMobile,
-  required double currentScale,
-  required double cumulativeDistanceChangeRatio,
-  required double cumulativeDistanceChangePx,
-  required double cumulativeCenterMovement,
-  required double cumulativeCenterDeltaX,
-  required double cumulativeCenterDeltaY,
+bool _sameSign(double a, double b) {
+  if (a == 0 || b == 0) return false;
+  return (a > 0 && b > 0) || (a < 0 && b < 0);
+}
+
+double _dot(Offset a, Offset b) => a.dx * b.dx + a.dy * b.dy;
+
+bool _verticalDominantPair({
+  required Offset v1,
+  required Offset v2,
+  required double factor,
 }) {
-  final zoomed = currentScale > 1.02;
-  // On mobile, two-finger scroll often contains minor pinch jitter.
-  // Keep pinch (zoom) thresholds reasonably high to avoid misclassifying scroll
-  // as zoom, especially when already zoomed in.
-  final ratioThreshold = isMobile ? (zoomed ? 0.060 : 0.090) : 0.03;
-  final pxThreshold = isMobile ? (zoomed ? 8.0 : 12.0) : 6.0;
-
-  final distanceSuggestsZoom = cumulativeDistanceChangeRatio >= ratioThreshold &&
-      cumulativeDistanceChangePx >= pxThreshold;
-  if (!distanceSuggestsZoom) return false;
-
-  if (!isMobile) return true;
-
-  // If movement is strongly scroll-like (both fingers moving together),
-  // require a more obvious pinch before forcing zoom.
-  final verticalDominant =
-      cumulativeCenterDeltaY >= (cumulativeCenterDeltaX * 1.2);
-  final scrollLike = verticalDominant && cumulativeCenterMovement >= 18.0;
-  if (!scrollLike) return true;
-
-  return cumulativeDistanceChangeRatio >= 0.11 &&
-      cumulativeDistanceChangePx >= 18.0;
+  final sumY = (v1.dy.abs() + v2.dy.abs());
+  final sumX = (v1.dx.abs() + v2.dx.abs());
+  return sumY >= (sumX * factor);
 }
 
 @visibleForTesting
@@ -78,6 +56,55 @@ TwoFingerGestureType decideTwoFingerGestureType({
       cumulativeDistanceChangeRatio <= scrollDistanceMaxRatio &&
       cumulativeDistanceChangePx <= scrollDistanceMaxPx) {
     return TwoFingerGestureType.scroll;
+  }
+
+  return TwoFingerGestureType.undecided;
+}
+
+/// Vector-based decision with stricter rules:
+/// - Scroll: both fingers move in the *same* direction, and vertical movement
+///   dominates horizontal by >= `verticalDominanceFactor`.
+/// - Zoom: fingers move in *opposite* directions, and the movement is NOT
+///   strongly vertical-dominant (to avoid classifying two-finger vertical scroll
+///   as pinch/zoom).
+/// - Always apply a small-movement filter to ignore jitter.
+@visibleForTesting
+TwoFingerGestureType decideTwoFingerGestureTypeFromVectors({
+  required bool isMobile,
+  required Offset v1,
+  required Offset v2,
+  required double cumulativeDistanceChangeRatio,
+  required double cumulativeDistanceChangePx,
+  double verticalDominanceFactor = 5.0,
+}) {
+  final moveThreshold = isMobile ? 10.0 : 6.0;
+  if (v1.distance < moveThreshold && v2.distance < moveThreshold) {
+    return TwoFingerGestureType.undecided;
+  }
+
+  final verticalDominant = _verticalDominantPair(
+    v1: v1,
+    v2: v2,
+    factor: verticalDominanceFactor,
+  );
+
+  // Scroll: same direction and strongly vertical-dominant.
+  final sameDirection = _dot(v1, v2) > 0;
+  final sameVertical = _sameSign(v1.dy, v2.dy);
+  if (sameDirection && sameVertical && verticalDominant) {
+    return TwoFingerGestureType.scroll;
+  }
+
+  // Zoom: opposite direction + obvious pinch distance change.
+  final oppositeDirection = _dot(v1, v2) < 0;
+  if (oppositeDirection && !verticalDominant) {
+    final zoomRatioThreshold = isMobile ? 0.090 : 0.03;
+    final zoomDeltaPxThreshold = isMobile ? 12.0 : 6.0;
+    if (cumulativeDistanceChangeRatio >= zoomRatioThreshold &&
+        cumulativeDistanceChangePx >= zoomDeltaPxThreshold) {
+      return TwoFingerGestureType.zoom;
+    }
+    return TwoFingerGestureType.undecided;
   }
 
   return TwoFingerGestureType.undecided;

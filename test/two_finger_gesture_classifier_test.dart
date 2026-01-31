@@ -3,54 +3,64 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   group('two-finger gesture classifier', () {
-    test('mobile prefers zoom when distance change is obvious', () {
-      final type = decideTwoFingerGestureType(
+    test('scroll: same direction + vertical dominates 5x', () {
+      final type = decideTwoFingerGestureTypeFromVectors(
         isMobile: true,
-        cumulativeDistanceChangeRatio: 0.12,
-        cumulativeDistanceChangePx: 24,
-        cumulativeCenterMovement: 24,
-        cumulativeCenterDeltaX: 6,
-        cumulativeCenterDeltaY: 18,
-      );
-      expect(type, TwoFingerGestureType.zoom);
-    });
-
-    test(
-        'mobile chooses scroll when fingers move together (low distance change)',
-        () {
-      final type = decideTwoFingerGestureType(
-        isMobile: true,
+        v1: const Offset(2, 60),
+        v2: const Offset(1, 55),
         cumulativeDistanceChangeRatio: 0.01,
         cumulativeDistanceChangePx: 2,
-        cumulativeCenterMovement: 30,
-        cumulativeCenterDeltaX: 2,
-        cumulativeCenterDeltaY: 28,
+        verticalDominanceFactor: 5.0,
       );
       expect(type, TwoFingerGestureType.scroll);
     });
 
-    test('mobile avoids scroll when movement is not vertical-dominant', () {
-      final type = decideTwoFingerGestureType(
+    test('scroll: not vertical-dominant -> undecided', () {
+      final type = decideTwoFingerGestureTypeFromVectors(
         isMobile: true,
+        v1: const Offset(30, 40),
+        v2: const Offset(28, 44),
         cumulativeDistanceChangeRatio: 0.01,
         cumulativeDistanceChangePx: 2,
-        cumulativeCenterMovement: 40,
-        cumulativeCenterDeltaX: 30,
-        cumulativeCenterDeltaY: 10,
+        verticalDominanceFactor: 5.0,
       );
       expect(type, TwoFingerGestureType.undecided);
     });
 
-    test('mobile tolerates moderate pinch jitter and still scrolls', () {
-      final type = decideTwoFingerGestureType(
+    test('zoom: opposite direction + not vertical-dominant + pinch obvious', () {
+      final type = decideTwoFingerGestureTypeFromVectors(
         isMobile: true,
-        cumulativeDistanceChangeRatio: 0.05,
-        cumulativeDistanceChangePx: 12,
-        cumulativeCenterMovement: 44,
-        cumulativeCenterDeltaX: 4,
-        cumulativeCenterDeltaY: 40,
+        v1: const Offset(40, 8),
+        v2: const Offset(-38, -6),
+        cumulativeDistanceChangeRatio: 0.12,
+        cumulativeDistanceChangePx: 24,
+        verticalDominanceFactor: 5.0,
       );
-      expect(type, TwoFingerGestureType.scroll);
+      expect(type, TwoFingerGestureType.zoom);
+    });
+
+    test('zoom blocked when strongly vertical-dominant even if opposite', () {
+      final type = decideTwoFingerGestureTypeFromVectors(
+        isMobile: true,
+        v1: const Offset(2, 60),
+        v2: const Offset(-1, -55),
+        cumulativeDistanceChangeRatio: 0.12,
+        cumulativeDistanceChangePx: 24,
+        verticalDominanceFactor: 5.0,
+      );
+      expect(type, TwoFingerGestureType.undecided);
+    });
+
+    test('small movement jitter filtered -> undecided', () {
+      final type = decideTwoFingerGestureTypeFromVectors(
+        isMobile: true,
+        v1: const Offset(1, 6),
+        v2: const Offset(1, 5),
+        cumulativeDistanceChangeRatio: 0.10,
+        cumulativeDistanceChangePx: 20,
+        verticalDominanceFactor: 5.0,
+      );
+      expect(type, TwoFingerGestureType.undecided);
     });
 
     test('scroll activation is debounced by time and distance', () {
