@@ -7,6 +7,7 @@ import 'package:cloudplayplus/controller/gamepad_controller.dart';
 import 'package:cloudplayplus/controller/smooth_scroll_controller.dart';
 import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
+import 'package:cloudplayplus/services/video_buffer_state_event_bus.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/utils/widgets/on_screen_gamepad.dart';
 import 'package:cloudplayplus/widgets/keyboard/enhanced_keyboard_panel.dart';
@@ -118,8 +119,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   int _adaptivePrevBytesReceived = 0;
   int _adaptivePrevFreezeCount = 0;
 
-  int _netBufferTargetSeconds = 1;
-  int _netBufferLastAppliedSeconds = -1;
+  int _netBufferTargetFrames = 5;
+  int _netBufferLastAppliedFrames = -1;
   int _netBufferLastAppliedAtMs = 0;
   String _netBufferAppliedMethod = '';
   bool _netBufferUnsupported = false;
@@ -245,21 +246,27 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
           final freezeDelta =
               (freezeCount - _adaptivePrevFreezeCount).clamp(0, 1 << 30);
           _adaptivePrevFreezeCount = freezeCount;
-          final want = computeTargetBufferSeconds(
+          final wantFrames = computeTargetBufferFrames(
             input: VideoBufferPolicyInput(
               jitterMs: jitterMs,
               lossFraction: lossFraction,
               rttMs: rttMs,
               freezeDelta: freezeDelta,
+              rxFps: fps,
+              rxKbps: rxKbps,
             ),
-            prevSeconds: _netBufferTargetSeconds,
-            minSeconds: StreamingSettings.networkBufferMinSeconds,
-            maxSeconds: StreamingSettings.networkBufferMaxSeconds,
+            prevFrames: _netBufferTargetFrames,
+            baseFrames: StreamingSettings.networkBufferBaseFrames,
+            maxFrames: StreamingSettings.networkBufferMaxFrames,
           );
-          _netBufferTargetSeconds = want;
+          _netBufferTargetFrames = wantFrames;
+
+          final fpsHint =
+              (StreamingSettings.framerate ?? 30).toDouble().clamp(15.0, 60.0);
+          final wantSeconds = (wantFrames / fpsHint).clamp(0.0, 10.0);
 
           // Avoid spamming platform calls.
-          final shouldApply = (want != _netBufferLastAppliedSeconds) &&
+          final shouldApply = (wantFrames != _netBufferLastAppliedFrames) &&
               (nowMs - _netBufferLastAppliedAtMs) >= 900;
           if (shouldApply) {
             try {
@@ -274,9 +281,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
               video ??= receivers.isNotEmpty ? receivers.first : null;
               if (video == null) return;
 
-              final res =
-                  await (video as dynamic).setJitterBufferMinimumDelay(
-                want.toDouble(),
+              final res = await (video as dynamic).setJitterBufferMinimumDelay(
+                wantSeconds,
               );
               bool ok = false;
               String method = '';
@@ -284,13 +290,23 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 ok = res.ok;
                 method = res.method;
               }
-              _netBufferLastAppliedSeconds = want;
+              _netBufferLastAppliedFrames = wantFrames;
               _netBufferLastAppliedAtMs = nowMs;
               _netBufferAppliedMethod = method;
               if (!ok) {
                 // If unsupported, stop trying.
                 _netBufferUnsupported = true;
               }
+
+              VideoBufferStateEventBus.instance.emit({
+                'enabled': StreamingSettings.enableNetworkBuffer,
+                'unsupported': _netBufferUnsupported,
+                'frames': wantFrames,
+                'seconds': wantSeconds,
+                'fpsHint': fpsHint,
+                'method': method,
+                'ok': ok,
+              });
             } catch (_) {
               // Ignore failures; keep streaming.
             }

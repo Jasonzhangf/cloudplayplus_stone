@@ -6,6 +6,7 @@ import '../services/webrtc_service.dart';
 import '../controller/screen_controller.dart';
 import '../base/logging.dart';
 import '../services/video_frame_size_event_bus.dart';
+import '../services/video_buffer_state_event_bus.dart';
 
 class VideoInfoWidget extends StatelessWidget {
   const VideoInfoWidget({super.key});
@@ -44,6 +45,8 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
   Map<String, dynamic> _previousVideoInfo = {};
   StreamSubscription<Map<String, dynamic>>? _hostFrameSizeSub;
   Map<String, dynamic>? _hostFrameSize;
+  StreamSubscription<Map<String, dynamic>>? _bufferStateSub;
+  Map<String, dynamic>? _bufferState;
 
   @override
   void initState() {
@@ -56,6 +59,12 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
         _hostFrameSize = p;
       });
     });
+    _bufferStateSub = VideoBufferStateEventBus.instance.stream.listen((p) {
+      if (!mounted) return;
+      setState(() {
+        _bufferState = p;
+      });
+    });
   }
 
   @override
@@ -63,6 +72,7 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
     VLOG0('VideoInfoContentState: dispose called');
     _refreshTimer?.cancel();
     _hostFrameSizeSub?.cancel();
+    _bufferStateSub?.cancel();
     super.dispose();
   }
 
@@ -112,6 +122,18 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
     );
     final gopText = formatGop(gopMs);
 
+    final bufferText = _bufferState == null
+        ? '--'
+        : () {
+            final frames = _bufferState!['frames'];
+            final seconds = _bufferState!['seconds'];
+            if (frames == null || seconds == null) return '--';
+            final method = _bufferState!['method'];
+            final methodText =
+                (method is String && method.isNotEmpty) ? ' ($method)' : '';
+            return '${frames}f ${(seconds as num).toStringAsFixed(2)}s$methodText';
+          }();
+
     return Container(
       margin: const EdgeInsets.all(8),
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -128,21 +150,31 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
             spacing: 12,
             runSpacing: 2,
             children: [
-              _buildInfoItem('分辨率', '${_videoInfo['width']}×${_videoInfo['height']}'),
-              _buildInfoItem('帧率', '${(_videoInfo['fps'] as num).toStringAsFixed(1)} fps'),
-              _buildInfoItem('码率', bitrateKbps > 0 ? '${bitrateKbps} kbps' : '-- kbps'),
+              _buildInfoItem(
+                  '分辨率', '${_videoInfo['width']}×${_videoInfo['height']}'),
+              _buildInfoItem(
+                  '帧率', '${(_videoInfo['fps'] as num).toStringAsFixed(1)} fps'),
+              _buildInfoItem(
+                  '码率', bitrateKbps > 0 ? '${bitrateKbps} kbps' : '-- kbps'),
               _buildInfoItem('GOP', gopText),
               _buildInfoItem('编码', _videoInfo['codecType']?.toString() ?? '未知'),
-              _buildInfoItem('解码器', _getDecoderDisplayName(_videoInfo['decoderImplementation'], _videoInfo)),
-              _buildInfoItem('丢包率', '${_calculatePacketLossRate(_videoInfo).toStringAsFixed(1)}%'),
-              _buildInfoItem('往返时延', '${((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0)} ms'),
+              _buildInfoItem(
+                  '解码器',
+                  _getDecoderDisplayName(
+                      _videoInfo['decoderImplementation'], _videoInfo)),
+              _buildInfoItem('丢包率',
+                  '${_calculatePacketLossRate(_videoInfo).toStringAsFixed(1)}%'),
+              _buildInfoItem('往返时延',
+                  '${((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0)} ms'),
+              _buildInfoItem('Buffer', bufferText),
               _buildInfoItem(
                 '解码时间',
                 instantDecodeMs > 0
                     ? '${instantDecodeMs} ms (inst) / ${(_videoInfo['avgDecodeTimeMs'] as num).toStringAsFixed(1)} ms (avg)'
                     : '${(_videoInfo['avgDecodeTimeMs'] as num).toStringAsFixed(1)} ms',
               ),
-              _buildInfoItem('抖动', '${((_videoInfo['jitter'] as num) * 1000).toStringAsFixed(1)} ms'),
+              _buildInfoItem('抖动',
+                  '${((_videoInfo['jitter'] as num) * 1000).toStringAsFixed(1)} ms'),
               if (_hostFrameSize != null) ...[
                 _buildInfoItem(
                   'Host',
@@ -210,8 +242,8 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
           borderRadius: BorderRadius.circular(8),
           border: Border.all(color: Colors.white.withOpacity(0.3), width: 1),
         ),
-        child: Text(text,
-            style: TextStyle(color: Colors.white70, fontSize: 10)),
+        child:
+            Text(text, style: TextStyle(color: Colors.white70, fontSize: 10)),
       );
 
   Widget _buildInfoItem(String label, String value) => Text.rich(
@@ -239,30 +271,35 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
   double _calculatePacketLossRate(Map<String, dynamic> videoInfo) {
     final currentPacketsLost = videoInfo['packetsLost'] as num;
     final currentPacketsReceived = videoInfo['packetsReceived'] as num;
-    
+
     // 如果没有上一次的数据，返回0
     if (_previousVideoInfo.isEmpty) {
       return 0.0;
     }
-    
+
     final previousPacketsLost = _previousVideoInfo['packetsLost'] as num? ?? 0;
-    final previousPacketsReceived = _previousVideoInfo['packetsReceived'] as num? ?? 0;
-    
+    final previousPacketsReceived =
+        _previousVideoInfo['packetsReceived'] as num? ?? 0;
+
     // 计算最近一秒的增量
     final deltaPacketsLost = currentPacketsLost - previousPacketsLost;
-    final deltaPacketsReceived = currentPacketsReceived - previousPacketsReceived;
-    
+    final deltaPacketsReceived =
+        currentPacketsReceived - previousPacketsReceived;
+
     // 如果没有新的数据包，返回0
     if (deltaPacketsReceived <= 0) return 0.0;
-    
+
     final deltaTotal = deltaPacketsLost + deltaPacketsReceived;
     return (deltaPacketsLost / deltaTotal) * 100;
   }
 
-  String _getDecoderDisplayName(String implementation, Map<String, dynamic> videoInfo) {
+  String _getDecoderDisplayName(
+      String implementation, Map<String, dynamic> videoInfo) {
     if (implementation == '未知' || implementation.isEmpty) return '未知';
     // 增加解码器名称的显示长度，从15个字符增加到25个字符，截取长度从12增加到22
-    String name = implementation.length > 25 ? '${implementation.substring(0, 22)}...' : implementation;
+    String name = implementation.length > 25
+        ? '${implementation.substring(0, 22)}...'
+        : implementation;
     if (videoInfo['isHardwareDecoder'] == true) name += ' (硬解)';
     return name;
   }
@@ -292,7 +329,8 @@ class _CompactVideoInfoContent extends StatefulWidget {
   const _CompactVideoInfoContent();
 
   @override
-  State<_CompactVideoInfoContent> createState() => _CompactVideoInfoContentState();
+  State<_CompactVideoInfoContent> createState() =>
+      _CompactVideoInfoContentState();
 }
 
 class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
@@ -359,7 +397,8 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
     }
 
     final packetLossRate = _calculatePacketLossRate(_videoInfo);
-    final rtt = ((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0);
+    final rtt =
+        ((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0);
     // WebRTC inbound-rtp fps is the *decoded/render* fps on the receiver.
     final fps = (_videoInfo['fps'] as num).toStringAsFixed(1);
     final bitrateKbps = computeBitrateKbpsFromSamples(
@@ -381,7 +420,9 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
     final hostMode = host?['mode']?.toString();
     final hostFps = host?['targetFps'];
     final hostBitrate = host?['targetBitrateKbps'];
-    final hostText = (hostMode != null || hostFps != null || hostBitrate != null)
+    final hostText = (hostMode != null ||
+            hostFps != null ||
+            hostBitrate != null)
         ? ' | 编码${hostMode ?? "--"} ${hostFps ?? "--"}fps ${hostBitrate ?? "--"}kbps'
         : '';
 
@@ -405,22 +446,24 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
   double _calculatePacketLossRate(Map<String, dynamic> videoInfo) {
     final currentPacketsLost = videoInfo['packetsLost'] as num;
     final currentPacketsReceived = videoInfo['packetsReceived'] as num;
-    
+
     // 如果没有上一次的数据，返回0
     if (_previousVideoInfo.isEmpty) {
       return 0.0;
     }
-    
+
     final previousPacketsLost = _previousVideoInfo['packetsLost'] as num? ?? 0;
-    final previousPacketsReceived = _previousVideoInfo['packetsReceived'] as num? ?? 0;
-    
+    final previousPacketsReceived =
+        _previousVideoInfo['packetsReceived'] as num? ?? 0;
+
     // 计算最近一秒的增量
     final deltaPacketsLost = currentPacketsLost - previousPacketsLost;
-    final deltaPacketsReceived = currentPacketsReceived - previousPacketsReceived;
-    
+    final deltaPacketsReceived =
+        currentPacketsReceived - previousPacketsReceived;
+
     // 如果没有新的数据包，返回0
     if (deltaPacketsReceived <= 0) return 0.0;
-    
+
     final deltaTotal = deltaPacketsLost + deltaPacketsReceived;
     return (deltaPacketsLost / deltaTotal) * 100;
   }
@@ -462,32 +505,36 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
     for (var report in stats) {
       if (report.type == 'inbound-rtp') {
         final values = Map<String, dynamic>.from(report.values);
-        
+
         // 检查是否为视频轨道
         if (values['kind'] == 'video' || values['mediaType'] == 'video') {
           videoInfo['hasVideo'] = true;
-          
+
           // 基本视频信息
           videoInfo['width'] = values['frameWidth'] ?? 0;
           videoInfo['height'] = values['frameHeight'] ?? 0;
-          videoInfo['fps'] = (values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
-          
+          videoInfo['fps'] =
+              (values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
+
           // 解码器信息
           String decoderImpl = values['decoderImplementation'] ?? '未知';
           videoInfo['decoderImplementation'] = decoderImpl;
           videoInfo['isHardwareDecoder'] = _isHardwareDecoder(decoderImpl);
-          videoInfo['powerEfficientDecoder'] = values['powerEfficientDecoder'] ?? false;
-          
+          videoInfo['powerEfficientDecoder'] =
+              values['powerEfficientDecoder'] ?? false;
+
           // 解码性能统计
-          final totalDecodeTime = (values['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
+          final totalDecodeTime =
+              (values['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
           final framesDecoded = values['framesDecoded'] ?? 0;
           videoInfo['framesDecoded'] = framesDecoded;
           videoInfo['totalDecodeTime'] = totalDecodeTime;
-          
+
           if (framesDecoded > 0 && totalDecodeTime > 0) {
-            videoInfo['avgDecodeTimeMs'] = (totalDecodeTime / framesDecoded * 1000);
+            videoInfo['avgDecodeTimeMs'] =
+                (totalDecodeTime / framesDecoded * 1000);
           }
-          
+
           // 质量统计
           videoInfo['framesDropped'] = values['framesDropped'] ?? 0;
           videoInfo['keyFramesDecoded'] = values['keyFramesDecoded'] ?? 0;
@@ -495,18 +542,20 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
           videoInfo['packetsReceived'] = values['packetsReceived'] ?? 0;
           videoInfo['bytesReceived'] = values['bytesReceived'] ?? 0;
           videoInfo['jitter'] = (values['jitter'] as num?)?.toDouble() ?? 0.0;
-          
+
           // 网络控制统计
           videoInfo['nackCount'] = values['nackCount'] ?? 0;
           videoInfo['pliCount'] = values['pliCount'] ?? 0;
           videoInfo['firCount'] = values['firCount'] ?? 0;
-          
+
           // 播放质量统计
           videoInfo['freezeCount'] = values['freezeCount'] ?? 0;
           videoInfo['pauseCount'] = values['pauseCount'] ?? 0;
-          videoInfo['totalFreezesDuration'] = (values['totalFreezesDuration'] as num?)?.toDouble() ?? 0.0;
-          videoInfo['totalPausesDuration'] = (values['totalPausesDuration'] as num?)?.toDouble() ?? 0.0;
-          
+          videoInfo['totalFreezesDuration'] =
+              (values['totalFreezesDuration'] as num?)?.toDouble() ?? 0.0;
+          videoInfo['totalPausesDuration'] =
+              (values['totalPausesDuration'] as num?)?.toDouble() ?? 0.0;
+
           // 查找编解码器信息
           String? codecId = values['codecId'];
           if (codecId != null) {
@@ -520,28 +569,29 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
               videoInfo['payloadType'] = codecReport.values['payloadType'] ?? 0;
             }
           }
-          
+
           break;
         }
       }
     }
-    
+
     // 查找连接质量信息
     for (var report in stats) {
       if (report.type == 'candidate-pair') {
         final values = Map<String, dynamic>.from(report.values);
         if (values['state'] == 'succeeded' && values['nominated'] == true) {
-          videoInfo['roundTripTime'] = (values['currentRoundTripTime'] as num?)?.toDouble() ?? 0.0;
-          videoInfo['availableBandwidth'] = (values['availableOutgoingBitrate'] as num?)?.toDouble() ?? 0.0;
+          videoInfo['roundTripTime'] =
+              (values['currentRoundTripTime'] as num?)?.toDouble() ?? 0.0;
+          videoInfo['availableBandwidth'] =
+              (values['availableOutgoingBitrate'] as num?)?.toDouble() ?? 0.0;
           break;
         }
       }
     }
-    
   } catch (e) {
     VLOG0('提取视频信息出错: $e');
   }
-  
+
   return videoInfo;
 }
 
@@ -612,22 +662,22 @@ String formatGop(int gopMs) {
 /// 判断是否为硬件解码器
 bool _isHardwareDecoder(String implementation) {
   if (implementation.isEmpty) return false;
-  
+
   // 硬件解码器关键字（不区分大小写）
   List<String> hardwareKeywords = [
-    'mediacodec',     // Android MediaCodec
-    'c2.',            // Android Codec2 (e.g. c2.qti.avc.decoder)
-    'omx.',           // Legacy OMX codec names
-    'videotoolbox',   // iOS VideoToolbox
-    'hardware',       // 通用硬件标识
-    'hw',            // 硬件缩写
-    'nvenc',         // NVIDIA
-    'qsv',           // Intel Quick Sync
-    'vaapi',         // Video Acceleration API
-    'dxva',          // DirectX Video Acceleration
-    'vdpau',         // Video Decode and Presentation API
+    'mediacodec', // Android MediaCodec
+    'c2.', // Android Codec2 (e.g. c2.qti.avc.decoder)
+    'omx.', // Legacy OMX codec names
+    'videotoolbox', // iOS VideoToolbox
+    'hardware', // 通用硬件标识
+    'hw', // 硬件缩写
+    'nvenc', // NVIDIA
+    'qsv', // Intel Quick Sync
+    'vaapi', // Video Acceleration API
+    'dxva', // DirectX Video Acceleration
+    'vdpau', // Video Decode and Presentation API
   ];
-  
+
   String lowerImpl = implementation.toLowerCase();
   return hardwareKeywords.any((keyword) => lowerImpl.contains(keyword));
 }

@@ -77,11 +77,11 @@ class StreamingSettings {
   static EncodingMode encodingMode = EncodingMode.dynamic;
 
   // Network smoothing buffer (controller-side, Android best-effort):
-  // When network fluctuates, increase minimum playout delay (1~10s) to reduce stutter.
-  // Note: This increases end-to-end latency significantly; keep it user-tunable.
+  // Latency-first: keep jitter buffer small by default (frames), only increase
+  // under degraded+unstable conditions to reduce stutter.
   static bool enableNetworkBuffer = true;
-  static int networkBufferMinSeconds = 1;
-  static int networkBufferMaxSeconds = 10;
+  static int networkBufferBaseFrames = 5;
+  static int networkBufferMaxFrames = 60;
 
   // 触控模式：0=触摸(默认), 1=触控板, 2=鼠标
   // 仅对触摸输入控制Windows设备有效
@@ -209,8 +209,8 @@ class StreamingSettings {
         SharedPreferencesManager.getBool('touchpadTwoFingerScrollInvert') ??
             false;
 
-    final encodingModeRaw =
-        SharedPreferencesManager.getInt('encodingMode') ?? EncodingMode.dynamic.index;
+    final encodingModeRaw = SharedPreferencesManager.getInt('encodingMode') ??
+        EncodingMode.dynamic.index;
     if (encodingModeRaw >= 0 && encodingModeRaw < EncodingMode.values.length) {
       encodingMode = EncodingMode.values[encodingModeRaw];
     } else {
@@ -231,16 +231,12 @@ class StreamingSettings {
     enableNetworkBuffer =
         SharedPreferencesManager.getBool('enableNetworkBuffer') ??
             (AppPlatform.isMobile || AppPlatform.isAndroidTV);
-    networkBufferMinSeconds =
-        (SharedPreferencesManager.getInt('networkBufferMinSeconds') ?? 1)
-            .clamp(1, 10);
-    networkBufferMaxSeconds =
-        (SharedPreferencesManager.getInt('networkBufferMaxSeconds') ?? 10)
-            .clamp(1, 10);
-    if (networkBufferMinSeconds >= networkBufferMaxSeconds) {
-      networkBufferMinSeconds = 1;
-      networkBufferMaxSeconds = 10;
-    }
+    networkBufferBaseFrames =
+        (SharedPreferencesManager.getInt('networkBufferBaseFrames') ?? 5)
+            .clamp(0, 600);
+    networkBufferMaxFrames =
+        (SharedPreferencesManager.getInt('networkBufferMaxFrames') ?? 60)
+            .clamp(networkBufferBaseFrames, 600);
   }
 
   //Screen id setting is not global, so we need to call before start streaming.

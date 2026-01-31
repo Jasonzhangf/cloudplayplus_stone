@@ -221,6 +221,26 @@ scripts/verify/verify_webrtc_window_capture.sh
 
 ---
 
+# 网络缓冲（延迟优先）任务
+
+> 目标：默认极低延迟（5 frames jitter buffer），仅在 **已降质仍卡顿** 时才增加缓冲。
+
+## 现状问题（已确认）
+- 旧策略是 1~10 秒级的 `jitterBufferMinimumDelay`，在网络波动时会把端到端延迟直接拉高。
+- 用户期望：**低延迟优先**，默认仅 5 帧缓冲，只有在降帧/降码率后仍卡才考虑增加缓冲。
+
+## 本次实现（已完成）
+- 缓冲策略从 “秒” 改为 “帧”，默认 `base=5f`，最大 `max=60f`（Android best-effort）。
+- 仅当 **degraded + unstable** 时才允许增大 buffer：
+  - degraded：出现 freeze / rxFps<=15 / rxKbps 很低
+  - unstable：loss/jitter/rtt 触发阈值
+- Debug overlay 增加 `Buffer: {frames}f {seconds}s`，方便你现场判断策略是否在工作。
+
+## 验证（已完成）
+- `flutter test` 全量通过（包含 `test/video_buffer_policy_test.dart`）。
+
+---
+
 # 串流恢复 / 输入法 / 坐标（功能修复任务）
 
 > 目标：把“恢复上次连接 + 手动控制系统输入法 + 缩放/键盘下坐标稳定 + 防溢出”这条链路做扎实，优先保证 **可重复验证** 与 **回环测试**，再做 UI/体验打磨。
