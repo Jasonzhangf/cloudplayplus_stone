@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:cloudplayplus/core/blocks/iterm2/iterm2_sources_block.dart';
 import 'package:cloudplayplus/core/ports/process_runner_host_adapter.dart';
+import 'package:cloudplayplus/utils/network/strategy_lab_policy.dart';
+import 'package:cloudplayplus/utils/network/video_buffer_policy.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -60,6 +62,8 @@ class _VerifyPageState extends State<_VerifyPage> {
   final RTCVideoRenderer _remoteRenderer = RTCVideoRenderer();
   final List<String> _logs = [];
 
+  Timer? _statsTimer;
+
   DesktopCapturerSource? _source;
   MediaStream? _captureStream;
   RTCPeerConnection? _pc1;
@@ -86,6 +90,75 @@ class _VerifyPageState extends State<_VerifyPage> {
   late final TextEditingController _fpsController;
   late final TextEditingController _bandwidthKbpsController;
   late final TextEditingController _bitrateKbpsController;
+  late final TextEditingController _headroomController;
+  late final TextEditingController _baseBufferFramesController;
+  late final TextEditingController _maxBufferFramesController;
+  late final TextEditingController _simLossPctController;
+  late final TextEditingController _simJitterMsController;
+  late final TextEditingController _simDecodeMsController;
+
+  // "Targets" are what the user types (or chooses via Next/Prev).
+  int _targetFps = 30;
+  int _targetBitrateKbps = 250;
+
+  // What we actually apply to the sender after TX policy + overflow caps.
+  int _effectiveFps = 30;
+  int _effectiveBitrateKbps = 250;
+
+  // Latest sampled metrics (per-second).
+  _RxMetrics _rx = const _RxMetrics.empty();
+  _TxMetrics _tx = const _TxMetrics.empty();
+
+  // Strategy Lab selections (verification-only).
+  _TxPolicy _txPolicy = _TxPolicy.capByBandwidth;
+  _RxPolicy _rxPolicy = _RxPolicy.adaptiveBuffer;
+
+  bool _simUseBandwidthInput = true;
+  bool _simLossJitter = false;
+  bool _simDecodeSlow = false;
+
+  bool _overflowForceTxBitrateDown = true;
+  bool _overflowForceTxFpsDown = false;
+  bool _overflowResetRxBuffer = true;
+
+  // Receiver-side buffer controls.
+  int _bufferBaseFrames = 5;
+  int _bufferMaxFrames = 60;
+  int _rxTargetBufferFrames = 5;
+  double _rxTargetBufferSeconds = 0.0;
+  bool _rxBufferUnsupported = false;
+  String _rxBufferMethod = '';
+  int _rxLastAppliedFrames = -1;
+  int _rxLastAppliedAtMs = 0;
+
+  // Bandwidth cap headroom.
+  double _txHeadroom = 1.0;
+
+  // Policy trackers / hysteresis.
+  BandwidthInsufficiencyTracker _bwTracker =
+      const BandwidthInsufficiencyTracker.initial();
+  BufferFullTracker _bufferFullTracker = const BufferFullTracker.initial();
+  int _bufferOkConsecutive = 0;
+  int? _emergencyMaxBitrateKbps;
+  int? _emergencyMaxFps;
+
+  // Throttle setParameters calls.
+  int _txLastAppliedAtMs = 0;
+  int _txLastAppliedBitrateBps = -1;
+  int _txLastAppliedFps = -1;
+
+  // RX delta sampling state.
+  int _rxPrevAtMs = 0;
+  int _rxPrevBytesReceived = 0;
+  int _rxPrevPacketsReceived = 0;
+  int _rxPrevPacketsLost = 0;
+  int _rxPrevFreezeCount = 0;
+  double _rxPrevTotalDecodeTimeSec = 0.0;
+  int _rxPrevFramesDecoded = 0;
+
+  // TX delta sampling state.
+  int _txPrevAtMs = 0;
+  int _txPrevBytesSent = 0;
 
   @override
   void initState() {
@@ -93,6 +166,12 @@ class _VerifyPageState extends State<_VerifyPage> {
     _fpsController = TextEditingController(text: '30');
     _bandwidthKbpsController = TextEditingController(text: '1000');
     _bitrateKbpsController = TextEditingController(text: '250');
+    _headroomController = TextEditingController(text: '1.0');
+    _baseBufferFramesController = TextEditingController(text: '5');
+    _maxBufferFramesController = TextEditingController(text: '60');
+    _simLossPctController = TextEditingController(text: '0');
+    _simJitterMsController = TextEditingController(text: '0');
+    _simDecodeMsController = TextEditingController(text: '0');
     unawaited(_remoteRenderer.initialize());
     unawaited(_init());
   }
@@ -102,6 +181,13 @@ class _VerifyPageState extends State<_VerifyPage> {
     _fpsController.dispose();
     _bandwidthKbpsController.dispose();
     _bitrateKbpsController.dispose();
+    _headroomController.dispose();
+    _baseBufferFramesController.dispose();
+    _maxBufferFramesController.dispose();
+    _simLossPctController.dispose();
+    _simJitterMsController.dispose();
+    _simDecodeMsController.dispose();
+    _statsTimer?.cancel();
     unawaited(_cleanup());
     _remoteRenderer.dispose();
     super.dispose();
@@ -196,6 +282,7 @@ class _VerifyPageState extends State<_VerifyPage> {
       await _applyCurrentCase();
       // Also sync manual input fields with the current case defaults.
       _syncManualInputsFromCurrentCase();
+      _startStatsLoop();
     } catch (e) {
       _log('ERROR init: $e');
     }
@@ -349,9 +436,20 @@ class _VerifyPageState extends State<_VerifyPage> {
   Future<void> _applySenderParams({
     required int maxBitrateBps,
     required int maxFramerate,
+    required String reason,
   }) async {
     final s = _sender;
     if (s == null) throw StateError('no sender');
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (maxBitrateBps == _txLastAppliedBitrateBps &&
+        maxFramerate == _txLastAppliedFps) {
+      return;
+    }
+    if ((nowMs - _txLastAppliedAtMs) < 800) {
+      return;
+    }
+
     final p = s.parameters;
     p.degradationPreference = RTCDegradationPreference.MAINTAIN_FRAMERATE;
     p.encodings ??= [RTCRtpEncoding()];
@@ -360,6 +458,12 @@ class _VerifyPageState extends State<_VerifyPage> {
     e0.maxBitrate = maxBitrateBps;
     e0.maxFramerate = maxFramerate;
     await s.setParameters(p);
+
+    _txLastAppliedAtMs = nowMs;
+    _txLastAppliedBitrateBps = maxBitrateBps;
+    _txLastAppliedFps = maxFramerate;
+    _log(
+        'TX setParameters fps=$maxFramerate bitrateBps=$maxBitrateBps reason=$reason');
   }
 
   Future<void> _applyCurrentCase() async {
@@ -370,21 +474,14 @@ class _VerifyPageState extends State<_VerifyPage> {
     });
     try {
       final c = _cases[_caseIndex];
-      _log(
-          'apply case ${_caseIndex + 1}/${_cases.length}: fps=${c.fps} bitrate=${c.bitrateKbps}kbps');
-      await _applySenderParams(
-        maxFramerate: c.fps,
-        maxBitrateBps: c.bitrateKbps * 1000,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      final stats = await _pc2!.getStats();
-      final inbound = _extractInbound(stats);
-      final codec = _extractInboundCodecMimeType(stats, inbound);
       setState(() {
-        _lastInbound = inbound;
-        _lastCodec = codec;
+        _targetFps = c.fps;
+        _targetBitrateKbps = c.bitrateKbps;
       });
-      _log('stats: codec=$codec inbound=${inbound ?? "null"}');
+      _log(
+          'set TARGET from case ${_caseIndex + 1}/${_cases.length}: fps=${c.fps} bitrate=${c.bitrateKbps}kbps');
+      _syncManualInputsFromCurrentCase();
+      await _applyPoliciesNow(reason: 'case');
     } catch (e) {
       _log('ERROR apply case: $e');
     } finally {
@@ -407,8 +504,10 @@ class _VerifyPageState extends State<_VerifyPage> {
     if (!_ready) return;
     if (_busy) return;
     final fps = int.tryParse(_fpsController.text.trim());
-    final bandwidthKbps = int.tryParse(_bandwidthKbpsController.text.trim());
     final bitrateKbps = int.tryParse(_bitrateKbpsController.text.trim());
+    final headroom = double.tryParse(_headroomController.text.trim());
+    final baseFrames = int.tryParse(_baseBufferFramesController.text.trim());
+    final maxFrames = int.tryParse(_maxBufferFramesController.text.trim());
     if (fps == null || fps <= 0 || fps > 120) {
       _log('invalid fps: "${_fpsController.text}"');
       return;
@@ -422,24 +521,18 @@ class _VerifyPageState extends State<_VerifyPage> {
       _busy = true;
     });
     try {
-      final effectiveKbps = (bandwidthKbps != null && bandwidthKbps > 0)
-          ? (bitrateKbps < bandwidthKbps ? bitrateKbps : bandwidthKbps)
-          : bitrateKbps;
-      _log('apply MANUAL: fps=$fps bandwidthKbps=${bandwidthKbps ?? "-"} '
-          'bitrateKbps=$bitrateKbps effectiveKbps=$effectiveKbps');
-      await _applySenderParams(
-        maxFramerate: fps,
-        maxBitrateBps: effectiveKbps * 1000,
-      );
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      final stats = await _pc2!.getStats();
-      final inbound = _extractInbound(stats);
-      final codec = _extractInboundCodecMimeType(stats, inbound);
       setState(() {
-        _lastInbound = inbound;
-        _lastCodec = codec;
+        _targetFps = fps;
+        _targetBitrateKbps = bitrateKbps;
+        _txHeadroom = (headroom ?? 1.0).clamp(0.1, 1.0);
+        if (baseFrames != null) _bufferBaseFrames = baseFrames.clamp(0, 600);
+        if (maxFrames != null) {
+          _bufferMaxFrames = maxFrames.clamp(_bufferBaseFrames, 600);
+        }
       });
-      _log('stats: codec=$codec inbound=${inbound ?? "null"}');
+      _log(
+          'set TARGET from manual OK: fps=$fps bitrate=$bitrateKbps kbps headroom=$_txHeadroom bufferBase=$_bufferBaseFrames bufferMax=$_bufferMaxFrames');
+      await _applyPoliciesNow(reason: 'manual-ok');
     } catch (e) {
       _log('ERROR apply MANUAL: $e');
     } finally {
@@ -458,7 +551,6 @@ class _VerifyPageState extends State<_VerifyPage> {
       _caseIndex++;
     });
     await _applyCurrentCase();
-    _syncManualInputsFromCurrentCase();
   }
 
   Future<void> _prev() async {
@@ -468,7 +560,6 @@ class _VerifyPageState extends State<_VerifyPage> {
       _caseIndex--;
     });
     await _applyCurrentCase();
-    _syncManualInputsFromCurrentCase();
   }
 
   _InboundVideoStats? _extractInbound(List<StatsReport> stats) {
@@ -546,6 +637,477 @@ class _VerifyPageState extends State<_VerifyPage> {
     _remoteVideoTrack = null;
   }
 
+  void _startStatsLoop() {
+    _statsTimer?.cancel();
+    _statsTimer = Timer.periodic(const Duration(seconds: 1), (_) async {
+      if (!mounted || !_ready) return;
+      if (_pc1 == null || _pc2 == null) return;
+      await _tickStatsAndPolicies();
+    });
+  }
+
+  Future<void> _tickStatsAndPolicies() async {
+    try {
+      final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+      final rxStats = await _pc2!.getStats();
+      final rx = _extractRxMetrics(rxStats, nowMs);
+
+      final txStats = await _pc1!.getStats();
+      final tx = _extractTxMetrics(txStats, nowMs);
+
+      final inbound = _extractInbound(rxStats);
+      final codec = _extractInboundCodecMimeType(rxStats, inbound);
+
+      setState(() {
+        _rx = rx;
+        _tx = tx;
+        _lastInbound = inbound;
+        _lastCodec = codec;
+      });
+
+      // Apply policies (best-effort) based on the freshest stats.
+      await _applyPoliciesNow(reason: 'tick');
+    } catch (e) {
+      _log('ERROR tickStats: $e');
+    }
+  }
+
+  _RxMetrics _extractRxMetrics(List<StatsReport> stats, int nowMs) {
+    double rxFps = 0.0;
+    int width = 0;
+    int height = 0;
+    int framesDecoded = 0;
+    int packetsReceived = 0;
+    int packetsLost = 0;
+    int bytesReceived = 0;
+    double totalDecodeTimeSec = 0.0;
+    double jitterMs = 0.0;
+    int freezeCount = 0;
+    double rttMs = 0.0;
+
+    for (final report in stats) {
+      if (report.type == 'inbound-rtp') {
+        final values = Map<String, dynamic>.from(report.values);
+        if (values['kind'] == 'video' || values['mediaType'] == 'video') {
+          rxFps = (values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
+          width = (values['frameWidth'] as num?)?.toInt() ?? 0;
+          height = (values['frameHeight'] as num?)?.toInt() ?? 0;
+          framesDecoded = (values['framesDecoded'] as num?)?.toInt() ?? 0;
+          packetsReceived = (values['packetsReceived'] as num?)?.toInt() ?? 0;
+          packetsLost = (values['packetsLost'] as num?)?.toInt() ?? 0;
+          bytesReceived = (values['bytesReceived'] as num?)?.toInt() ?? 0;
+          totalDecodeTimeSec =
+              (values['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
+          final jitterSec = (values['jitter'] as num?)?.toDouble() ?? 0.0;
+          jitterMs = jitterSec * 1000.0;
+          freezeCount = (values['freezeCount'] as num?)?.toInt() ?? 0;
+        }
+      } else if (report.type == 'candidate-pair') {
+        final values = Map<String, dynamic>.from(report.values);
+        if (values['state'] == 'succeeded' && values['nominated'] == true) {
+          final rtt =
+              (values['currentRoundTripTime'] as num?)?.toDouble() ?? 0.0;
+          rttMs = rtt * 1000.0;
+        }
+      }
+    }
+
+    // Fallback FPS if framesPerSecond missing.
+    if (rxFps <= 0 && framesDecoded > 0 && _rxPrevAtMs > 0) {
+      final dtMs = (nowMs - _rxPrevAtMs).clamp(1, 60000);
+      final df = (framesDecoded - _rxPrevFramesDecoded).clamp(0, 1000000);
+      rxFps = df * 1000.0 / dtMs;
+    }
+
+    double lossFraction = 0.0;
+    double rxKbps = 0.0;
+    int freezeDelta = 0;
+    int decodeMsPerFrame = 0;
+    if (_rxPrevAtMs > 0) {
+      final dtMs = (nowMs - _rxPrevAtMs).clamp(1, 60000);
+      final dRecv =
+          (packetsReceived - _rxPrevPacketsReceived).clamp(0, 1 << 30);
+      final dLost = (packetsLost - _rxPrevPacketsLost).clamp(0, 1 << 30);
+      final denom = dRecv + dLost;
+      if (denom > 0) lossFraction = dLost / denom;
+
+      final dBytes = (bytesReceived - _rxPrevBytesReceived).clamp(0, 1 << 30);
+      rxKbps = dBytes * 8.0 / dtMs;
+
+      freezeDelta = (freezeCount - _rxPrevFreezeCount).clamp(0, 1 << 30);
+
+      if (totalDecodeTimeSec > _rxPrevTotalDecodeTimeSec &&
+          framesDecoded > _rxPrevFramesDecoded) {
+        final dFrames =
+            (framesDecoded - _rxPrevFramesDecoded).clamp(1, 1 << 30);
+        final dSec = (totalDecodeTimeSec - _rxPrevTotalDecodeTimeSec);
+        decodeMsPerFrame = ((dSec / dFrames) * 1000.0).round();
+      }
+    }
+
+    _rxPrevAtMs = nowMs;
+    _rxPrevBytesReceived = bytesReceived;
+    _rxPrevPacketsReceived = packetsReceived;
+    _rxPrevPacketsLost = packetsLost;
+    _rxPrevFreezeCount = freezeCount;
+    _rxPrevTotalDecodeTimeSec = totalDecodeTimeSec;
+    _rxPrevFramesDecoded = framesDecoded;
+
+    return _RxMetrics(
+      rxFps: rxFps,
+      rxKbps: rxKbps,
+      lossFraction: lossFraction,
+      rttMs: rttMs,
+      jitterMs: jitterMs,
+      freezeDelta: freezeDelta,
+      decodeMsPerFrame: decodeMsPerFrame,
+      frameWidth: width,
+      frameHeight: height,
+      tsMs: nowMs,
+    );
+  }
+
+  _TxMetrics _extractTxMetrics(List<StatsReport> stats, int nowMs) {
+    double availableOutgoingKbps = 0.0;
+    int bytesSent = 0;
+    for (final report in stats) {
+      if (report.type == 'candidate-pair') {
+        final values = Map<String, dynamic>.from(report.values);
+        if (values['state'] == 'succeeded' && values['nominated'] == true) {
+          final bps =
+              (values['availableOutgoingBitrate'] as num?)?.toDouble() ?? 0.0;
+          if (bps > 0) availableOutgoingKbps = bps / 1000.0;
+        }
+      } else if (report.type == 'outbound-rtp') {
+        final values = Map<String, dynamic>.from(report.values);
+        if (values['kind'] == 'video' || values['mediaType'] == 'video') {
+          bytesSent = (values['bytesSent'] as num?)?.toInt() ?? 0;
+        }
+      }
+    }
+
+    if (bytesSent <= 0) {
+      for (final report in stats) {
+        if (report.type != 'transport') continue;
+        final values = Map<String, dynamic>.from(report.values);
+        final b = (values['bytesSent'] as num?)?.toInt() ?? 0;
+        if (b > 0) {
+          bytesSent = b;
+          break;
+        }
+      }
+    }
+
+    double txKbps = 0.0;
+    if (_txPrevAtMs > 0 && bytesSent > 0) {
+      final dtMs = (nowMs - _txPrevAtMs).clamp(1, 60000);
+      final dBytes = (bytesSent - _txPrevBytesSent).clamp(0, 1 << 30);
+      txKbps = dBytes * 8.0 / dtMs;
+    }
+    _txPrevAtMs = nowMs;
+    _txPrevBytesSent = bytesSent;
+
+    return _TxMetrics(
+      txKbps: txKbps,
+      availableOutgoingKbps: availableOutgoingKbps,
+      tsMs: nowMs,
+    );
+  }
+
+  Future<void> _applyPoliciesNow({required String reason}) async {
+    if (!_ready) return;
+    if (_sender == null) return;
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+
+    // Parse optional simulation overrides.
+    final simLossPct =
+        double.tryParse(_simLossPctController.text.trim()) ?? 0.0;
+    final simJitterMs =
+        double.tryParse(_simJitterMsController.text.trim()) ?? 0.0;
+    final simDecodeMs = int.tryParse(_simDecodeMsController.text.trim()) ?? 0;
+
+    final rxLossFraction = _simLossJitter
+        ? (simLossPct / 100.0).clamp(0.0, 1.0)
+        : _rx.lossFraction;
+    final rxJitterMs =
+        _simLossJitter ? simJitterMs.clamp(0.0, 5000.0) : _rx.jitterMs;
+    final rxDecodeMs =
+        _simDecodeSlow ? simDecodeMs.clamp(0, 10000) : _rx.decodeMsPerFrame;
+    final rxFreezeDelta = _simDecodeSlow
+        ? (_rx.freezeDelta > 0 ? _rx.freezeDelta : (simDecodeMs > 0 ? 1 : 0))
+        : _rx.freezeDelta;
+
+    // 1) RX buffer policy.
+    int wantFrames = _bufferBaseFrames.clamp(0, 600);
+    final maxFrames = _bufferMaxFrames.clamp(wantFrames, 600);
+    if (_rxPolicy == _RxPolicy.adaptiveBuffer ||
+        _rxPolicy == _RxPolicy.smoothnessMax) {
+      final computed = computeTargetBufferFrames(
+        input: VideoBufferPolicyInput(
+          jitterMs: rxJitterMs,
+          lossFraction: rxLossFraction,
+          rttMs: _rx.rttMs,
+          freezeDelta: rxFreezeDelta,
+          rxFps: _rx.rxFps,
+          rxKbps: _rx.rxKbps,
+        ),
+        prevFrames: _rxTargetBufferFrames,
+        baseFrames: wantFrames,
+        maxFrames: maxFrames,
+      );
+      wantFrames = computed;
+      if (_rxPolicy == _RxPolicy.smoothnessMax) {
+        // Be more aggressive: ramp up faster.
+        if (wantFrames > _rxTargetBufferFrames) {
+          wantFrames = (_rxTargetBufferFrames + 10)
+              .clamp(_rxTargetBufferFrames, maxFrames);
+        }
+      }
+    }
+    final fpsHint = _effectiveFps.clamp(5, 120).toDouble();
+    final wantSeconds = (wantFrames / fpsHint).clamp(0.0, 10.0);
+
+    setState(() {
+      _rxTargetBufferFrames = wantFrames;
+      _rxTargetBufferSeconds = wantSeconds;
+    });
+
+    if (_rxPolicy != _RxPolicy.off && !_rxBufferUnsupported) {
+      final shouldApply = (wantFrames != _rxLastAppliedFrames) &&
+          (nowMs - _rxLastAppliedAtMs) >= 900;
+      if (shouldApply) {
+        final ok = await _tryApplyRxJitterBufferSeconds(
+          seconds: wantSeconds,
+        );
+        _rxLastAppliedFrames = wantFrames;
+        _rxLastAppliedAtMs = nowMs;
+        if (!ok) {
+          setState(() {
+            _rxBufferUnsupported = true;
+          });
+        }
+      }
+    }
+
+    // Buffer full tracking (overflow).
+    final fullRes = trackBufferFull(
+      previous: _bufferFullTracker,
+      targetFrames: wantFrames,
+      maxFrames: maxFrames,
+      freezeDelta: rxFreezeDelta,
+    );
+    _bufferFullTracker = fullRes.tracker;
+
+    if (fullRes.bufferFull) {
+      _bufferOkConsecutive = 0;
+      await _handleBufferOverflow(
+        measuredBandwidthKbps: _pickMeasuredBandwidthKbps(),
+        reason: 'rx-buffer-full',
+      );
+    } else {
+      _bufferOkConsecutive = (_bufferOkConsecutive + 1).clamp(0, 1 << 30);
+      if (_bufferOkConsecutive >= 5) {
+        if (_emergencyMaxBitrateKbps != null || _emergencyMaxFps != null) {
+          setState(() {
+            _emergencyMaxBitrateKbps = null;
+            _emergencyMaxFps = null;
+          });
+        }
+      }
+    }
+
+    // 2) TX bandwidth policy.
+    final measuredBwKbps = _pickMeasuredBandwidthKbps();
+    final bwRes = trackBandwidthInsufficiency(
+      previous: _bwTracker,
+      measuredKbps: measuredBwKbps,
+      targetKbps: _targetBitrateKbps,
+    );
+    _bwTracker = bwRes.tracker;
+
+    int decidedFps = _targetFps;
+    int decidedBitrate = _targetBitrateKbps;
+
+    switch (_txPolicy) {
+      case _TxPolicy.off:
+        break;
+      case _TxPolicy.capByBandwidth:
+        decidedBitrate = capBitrateByBandwidthKbps(
+          targetBitrateKbps: _targetBitrateKbps,
+          measuredBandwidthKbps: measuredBwKbps,
+          headroom: _txHeadroom,
+          minBitrateKbps: 1,
+        );
+        break;
+      case _TxPolicy.stepDownBitrate:
+        if (bwRes.insufficient) {
+          decidedBitrate = (_effectiveBitrateKbps * 0.70)
+              .round()
+              .clamp(1, _targetBitrateKbps);
+        } else if (bwRes.recovered) {
+          decidedBitrate = (_effectiveBitrateKbps * 1.20)
+              .round()
+              .clamp(1, _targetBitrateKbps);
+        } else {
+          decidedBitrate = _effectiveBitrateKbps;
+        }
+        break;
+      case _TxPolicy.stepDownFpsThenBitrate:
+        if (bwRes.insufficient) {
+          decidedFps = _stepDownFps(_effectiveFps);
+          if (decidedFps == _effectiveFps) {
+            decidedBitrate = (_effectiveBitrateKbps * 0.70)
+                .round()
+                .clamp(1, _targetBitrateKbps);
+          } else {
+            decidedBitrate = _effectiveBitrateKbps;
+          }
+        } else if (bwRes.recovered) {
+          // Recover bitrate first, then fps.
+          if (_effectiveBitrateKbps < _targetBitrateKbps) {
+            decidedBitrate = (_effectiveBitrateKbps * 1.20)
+                .round()
+                .clamp(1, _targetBitrateKbps);
+            decidedFps = _effectiveFps;
+          } else {
+            decidedBitrate = _targetBitrateKbps;
+            decidedFps = _stepUpFps(_effectiveFps, _targetFps);
+          }
+        } else {
+          decidedBitrate = _effectiveBitrateKbps;
+          decidedFps = _effectiveFps;
+        }
+        break;
+    }
+
+    // Apply emergency caps (from RX overflow).
+    if (_emergencyMaxBitrateKbps != null) {
+      decidedBitrate = decidedBitrate.clamp(1, _emergencyMaxBitrateKbps!);
+    }
+    if (_emergencyMaxFps != null) {
+      decidedFps = decidedFps.clamp(1, _emergencyMaxFps!);
+    }
+
+    // Apply now if changed.
+    final willApplyBitrateBps = (decidedBitrate * 1000).clamp(1000, 200000000);
+    final willApplyFps = decidedFps.clamp(1, 120);
+
+    if (willApplyFps != _effectiveFps ||
+        decidedBitrate != _effectiveBitrateKbps) {
+      setState(() {
+        _effectiveFps = willApplyFps;
+        _effectiveBitrateKbps = decidedBitrate;
+      });
+      await _applySenderParams(
+        maxFramerate: willApplyFps,
+        maxBitrateBps: willApplyBitrateBps,
+        reason:
+            '$reason txPolicy=${_txPolicy.name} bw=${measuredBwKbps}kbps insufficient=${bwRes.insufficient} recovered=${bwRes.recovered}',
+      );
+    }
+  }
+
+  int _pickMeasuredBandwidthKbps() {
+    if (_simUseBandwidthInput) {
+      final v = int.tryParse(_bandwidthKbpsController.text.trim());
+      return (v ?? 0).clamp(0, 200000);
+    }
+    final avail = _tx.availableOutgoingKbps.round();
+    if (avail > 0) return avail;
+    final tx = _tx.txKbps.round();
+    return tx > 0 ? tx : 0;
+  }
+
+  int _stepDownFps(int current) {
+    if (current > 60) return 60;
+    if (current > 30) return 30;
+    if (current > 15) return 15;
+    if (current > 5) return 5;
+    return current;
+  }
+
+  int _stepUpFps(int current, int target) {
+    final t = target.clamp(1, 120);
+    if (current >= t) return current;
+    if (current < 15) return (15 <= t) ? 15 : t;
+    if (current < 30) return (30 <= t) ? 30 : t;
+    if (current < 60) return (60 <= t) ? 60 : t;
+    return t;
+  }
+
+  Future<void> _handleBufferOverflow({
+    required int measuredBandwidthKbps,
+    required String reason,
+  }) async {
+    _log(
+        'RX buffer overflow detected: reason=$reason frames=$_rxTargetBufferFrames/${_bufferMaxFrames} freezeΔ=${_rx.freezeDelta} measBw=${measuredBandwidthKbps > 0 ? "${measuredBandwidthKbps}kbps" : "-"}');
+
+    if (_overflowResetRxBuffer) {
+      setState(() {
+        _rxTargetBufferFrames = _bufferBaseFrames.clamp(0, 600);
+        _rxTargetBufferSeconds =
+            (_rxTargetBufferFrames / _effectiveFps.clamp(5, 120))
+                .clamp(0.0, 10.0);
+        _rxLastAppliedFrames = -1; // force re-apply on next tick
+      });
+      _log(
+          'RX overflow action: reset buffer -> baseFrames=$_rxTargetBufferFrames');
+    }
+
+    if (_overflowForceTxBitrateDown) {
+      int emergency = 0;
+      if (measuredBandwidthKbps > 0) {
+        emergency = (measuredBandwidthKbps * 0.60).floor().clamp(1, 200000);
+      } else {
+        emergency = (_effectiveBitrateKbps * 0.60).floor().clamp(1, 200000);
+      }
+      setState(() {
+        _emergencyMaxBitrateKbps = emergency;
+      });
+      _log(
+          'RX overflow action: cap TX bitrate <= ${_emergencyMaxBitrateKbps}kbps');
+    }
+
+    if (_overflowForceTxFpsDown) {
+      setState(() {
+        _emergencyMaxFps = _stepDownFps(_effectiveFps);
+      });
+      _log('RX overflow action: cap TX fps <= ${_emergencyMaxFps}');
+    }
+  }
+
+  Future<bool> _tryApplyRxJitterBufferSeconds({required double seconds}) async {
+    try {
+      final receivers = await _pc2!.getReceivers();
+      RTCRtpReceiver? video;
+      for (final r in receivers) {
+        if (r.track?.kind == 'video') {
+          video = r;
+          break;
+        }
+      }
+      video ??= receivers.isNotEmpty ? receivers.first : null;
+      if (video == null) return false;
+      final res = await (video as dynamic).setJitterBufferMinimumDelay(seconds);
+      bool ok = false;
+      String method = '';
+      if (res is ({bool ok, String method})) {
+        ok = res.ok;
+        method = res.method;
+      }
+      setState(() {
+        _rxBufferMethod = method;
+      });
+      if (!ok)
+        _log('RX jitterBuffer apply failed/unsupported (seconds=$seconds)');
+      return ok;
+    } catch (e) {
+      _log('RX jitterBuffer apply exception: $e');
+      return false;
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final c = _ready ? _cases[_caseIndex] : null;
@@ -605,6 +1167,21 @@ class _VerifyPageState extends State<_VerifyPage> {
                       'inbound=${inbound == null ? "-" : "${inbound.frameWidth}x${inbound.frameHeight} fps=${inbound.fps.toStringAsFixed(1)} decoded=${inbound.framesDecoded} bytes=${inbound.bytesReceived}"}',
                       style: const TextStyle(fontSize: 12),
                     ),
+                    const SizedBox(height: 6),
+                    Text(
+                      'TARGET fps=$_targetFps bitrate=${_targetBitrateKbps}kbps  |  EFFECTIVE fps=$_effectiveFps bitrate=${_effectiveBitrateKbps}kbps',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'RX rx=${_rx.rxKbps.toStringAsFixed(0)}kbps fps=${_rx.rxFps.toStringAsFixed(1)} loss=${(_rx.lossFraction * 100).toStringAsFixed(2)}% rtt=${_rx.rttMs.toStringAsFixed(0)}ms jitter=${_rx.jitterMs.toStringAsFixed(0)}ms decode=${_rx.decodeMsPerFrame}ms freezeΔ=${_rx.freezeDelta} '
+                      '| Buffer=${_rxTargetBufferFrames}f (${_rxTargetBufferSeconds.toStringAsFixed(2)}s) method=${_rxBufferMethod.isEmpty ? "-" : _rxBufferMethod}${_rxBufferUnsupported ? " UNSUPPORTED" : ""}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    Text(
+                      'TX tx=${_tx.txKbps.toStringAsFixed(0)}kbps availOut=${_tx.availableOutgoingKbps.toStringAsFixed(0)}kbps measBw=${_pickMeasuredBandwidthKbps()}kbps policy=${_txPolicy.name}/${_rxPolicy.name}',
+                      style: const TextStyle(fontSize: 11),
+                    ),
                     const SizedBox(height: 10),
                     Row(
                       children: [
@@ -661,7 +1238,7 @@ class _VerifyPageState extends State<_VerifyPage> {
                             enabled: _ready && !_busy,
                             keyboardType: TextInputType.number,
                             decoration: const InputDecoration(
-                              labelText: '带宽(kbps)',
+                              labelText: '带宽(kbps) (测速/模拟)',
                               isDense: true,
                               border: OutlineInputBorder(),
                             ),
@@ -686,6 +1263,289 @@ class _VerifyPageState extends State<_VerifyPage> {
                               FilteringTextInputFormatter.digitsOnly
                             ],
                             onSubmitted: (_) => unawaited(_applyManual()),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    ExpansionTile(
+                      tilePadding: EdgeInsets.zero,
+                      title: const Text('Strategy Lab (测速/Buffer/模拟)'),
+                      children: [
+                        Row(
+                          children: [
+                            Expanded(
+                              child: DropdownButtonFormField<_TxPolicy>(
+                                value: _txPolicy,
+                                decoration: const InputDecoration(
+                                  labelText: 'TX 策略',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: _TxPolicy.values
+                                    .map(
+                                      (p) => DropdownMenuItem(
+                                        value: p,
+                                        child: Text(p.name),
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                                onChanged: (!_ready || _busy)
+                                    ? null
+                                    : (v) {
+                                        if (v == null) return;
+                                        setState(() => _txPolicy = v);
+                                        unawaited(_applyPoliciesNow(
+                                            reason: 'ui-txPolicy'));
+                                      },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: DropdownButtonFormField<_RxPolicy>(
+                                value: _rxPolicy,
+                                decoration: const InputDecoration(
+                                  labelText: 'RX 策略',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                items: _RxPolicy.values
+                                    .map(
+                                      (p) => DropdownMenuItem(
+                                        value: p,
+                                        child: Text(p.name),
+                                      ),
+                                    )
+                                    .toList(growable: false),
+                                onChanged: (!_ready || _busy)
+                                    ? null
+                                    : (v) {
+                                        if (v == null) return;
+                                        setState(() => _rxPolicy = v);
+                                        unawaited(_applyPoliciesNow(
+                                            reason: 'ui-rxPolicy'));
+                                      },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _headroomController,
+                                enabled: _ready && !_busy,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                decoration: const InputDecoration(
+                                  labelText: '带宽头部余量(0.1~1.0)',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                onChanged: (v) {
+                                  final d = double.tryParse(v.trim());
+                                  if (d == null) return;
+                                  setState(() {
+                                    _txHeadroom = d.clamp(0.1, 1.0);
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _baseBufferFramesController,
+                                enabled: _ready && !_busy,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'BaseBuffer(frames)',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly
+                                ],
+                                onChanged: (v) {
+                                  final n = int.tryParse(v.trim());
+                                  if (n == null) return;
+                                  setState(() {
+                                    _bufferBaseFrames = n.clamp(0, 600);
+                                    _bufferMaxFrames = _bufferMaxFrames.clamp(
+                                        _bufferBaseFrames, 600);
+                                  });
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _maxBufferFramesController,
+                                enabled: _ready && !_busy,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: 'MaxBuffer(frames)',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly
+                                ],
+                                onChanged: (v) {
+                                  final n = int.tryParse(v.trim());
+                                  if (n == null) return;
+                                  setState(() {
+                                    _bufferMaxFrames =
+                                        n.clamp(_bufferBaseFrames, 600);
+                                  });
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 18,
+                          runSpacing: 0,
+                          children: [
+                            CheckboxListTile(
+                              value: _simUseBandwidthInput,
+                              onChanged: (!_ready || _busy)
+                                  ? null
+                                  : (v) => setState(
+                                      () => _simUseBandwidthInput = v ?? false),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('模拟带宽(使用上方带宽输入)'),
+                            ),
+                            CheckboxListTile(
+                              value: _simLossJitter,
+                              onChanged: (!_ready || _busy)
+                                  ? null
+                                  : (v) => setState(
+                                      () => _simLossJitter = v ?? false),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('模拟丢包/抖动'),
+                            ),
+                            CheckboxListTile(
+                              value: _simDecodeSlow,
+                              onChanged: (!_ready || _busy)
+                                  ? null
+                                  : (v) => setState(
+                                      () => _simDecodeSlow = v ?? false),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('模拟解码慢(影响策略判定)'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _simLossPctController,
+                                enabled: _ready && !_busy,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: '模拟丢包率(%)',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _simJitterMsController,
+                                enabled: _ready && !_busy,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: '模拟抖动(ms)',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly
+                                ],
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: TextField(
+                                controller: _simDecodeMsController,
+                                enabled: _ready && !_busy,
+                                keyboardType: TextInputType.number,
+                                decoration: const InputDecoration(
+                                  labelText: '模拟解码耗时(ms/frame)',
+                                  isDense: true,
+                                  border: OutlineInputBorder(),
+                                ),
+                                inputFormatters: [
+                                  FilteringTextInputFormatter.digitsOnly
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        Wrap(
+                          spacing: 18,
+                          runSpacing: 0,
+                          children: [
+                            CheckboxListTile(
+                              value: _overflowForceTxBitrateDown,
+                              onChanged: (!_ready || _busy)
+                                  ? null
+                                  : (v) => setState(() =>
+                                      _overflowForceTxBitrateDown = v ?? false),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('Overflow: 降码率'),
+                            ),
+                            CheckboxListTile(
+                              value: _overflowForceTxFpsDown,
+                              onChanged: (!_ready || _busy)
+                                  ? null
+                                  : (v) => setState(() =>
+                                      _overflowForceTxFpsDown = v ?? false),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('Overflow: 降帧率'),
+                            ),
+                            CheckboxListTile(
+                              value: _overflowResetRxBuffer,
+                              onChanged: (!_ready || _busy)
+                                  ? null
+                                  : (v) => setState(() =>
+                                      _overflowResetRxBuffer = v ?? false),
+                              dense: true,
+                              contentPadding: EdgeInsets.zero,
+                              controlAffinity: ListTileControlAffinity.leading,
+                              title: const Text('Overflow: 重置Buffer'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: OutlinedButton(
+                            onPressed: (!_ready || _busy)
+                                ? null
+                                : () => unawaited(
+                                      _applyPoliciesNow(reason: 'ui-apply'),
+                                    ),
+                            child: const Text('应用策略'),
                           ),
                         ),
                       ],
@@ -720,6 +1580,77 @@ class _Case {
   final int fps;
   final int bitrateKbps;
   const _Case({required this.fps, required this.bitrateKbps});
+}
+
+enum _TxPolicy {
+  off,
+  capByBandwidth,
+  stepDownBitrate,
+  stepDownFpsThenBitrate,
+}
+
+enum _RxPolicy {
+  off,
+  latencyFirst,
+  adaptiveBuffer,
+  smoothnessMax,
+}
+
+@immutable
+class _RxMetrics {
+  final double rxFps;
+  final double rxKbps;
+  final double lossFraction;
+  final double rttMs;
+  final double jitterMs;
+  final int freezeDelta;
+  final int decodeMsPerFrame;
+  final int frameWidth;
+  final int frameHeight;
+  final int tsMs;
+
+  const _RxMetrics({
+    required this.rxFps,
+    required this.rxKbps,
+    required this.lossFraction,
+    required this.rttMs,
+    required this.jitterMs,
+    required this.freezeDelta,
+    required this.decodeMsPerFrame,
+    required this.frameWidth,
+    required this.frameHeight,
+    required this.tsMs,
+  });
+
+  const _RxMetrics.empty()
+      : rxFps = 0,
+        rxKbps = 0,
+        lossFraction = 0,
+        rttMs = 0,
+        jitterMs = 0,
+        freezeDelta = 0,
+        decodeMsPerFrame = 0,
+        frameWidth = 0,
+        frameHeight = 0,
+        tsMs = 0;
+}
+
+@immutable
+class _TxMetrics {
+  final double txKbps;
+  final double availableOutgoingKbps;
+  final int tsMs;
+
+  const _TxMetrics({
+    required this.txKbps,
+    required this.availableOutgoingKbps,
+    required this.tsMs,
+  });
+
+  const _TxMetrics.empty()
+      : txKbps = 0,
+        availableOutgoingKbps = 0,
+        tsMs = 0;
 }
 
 class _InboundVideoStats {
