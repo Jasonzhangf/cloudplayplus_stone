@@ -168,6 +168,14 @@ class _VerifyPageState extends State<_VerifyPage> {
   int _txPrevAtMs = 0;
   int _txPrevBytesSent = 0;
 
+  // GOP estimation state (independent from delta sampling state above).
+  int _gopPrevRxFramesDecoded = 0;
+  int _gopPrevRxKeyFramesDecoded = 0;
+  int _gopPrevTxFramesEncoded = 0;
+  int _gopPrevTxKeyFramesEncoded = 0;
+  double _gopTxFrames = 0.0;
+  double _gopRxFrames = 0.0;
+
   @override
   void initState() {
     super.initState();
@@ -670,6 +678,8 @@ class _VerifyPageState extends State<_VerifyPage> {
       final txStats = await _pc1!.getStats();
       final tx = _extractTxMetrics(txStats, nowMs);
 
+      _updateGopEstimates(rx: rx, tx: tx);
+
       final inbound = _extractInbound(rxStats);
       final codec = _extractInboundCodecMimeType(rxStats, inbound);
 
@@ -687,11 +697,49 @@ class _VerifyPageState extends State<_VerifyPage> {
     }
   }
 
+  void _updateGopEstimates({required _RxMetrics rx, required _TxMetrics tx}) {
+    // GOP = frames between keyframes.
+    // Note: some platforms may not populate *KeyFrames* stats.
+
+    // TX.
+    if (tx.framesEncoded > 0 &&
+        tx.keyFramesEncoded >= 0 &&
+        tx.framesEncoded >= _gopPrevTxFramesEncoded &&
+        tx.keyFramesEncoded >= _gopPrevTxKeyFramesEncoded) {
+      final dFrames =
+          (tx.framesEncoded - _gopPrevTxFramesEncoded).clamp(0, 1 << 30);
+      final dKf =
+          (tx.keyFramesEncoded - _gopPrevTxKeyFramesEncoded).clamp(0, 1 << 30);
+      if (dKf > 0 && dFrames > 0) {
+        _gopTxFrames = dFrames / dKf;
+      }
+    }
+    _gopPrevTxFramesEncoded = tx.framesEncoded;
+    _gopPrevTxKeyFramesEncoded = tx.keyFramesEncoded;
+
+    // RX.
+    if (rx.framesDecoded > 0 &&
+        rx.keyFramesDecoded >= 0 &&
+        rx.framesDecoded >= _gopPrevRxFramesDecoded &&
+        rx.keyFramesDecoded >= _gopPrevRxKeyFramesDecoded) {
+      final dFrames =
+          (rx.framesDecoded - _gopPrevRxFramesDecoded).clamp(0, 1 << 30);
+      final dKf =
+          (rx.keyFramesDecoded - _gopPrevRxKeyFramesDecoded).clamp(0, 1 << 30);
+      if (dKf > 0 && dFrames > 0) {
+        _gopRxFrames = dFrames / dKf;
+      }
+    }
+    _gopPrevRxFramesDecoded = rx.framesDecoded;
+    _gopPrevRxKeyFramesDecoded = rx.keyFramesDecoded;
+  }
+
   _RxMetrics _extractRxMetrics(List<StatsReport> stats, int nowMs) {
     double rxFps = 0.0;
     int width = 0;
     int height = 0;
     int framesDecoded = 0;
+    int keyFramesDecoded = 0;
     int packetsReceived = 0;
     int packetsLost = 0;
     int bytesReceived = 0;
@@ -708,6 +756,7 @@ class _VerifyPageState extends State<_VerifyPage> {
           width = (values['frameWidth'] as num?)?.toInt() ?? 0;
           height = (values['frameHeight'] as num?)?.toInt() ?? 0;
           framesDecoded = (values['framesDecoded'] as num?)?.toInt() ?? 0;
+          keyFramesDecoded = (values['keyFramesDecoded'] as num?)?.toInt() ?? 0;
           packetsReceived = (values['packetsReceived'] as num?)?.toInt() ?? 0;
           packetsLost = (values['packetsLost'] as num?)?.toInt() ?? 0;
           bytesReceived = (values['bytesReceived'] as num?)?.toInt() ?? 0;
@@ -778,6 +827,8 @@ class _VerifyPageState extends State<_VerifyPage> {
       decodeMsPerFrame: decodeMsPerFrame,
       frameWidth: width,
       frameHeight: height,
+      framesDecoded: framesDecoded,
+      keyFramesDecoded: keyFramesDecoded,
       tsMs: nowMs,
     );
   }
@@ -785,6 +836,8 @@ class _VerifyPageState extends State<_VerifyPage> {
   _TxMetrics _extractTxMetrics(List<StatsReport> stats, int nowMs) {
     double availableOutgoingKbps = 0.0;
     int bytesSent = 0;
+    int framesEncoded = 0;
+    int keyFramesEncoded = 0;
     for (final report in stats) {
       if (report.type == 'candidate-pair') {
         final values = Map<String, dynamic>.from(report.values);
@@ -797,6 +850,8 @@ class _VerifyPageState extends State<_VerifyPage> {
         final values = Map<String, dynamic>.from(report.values);
         if (values['kind'] == 'video' || values['mediaType'] == 'video') {
           bytesSent = (values['bytesSent'] as num?)?.toInt() ?? 0;
+          framesEncoded = (values['framesEncoded'] as num?)?.toInt() ?? 0;
+          keyFramesEncoded = (values['keyFramesEncoded'] as num?)?.toInt() ?? 0;
         }
       }
     }
@@ -825,6 +880,8 @@ class _VerifyPageState extends State<_VerifyPage> {
     return _TxMetrics(
       txKbps: txKbps,
       availableOutgoingKbps: availableOutgoingKbps,
+      framesEncoded: framesEncoded,
+      keyFramesEncoded: keyFramesEncoded,
       tsMs: nowMs,
     );
   }
@@ -1248,7 +1305,9 @@ class _VerifyPageState extends State<_VerifyPage> {
                       style: const TextStyle(fontSize: 11),
                     ),
                     Text(
-                      'TX tx=${_tx.txKbps.toStringAsFixed(0)}kbps availOut=${_tx.availableOutgoingKbps.toStringAsFixed(0)}kbps measBw=${_pickMeasuredBandwidthKbps()}kbps scaleDownBy=$_effectiveScaleDownBy policy=${_txPolicy.name}/${_rxPolicy.name}',
+                      'TX tx=${_tx.txKbps.toStringAsFixed(0)}kbps availOut=${_tx.availableOutgoingKbps.toStringAsFixed(0)}kbps measBw=${_pickMeasuredBandwidthKbps()}kbps scaleDownBy=$_effectiveScaleDownBy '
+                      'GOP(tx)=${_gopTxFrames > 0 ? _gopTxFrames.toStringAsFixed(0) : "-"}f GOP(rx)=${_gopRxFrames > 0 ? _gopRxFrames.toStringAsFixed(0) : "-"}f '
+                      'policy=${_txPolicy.name}/${_rxPolicy.name}',
                       style: const TextStyle(fontSize: 11),
                     ),
                     const SizedBox(height: 10),
@@ -1691,6 +1750,8 @@ class _RxMetrics {
   final int decodeMsPerFrame;
   final int frameWidth;
   final int frameHeight;
+  final int framesDecoded;
+  final int keyFramesDecoded;
   final int tsMs;
 
   const _RxMetrics({
@@ -1703,6 +1764,8 @@ class _RxMetrics {
     required this.decodeMsPerFrame,
     required this.frameWidth,
     required this.frameHeight,
+    required this.framesDecoded,
+    required this.keyFramesDecoded,
     required this.tsMs,
   });
 
@@ -1716,6 +1779,8 @@ class _RxMetrics {
         decodeMsPerFrame = 0,
         frameWidth = 0,
         frameHeight = 0,
+        framesDecoded = 0,
+        keyFramesDecoded = 0,
         tsMs = 0;
 }
 
@@ -1723,17 +1788,23 @@ class _RxMetrics {
 class _TxMetrics {
   final double txKbps;
   final double availableOutgoingKbps;
+  final int framesEncoded;
+  final int keyFramesEncoded;
   final int tsMs;
 
   const _TxMetrics({
     required this.txKbps,
     required this.availableOutgoingKbps,
+    required this.framesEncoded,
+    required this.keyFramesEncoded,
     required this.tsMs,
   });
 
   const _TxMetrics.empty()
       : txKbps = 0,
         availableOutgoingKbps = 0,
+        framesEncoded = 0,
+        keyFramesEncoded = 0,
         tsMs = 0;
 }
 
