@@ -83,15 +83,25 @@ class _VerifyPageState extends State<_VerifyPage> {
   _InboundVideoStats? _lastInbound;
   String? _lastCodec;
 
+  late final TextEditingController _fpsController;
+  late final TextEditingController _bandwidthKbpsController;
+  late final TextEditingController _bitrateKbpsController;
+
   @override
   void initState() {
     super.initState();
+    _fpsController = TextEditingController(text: '30');
+    _bandwidthKbpsController = TextEditingController(text: '1000');
+    _bitrateKbpsController = TextEditingController(text: '250');
     unawaited(_remoteRenderer.initialize());
     unawaited(_init());
   }
 
   @override
   void dispose() {
+    _fpsController.dispose();
+    _bandwidthKbpsController.dispose();
+    _bitrateKbpsController.dispose();
     unawaited(_cleanup());
     _remoteRenderer.dispose();
     super.dispose();
@@ -184,6 +194,8 @@ class _VerifyPageState extends State<_VerifyPage> {
 
       // Apply the first case automatically (lowest quality).
       await _applyCurrentCase();
+      // Also sync manual input fields with the current case defaults.
+      _syncManualInputsFromCurrentCase();
     } catch (e) {
       _log('ERROR init: $e');
     }
@@ -384,6 +396,58 @@ class _VerifyPageState extends State<_VerifyPage> {
     }
   }
 
+  void _syncManualInputsFromCurrentCase() {
+    if (!_ready) return;
+    final c = _cases[_caseIndex];
+    _fpsController.text = '${c.fps}';
+    _bitrateKbpsController.text = '${c.bitrateKbps}';
+  }
+
+  Future<void> _applyManual() async {
+    if (!_ready) return;
+    if (_busy) return;
+    final fps = int.tryParse(_fpsController.text.trim());
+    final bandwidthKbps = int.tryParse(_bandwidthKbpsController.text.trim());
+    final bitrateKbps = int.tryParse(_bitrateKbpsController.text.trim());
+    if (fps == null || fps <= 0 || fps > 120) {
+      _log('invalid fps: "${_fpsController.text}"');
+      return;
+    }
+    if (bitrateKbps == null || bitrateKbps <= 0) {
+      _log('invalid bitrateKbps: "${_bitrateKbpsController.text}"');
+      return;
+    }
+
+    setState(() {
+      _busy = true;
+    });
+    try {
+      _log(
+          'apply MANUAL: fps=$fps bandwidthKbps=${bandwidthKbps ?? "-"} bitrateKbps=$bitrateKbps');
+      await _applySenderParams(
+        maxFramerate: fps,
+        maxBitrateBps: bitrateKbps * 1000,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 700));
+      final stats = await _pc2!.getStats();
+      final inbound = _extractInbound(stats);
+      final codec = _extractInboundCodecMimeType(stats, inbound);
+      setState(() {
+        _lastInbound = inbound;
+        _lastCodec = codec;
+      });
+      _log('stats: codec=$codec inbound=${inbound ?? "null"}');
+    } catch (e) {
+      _log('ERROR apply MANUAL: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _busy = false;
+        });
+      }
+    }
+  }
+
   Future<void> _next() async {
     if (!_ready) return;
     if (_caseIndex + 1 >= _cases.length) return;
@@ -391,6 +455,7 @@ class _VerifyPageState extends State<_VerifyPage> {
       _caseIndex++;
     });
     await _applyCurrentCase();
+    _syncManualInputsFromCurrentCase();
   }
 
   Future<void> _prev() async {
@@ -400,6 +465,7 @@ class _VerifyPageState extends State<_VerifyPage> {
       _caseIndex--;
     });
     await _applyCurrentCase();
+    _syncManualInputsFromCurrentCase();
   }
 
   _InboundVideoStats? _extractInbound(List<StatsReport> stats) {
@@ -549,6 +615,11 @@ class _VerifyPageState extends State<_VerifyPage> {
                           child: const Text('下一个'),
                         ),
                         const SizedBox(width: 10),
+                        ElevatedButton(
+                          onPressed: (!_ready || _busy) ? null : _applyManual,
+                          child: const Text('OK'),
+                        ),
+                        const SizedBox(width: 10),
                         if (_busy)
                           const Text('应用中...', style: TextStyle(fontSize: 12)),
                         const Spacer(),
@@ -557,6 +628,61 @@ class _VerifyPageState extends State<_VerifyPage> {
                           style: TextStyle(
                             fontSize: 12,
                             color: Colors.white.withValues(alpha: 0.7),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _fpsController,
+                            enabled: _ready && !_busy,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: '帧率(fps)',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            onSubmitted: (_) => unawaited(_applyManual()),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _bandwidthKbpsController,
+                            enabled: _ready && !_busy,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: '带宽(kbps)',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            onSubmitted: (_) => unawaited(_applyManual()),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _bitrateKbpsController,
+                            enabled: _ready && !_busy,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              labelText: '码率(kbps)',
+                              isDense: true,
+                              border: OutlineInputBorder(),
+                            ),
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly
+                            ],
+                            onSubmitted: (_) => unawaited(_applyManual()),
                           ),
                         ),
                       ],
