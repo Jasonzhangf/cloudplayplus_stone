@@ -283,13 +283,17 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       final minBitrate = computeAdaptiveMinBitrateKbps(
         fullBitrateKbps: full,
         targetFps: currentFps,
-        minFps: qualityFloorFps,
+        // Realtime strategy: keep FPS (>=30) when possible by allowing the
+        // bitrate floor to go lower even before we drop to 15fps.
+        minFps: 30,
       );
-      final downFactor = (currentFps <= qualityFloorFps) ? 0.65 : 0.80;
+      // React faster under bad network: prefer lowering quality (bitrate)
+      // instead of lowering FPS, to reduce latency/queue buildup.
+      final downFactor = (currentFps <= qualityFloorFps) ? 0.65 : 0.70;
       final targetBitrate =
           (curBitrate * downFactor).round().clamp(minBitrate, full);
       if (targetBitrate < curBitrate &&
-          (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = targetBitrate;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
@@ -436,6 +440,33 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final stuttering = freezeDelta > 0;
     final deviceBound = _adaptiveLossEwma <= 0.01 && (decodeSlow || stuttering);
     if (deviceBound) {
+      // Realtime-first: when receiver is struggling but network loss is low,
+      // try reducing bitrate (quality) before reducing FPS.
+      final minBitrate = computeAdaptiveMinBitrateKbps(
+        fullBitrateKbps: full,
+        targetFps: currentFps,
+        minFps: 30,
+      );
+      if (curBitrate > minBitrate &&
+          (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
+        final targetBitrate =
+            (curBitrate * 0.70).round().clamp(minBitrate, maxAllowedBitrate);
+        if (targetBitrate < curBitrate) {
+          streamSettings!.bitrate = targetBitrate;
+          _adaptiveLastBitrateChangeAtMs = nowMs;
+          InputDebugService.instance.log(
+              '[adaptive] device bound bitrate $curBitrate -> $targetBitrate (decode=${decodeMsPerFrame}ms freezeΔ=$freezeDelta)');
+          _sendHostEncodingStatus(
+            mode: mode,
+            fullBitrateKbps: full,
+            reason: 'device-bound-bitrate-down',
+          );
+          await _maybeRenegotiateAfterCaptureSwitch(
+              reason: 'adaptive-device-bound-bitrate-down');
+          return;
+        }
+      }
+
       int wantDown = currentFps;
       if (decodeMsPerFrame > 0) {
         final maxFpsByDecode = (1000.0 / decodeMsPerFrame * 0.90).floor();
