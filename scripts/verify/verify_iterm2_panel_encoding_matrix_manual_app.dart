@@ -6,6 +6,7 @@ import 'package:cloudplayplus/core/ports/process_runner_host_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:window_manager/window_manager.dart';
 
 /// iTerm2 panel 编码矩阵手动回放（本地 loopback）
 ///
@@ -16,7 +17,22 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 ///   FPS_LIST=60,30,15 \
 ///   BITRATE_KBPS_LIST=2000,1000,500,250,125,80 \
 ///   flutter run -d macos -t scripts/verify/verify_iterm2_panel_encoding_matrix_manual_app.dart
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isMacOS) {
+    await windowManager.ensureInitialized();
+    windowManager.waitUntilReadyToShow(
+      const WindowOptions(
+        title: 'iTerm2 Encoding Matrix (Manual)',
+        size: Size(1200, 900),
+        center: true,
+      ),
+      () {
+        windowManager.show();
+        windowManager.focus();
+      },
+    );
+  }
   runApp(const VerifyIterm2PanelEncodingMatrixManualApp());
 }
 
