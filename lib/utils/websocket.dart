@@ -56,7 +56,8 @@ class SimpleWebSocket {
       //if (DevelopSettings.useUnsafeServer){
       //  _socket = await _connectForSelfSignedCert(_url);
       //}else{
-      _socket = await WebSocket.connect(_url);
+      _socket =
+          await WebSocket.connect(_url).timeout(const Duration(seconds: 8));
       //}
 
       _socket.pingInterval = const Duration(seconds: 5);
@@ -66,6 +67,8 @@ class SimpleWebSocket {
       }, onDone: () {
         onClose?.call(_socket.closeCode, _socket.closeReason);
       });
+    } on TimeoutException catch (_) {
+      onClose?.call(408, 'WebSocket connect timeout');
     } catch (e) {
       onClose?.call(500, e.toString());
     }

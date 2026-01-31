@@ -38,6 +38,12 @@ class WebSocketService {
   static Timer? _reconnectTimer;
   static Timer? _heartbeatTimer;
   static Timer? _pongTimeoutTimer;
+  static int _connectGeneration = 0;
+  static int _activeGeneration = 0;
+  static bool _refreshTokenInvalid = false;
+  static int _reconnectAttempt = 0;
+
+  static const List<int> _backoffSeconds = <int>[5, 9, 26];
 
   static const JsonEncoder _encoder = JsonEncoder();
   static const JsonDecoder _decoder = JsonDecoder();
@@ -91,11 +97,17 @@ class WebSocketService {
   static void init() async {
     should_be_connected = true;
     VLOG0('[WebSocketService] init: called.');
-    if (connectionState == WebSocketConnectionState.connecting) {
+    // If we are "connecting" but have no active socket (common after background
+    // interruption), allow a fresh init instead of getting stuck forever.
+    if (connectionState == WebSocketConnectionState.connecting &&
+        _socket != null) {
       VLOG0('[WebSocketService] init: already connecting, returning.');
       return;
     }
     _resetReady();
+    _refreshTokenInvalid = false;
+    final int generation = ++_connectGeneration;
+    _activeGeneration = generation;
     String initialBaseUrl = _baseUrl;
     if (DevelopSettings.useLocalServer) {
       if (AppPlatform.isAndroid) {
@@ -160,6 +172,7 @@ class WebSocketService {
       } else if (newAccessToken == "invalid refresh token") {
         VLOG0('[WebSocketService] init: refresh token invalid.');
         refreshToken_invalid_ = true;
+        _refreshTokenInvalid = true;
         return;
       } else {
         VLOG0('[WebSocketService] init: refresh failed, returning.');
@@ -172,15 +185,21 @@ class WebSocketService {
     _socket = SimpleWebSocket(url);
     connectionState = WebSocketConnectionState.connecting;
     _socket?.onOpen = () {
+      if (generation != _activeGeneration) return;
       VLOG0('[WebSocketService] onOpen: WebSocket connected.');
+      _reconnectAttempt = 0;
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
       onConnected();
     };
 
     _socket?.onMessage = (message) async {
+      if (generation != _activeGeneration) return;
       await onMessage(_decoder.convert(message));
     };
 
     _socket?.onClose = (code, message) async {
+      if (generation != _activeGeneration) return;
       VLOG0(
           '[WebSocketService] onClose: WebSocket closed (code: $code, message: $message).');
       int ownerId = 0;
@@ -207,27 +226,38 @@ class WebSocketService {
       onDisConnected();
       _stopHeartbeat();
       if (should_be_connected) {
-        _reconnectTimer?.cancel();
-        _reconnectTimer =
-            Timer.periodic(const Duration(seconds: 30), (Timer timer) async {
-          // 检查是否已经连接成功，如果是，则取消定时器
-          if (connectionState == WebSocketConnectionState.connected) {
-            timer.cancel();
-            _reconnectTimer = null;
-            return;
-          }
-          if (refreshToken_invalid_) {
-            timer.cancel();
-            _reconnectTimer = null;
-            return;
-          }
-          reconnect();
-        });
+        _scheduleReconnect(
+            reason: 'ws.onClose', tokenInvalid: refreshToken_invalid_);
       }
       VLOG0(code);
       VLOG0(message);
     };
     await _socket?.connect();
+  }
+
+  static void _scheduleReconnect({
+    required String reason,
+    required bool tokenInvalid,
+  }) {
+    if (!should_be_connected) return;
+    if (tokenInvalid || _refreshTokenInvalid) return;
+    if (connectionState == WebSocketConnectionState.connected) return;
+    if (_reconnectTimer != null) return;
+
+    // Backoff: 5s -> 9s -> 26s -> 26s...
+    final int idx = _reconnectAttempt.clamp(0, _backoffSeconds.length - 1);
+    final int delaySec = _backoffSeconds[idx];
+    _reconnectAttempt++;
+    VLOG0(
+        '[WebSocketService] schedule reconnect in ${delaySec}s (reason=$reason attempt=$_reconnectAttempt)');
+
+    _reconnectTimer = Timer(Duration(seconds: delaySec), () {
+      _reconnectTimer?.cancel();
+      _reconnectTimer = null;
+      if (!should_be_connected) return;
+      if (connectionState == WebSocketConnectionState.connected) return;
+      reconnect();
+    });
   }
 
   static Future<void> updateDeviceInfo() async {
@@ -266,8 +296,12 @@ class WebSocketService {
       return reconnectHookForTest!();
     }
     should_be_connected = true;
-    _socket?.close();
+    try {
+      _socket?.close();
+    } catch (_) {}
     _socket = null;
+    // Ensure `init()` isn't blocked by a stale "connecting" state.
+    connectionState = WebSocketConnectionState.disconnected;
     _resetReady();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -280,11 +314,14 @@ class WebSocketService {
 
   static Future<void> disconnect() async {
     should_be_connected = false;
-    _socket?.close();
+    try {
+      _socket?.close();
+    } catch (_) {}
     _socket = null;
     _resetReady();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
+    _reconnectAttempt = 0;
     _stopHeartbeat();
   }
 

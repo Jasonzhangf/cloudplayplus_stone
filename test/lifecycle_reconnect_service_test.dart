@@ -4,7 +4,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
 
 void main() {
-  test('AppLifecycleReconnectService triggers websocket reconnect on resume', () async {
+  test('AppLifecycleReconnectService triggers websocket reconnect on resume',
+      () async {
     int reconnectCalls = 0;
     WebSocketService.reconnectHookForTest = () async {
       reconnectCalls++;
