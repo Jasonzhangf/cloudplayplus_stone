@@ -13,6 +13,7 @@ import '../services/app_info_service.dart';
 import '../theme/fixed_colors.dart';
 import '../utils/icon_builder.dart';
 import '../utils/widgets/device_tile_page.dart';
+import 'lan_connect_page.dart';
 
 class DevicesPage extends StatefulWidget {
   @override
@@ -22,6 +23,11 @@ class DevicesPage extends StatefulWidget {
 class _DevicesPageState extends State<DevicesPage> {
   List<Device> _deviceList = defaultDeviceList;
   bool _autoRestoreAttempted = false;
+  void _openLanConnect() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const LanConnectPage()),
+    );
+  }
 
   Future<void> _waitForWebSocketConnected({
     Duration timeout = const Duration(seconds: 6),
@@ -258,6 +264,14 @@ class _DevicesPageState extends State<DevicesPage> {
         ),
       ),
       masterViewFraction: 0.26,
+      masterAppBarActions: [
+        if (AppPlatform.isMobile || AppPlatform.isAndroidTV)
+          IconButton(
+            tooltip: '局域网连接',
+            icon: const Icon(Icons.wifi_tethering),
+            onPressed: _openLanConnect,
+          ),
+      ],
     );
   }
 

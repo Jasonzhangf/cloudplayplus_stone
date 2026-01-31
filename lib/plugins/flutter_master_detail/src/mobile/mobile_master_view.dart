@@ -10,6 +10,12 @@ class MobileMasterView<T> extends StatelessWidget {
   /// A widget to display as the master view's title.
   final Widget? title;
 
+  /// Optional actions shown in the master list app bar.
+  final List<Widget>? appBarActions;
+
+  /// Optional leading widget shown in the master list app bar.
+  final Widget? appBarLeading;
+
   /// The list of items.
   final List<T> items;
 
@@ -29,6 +35,8 @@ class MobileMasterView<T> extends StatelessWidget {
     required this.masterItemBuilder,
     this.groupedBy,
     this.groupHeaderBuilder,
+    this.appBarActions,
+    this.appBarLeading,
   });
 
   @override
@@ -42,6 +50,8 @@ class MobileMasterView<T> extends StatelessWidget {
         selectedItem: viewModel.selectedItem,
         title: title,
         masterItemBuilder: masterItemBuilder,
+        appBarActions: appBarActions,
+        appBarLeading: appBarLeading,
         onTap: (value) => viewModel.selectedItem = value,
       ),
     );

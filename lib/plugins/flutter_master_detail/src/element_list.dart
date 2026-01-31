@@ -28,6 +28,12 @@ class ElementList<T> extends StatelessWidget {
 
   /// Handles tap events for the items.
   final ValueSetter<T> onTap;
+
+  /// Optional actions shown in the app bar.
+  final List<Widget>? appBarActions;
+
+  /// Optional leading widget shown in the app bar.
+  final Widget? appBarLeading;
   const ElementList({
     super.key,
     this.title,
@@ -37,6 +43,8 @@ class ElementList<T> extends StatelessWidget {
     required this.onTap,
     required this.groupedBy,
     required this.groupHeaderBuilder,
+    this.appBarActions,
+    this.appBarLeading,
   });
 
   @override
@@ -46,6 +54,8 @@ class ElementList<T> extends StatelessWidget {
         slivers: [
           SliverAppBar(
             flexibleSpace: title,
+            leading: appBarLeading,
+            actions: appBarActions,
           ),
           ..._buildGroupedListView(context)
         ],
@@ -55,6 +65,8 @@ class ElementList<T> extends StatelessWidget {
       slivers: [
         SliverAppBar(
           flexibleSpace: title,
+          leading: appBarLeading,
+          actions: appBarActions,
         ),
         _buildNonGroupedListView(items)
       ],

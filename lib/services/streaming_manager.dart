@@ -5,23 +5,36 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import '../base/logging.dart';
 import '../entities/device.dart';
 import '../entities/session.dart';
+import '../global_settings/streaming_settings.dart';
 import 'app_info_service.dart';
 import 'webrtc_service.dart';
+import 'signaling/cloud_signaling_transport.dart';
+import 'signaling/signaling_transport.dart';
 
 class StreamingManager {
   static Map<String, StreamingSession> sessions = {};
 
-  static void startStreaming(Device target) {
+  static void startStreaming(
+    Device target, {
+    Device? controllerDevice,
+    SignalingTransport? signaling,
+    String? connectPassword,
+  }) {
     if (sessions.containsKey(target.websocketSessionid)) {
       VLOG0(
           "Initializing session which is already initialized: $target.websocketSessionid");
       return;
     }
-    StreamingSession session =
-        StreamingSession(ApplicationInfo.thisDevice, target);
+    final controller = controllerDevice ?? ApplicationInfo.thisDevice;
+    final s = signaling ?? CloudSignalingTransport.instance;
+    final session = StreamingSession(controller, target, signaling: s);
     if (rendererCallbacks.containsKey(target.websocketSessionid)) {
       session
           .updateRendererCallback(rendererCallbacks[target.websocketSessionid]);
+    }
+    if (connectPassword != null && connectPassword.isNotEmpty) {
+      // Let session embed this into request settings (LAN path needs plaintext).
+      StreamingSettings.connectPassword = connectPassword;
     }
     session.startRequest();
     sessions[target.websocketSessionid] = session;

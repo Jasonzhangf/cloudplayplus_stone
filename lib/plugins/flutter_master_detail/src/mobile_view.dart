@@ -35,6 +35,12 @@ class MobileView<T> extends StatelessWidget {
   /// Specify if you want to customize the group header. Will be ignored if `groupedBy` is not specified.
   final types.GroupHeader? groupHeaderBuilder;
 
+  /// Optional actions shown in the master list app bar.
+  final List<Widget>? masterAppBarActions;
+
+  /// Optional leading widget shown in the master list app bar.
+  final Widget? masterAppBarLeading;
+
   /// Transition animation duration.
   final Duration transitionAnimationDuration;
   static const pageTransitionBuilder = ZoomPageTransitionsBuilder();
@@ -52,6 +58,8 @@ class MobileView<T> extends StatelessWidget {
     this.groupHeaderBuilder,
     required this.transitionAnimationDuration,
     required this.detailsTitleConfig,
+    this.masterAppBarActions,
+    this.masterAppBarLeading,
   });
 
   @override
@@ -72,6 +80,8 @@ class MobileView<T> extends StatelessWidget {
       groupedBy: groupedBy,
       groupHeaderBuilder: groupHeaderBuilder,
       title: title,
+      appBarActions: masterAppBarActions,
+      appBarLeading: masterAppBarLeading,
     );
   }
 

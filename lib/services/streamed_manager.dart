@@ -12,6 +12,8 @@ import '../base/logging.dart';
 import '../entities/device.dart';
 import '../entities/session.dart';
 import 'app_info_service.dart';
+import 'signaling/cloud_signaling_transport.dart';
+import 'signaling/signaling_transport.dart';
 
 // ignore: constant_identifier_names
 const int AUDIO_SYSTEM = 255;
@@ -218,7 +220,12 @@ class StreamedManager {
     await _loadCurrentMultiDisplayMode();
   }
 
-  static void startStreaming(Device target, StreamedSettings settings) async {
+  static void startStreaming(
+    Device target,
+    StreamedSettings settings, {
+    Device? controlledDevice,
+    SignalingTransport? signaling,
+  }) async {
     //var sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
     //print("cppdebug x ${sources.length} ${settings.screenId}");
     bool allowConnect = ApplicationInfo.connectable;
@@ -391,8 +398,9 @@ class StreamedManager {
         localVideoStreamsCount[settings.screenId!] =
             localVideoStreamsCount[settings.screenId!]! + 1;
       }
-      StreamingSession session =
-          StreamingSession(target, ApplicationInfo.thisDevice);
+      final self = controlledDevice ?? ApplicationInfo.thisDevice;
+      final s = signaling ?? CloudSignalingTransport.instance;
+      final session = StreamingSession(target, self, signaling: s);
       cursorImageHookID++;
       session.cursorImageHookID = cursorImageHookID;
       cursorPositionUpdatedHookID++;

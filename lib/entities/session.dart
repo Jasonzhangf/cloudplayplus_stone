@@ -12,9 +12,12 @@ import 'package:cloudplayplus/services/capture_target_event_bus.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/quick_target_service.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:cloudplayplus/services/streamed_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/video_frame_size_event_bus.dart';
+import 'package:cloudplayplus/services/signaling/cloud_signaling_transport.dart';
+import 'package:cloudplayplus/services/signaling/signaling_transport.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/utils/host/host_command_runner.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
@@ -159,6 +162,7 @@ class StreamingSession {
       StreamingSessionConnectionState.free;
   SelfSessionType selfSessionType = SelfSessionType.none;
   Device controller, controlled;
+  final SignalingTransport signaling;
   RTCPeerConnection? pc;
   //late RTCPeerConnection audio;
 
@@ -228,7 +232,11 @@ class StreamingSession {
   // 添加生命周期监听器
   static final _lifecycleObserver = _AppLifecycleObserver();
 
-  StreamingSession(this.controller, this.controlled) {
+  StreamingSession(
+    this.controller,
+    this.controlled, {
+    SignalingTransport? signaling,
+  }) : signaling = signaling ?? CloudSignalingTransport.instance {
     connectionState = StreamingSessionConnectionState.free;
     // 注册生命周期监听器
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
@@ -244,7 +252,10 @@ class StreamingSession {
       return;
     }
 
-    if (controller.websocketSessionid != AppStateService.websocketSessionid) {
+    // Only enforce "self device" identity for cloud signaling.
+    // LAN signaling uses its own connection ids unrelated to AppStateService.
+    if (signaling.name == 'cloud' &&
+        controller.websocketSessionid != AppStateService.websocketSessionid) {
       VLOG0("requiring connection on wrong device. Please debug.");
       return;
     }
@@ -315,18 +326,19 @@ class StreamingSession {
       }*/
         // We are controller so source is ourself
         await Future.delayed(
-            const Duration(seconds: 1),
-            //controller's candidate
-            () => WebSocketService.send('candidate2', {
-                  'source_connectionid': controller.websocketSessionid,
-                  'target_uid': controlled.uid,
-                  'target_connectionid': controlled.websocketSessionid,
-                  'candidate': {
-                    'sdpMLineIndex': candidate.sdpMLineIndex,
-                    'sdpMid': candidate.sdpMid,
-                    'candidate': candidate.candidate,
-                  },
-                }));
+          const Duration(seconds: 1),
+          // controller's candidate
+          () => signaling.send('candidate2', {
+            'source_connectionid': controller.websocketSessionid,
+            'target_uid': controlled.uid,
+            'target_connectionid': controlled.websocketSessionid,
+            'candidate': {
+              'sdpMLineIndex': candidate.sdpMLineIndex,
+              'sdpMid': candidate.sdpMid,
+              'candidate': candidate.candidate,
+            },
+          }),
+        );
       };
 
       pc!.onTrack = (event) {
@@ -437,16 +449,23 @@ class StreamingSession {
           } catch (_) {}
         }
       }
-      // Ensure WebSocket handshake completed (received `connection_info`) before
-      // requesting a remote session; otherwise the request may be ignored on cold start.
-      await WebSocketService.waitUntilReady(
-        timeout: const Duration(seconds: 6),
-      );
-      WebSocketService.send('requestRemoteControl', {
-        'target_uid': ApplicationInfo.user.uid,
-        'target_connectionid': controlled.websocketSessionid,
-        'settings': settings,
-      });
+      // Ensure signaling transport is ready before requesting a remote session;
+      // otherwise the request may be ignored on cold start.
+      await signaling.waitUntilReady(timeout: const Duration(seconds: 6));
+
+      if (signaling.name == 'cloud') {
+        signaling.send('requestRemoteControl', {
+          'target_uid': ApplicationInfo.user.uid,
+          'target_connectionid': controlled.websocketSessionid,
+          'settings': settings,
+        });
+      } else {
+        // LAN host expects a single `remoteSessionRequested` without target ids.
+        signaling.send('remoteSessionRequested', {
+          'requester_info': deviceToRequesterInfo(controller),
+          'settings': settings,
+        });
+      }
     });
   }
 
@@ -531,7 +550,10 @@ class StreamingSession {
         VLOG0("starting connection on which is already started. Please debug.");
         return;
       }
-      if (controlled.websocketSessionid != AppStateService.websocketSessionid) {
+      // Only enforce "self device" identity for cloud signaling.
+      // LAN signaling uses its own connection ids unrelated to AppStateService.
+      if (signaling.name == 'cloud' &&
+          controlled.websocketSessionid != AppStateService.websocketSessionid) {
         VLOG0("requiring connection on wrong device. Please debug.");
         return;
       }
@@ -642,7 +664,7 @@ class StreamingSession {
         // We are controlled so source is ourself
         await Future.delayed(
             const Duration(seconds: 1),
-            () => WebSocketService.send('candidate', {
+            () => signaling.send('candidate', {
                   'source_connectionid': controlled.websocketSessionid,
                   'target_uid': controller.uid,
                   'target_connectionid': controller.websocketSessionid,
@@ -802,7 +824,7 @@ class StreamingSession {
         candidates.removeAt(0);
       }
 
-      WebSocketService.send('offer', {
+      signaling.send('offer', {
         'source_connectionid': controlled.websocketSessionid,
         'target_uid': controller.uid,
         'target_connectionid': controller.websocketSessionid,
@@ -846,7 +868,7 @@ class StreamingSession {
         await pc!.addCandidate(candidates[0]);
         candidates.removeAt(0);
       }
-      WebSocketService.send('answer', {
+      signaling.send('answer', {
         'source_connectionid': controller.websocketSessionid,
         'target_uid': controlled.uid,
         'target_connectionid': controlled.websocketSessionid,

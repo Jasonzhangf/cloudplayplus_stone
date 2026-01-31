@@ -42,6 +42,12 @@ class MasterDetailsList<T> extends StatelessWidget {
   /// The maximum percentage of view to be occupied by the master view on larger screens.
   final double masterViewFraction;
 
+  /// Optional actions shown in the master list app bar.
+  final List<Widget>? masterAppBarActions;
+
+  /// Optional leading widget shown in the master list app bar.
+  final Widget? masterAppBarLeading;
+
   /// Transition animation duration.
   final Duration transitionAnimationDuration;
 
@@ -63,6 +69,8 @@ class MasterDetailsList<T> extends StatelessWidget {
     this.groupedBy,
     this.groupHeaderBuilder,
     this.masterViewFraction = 0.333333,
+    this.masterAppBarActions,
+    this.masterAppBarLeading,
     this.transitionAnimationDuration = const Duration(milliseconds: 500),
     this.detailsTitleConfig = const DetailsTitleConfig(),
   }) {
@@ -111,6 +119,8 @@ class MasterDetailsList<T> extends StatelessWidget {
       groupHeaderBuilder: groupHeaderBuilder,
       title: title,
       masterViewFraction: masterViewFraction,
+      masterAppBarActions: masterAppBarActions,
+      masterAppBarLeading: masterAppBarLeading,
       masterViewMaxWidth: _masterViewMaxWidth,
       transitionAnimationDuration: transitionAnimationDuration,
       detailsTitleConfig: detailsTitleConfig,
@@ -129,6 +139,8 @@ class MasterDetailsList<T> extends StatelessWidget {
       groupHeaderBuilder: groupHeaderBuilder,
       title: title,
       masterViewFraction: masterViewFraction,
+      masterAppBarActions: masterAppBarActions,
+      masterAppBarLeading: masterAppBarLeading,
       masterViewMaxWidth: _masterViewMaxWidth,
       transitionAnimationDuration: transitionAnimationDuration,
       detailsTitleConfig: detailsTitleConfig,
@@ -147,6 +159,8 @@ class MasterDetailsList<T> extends StatelessWidget {
       groupHeaderBuilder: groupHeaderBuilder,
       transitionAnimationDuration: transitionAnimationDuration,
       title: title,
+      masterAppBarActions: masterAppBarActions,
+      masterAppBarLeading: masterAppBarLeading,
       detailsTitleConfig: detailsTitleConfig,
     );
   }

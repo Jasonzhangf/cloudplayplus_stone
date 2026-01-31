@@ -39,6 +39,12 @@ class TabletView<T> extends StatelessWidget {
   /// The maximum percentage of view to be occupied by the master view on larger screens.
   final double masterViewFraction;
 
+  /// Optional actions shown in the master list app bar.
+  final List<Widget>? masterAppBarActions;
+
+  /// Optional leading widget shown in the master list app bar.
+  final Widget? masterAppBarLeading;
+
   /// Max width of the master view. Only used in larger screens.
   final double masterViewMaxWidth;
 
@@ -57,6 +63,8 @@ class TabletView<T> extends StatelessWidget {
     required this.detailsTitleBuilder,
     required this.detailsItemBuilder,
     required this.masterViewFraction,
+    this.masterAppBarActions,
+    this.masterAppBarLeading,
     required this.masterViewMaxWidth,
     required this.transitionAnimationDuration,
     required this.detailsTitleConfig,
@@ -113,6 +121,8 @@ class TabletView<T> extends StatelessWidget {
         groupHeaderBuilder: groupHeaderBuilder,
         selectedItem: viewModel.selectedItem,
         masterItemBuilder: masterItemBuilder,
+        appBarActions: masterAppBarActions,
+        appBarLeading: masterAppBarLeading,
         onTap: (item) => viewModel.selectedItem = item,
       ),
     );

@@ -2,6 +2,7 @@ import 'dart:io' if (dart.library.js) 'utils/web_util.dart';
 
 import 'package:cloudplayplus/controller/hardware_input_controller.dart';
 import 'package:cloudplayplus/services/app_init_service.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_host_server.dart';
 import 'package:cloudplayplus/services/webrtc/webrtc_initializer_platform.dart';
 import 'package:cloudplayplus/utils/system_tray_manager.dart';
 import 'package:flutter/material.dart';
@@ -37,6 +38,12 @@ void main() async {
   SecureStorageManager.init();
   //AppInitService depends on SharedPreferencesManager
   await AppInitService.init();
+
+  // Desktop host: accept LAN connections by default (ws://0.0.0.0:17999).
+  // Mobile controllers can connect by entering the host IP (including Tailscale IPs).
+  if (AppPlatform.isDeskTop) {
+    LanSignalingHostServer.instance.startIfPossible();
+  }
 
   if (AppPlatform.isWindows && !ApplicationInfo.isSystem) {
     bool startAsSys = await HardwareSimulator.registerService();
