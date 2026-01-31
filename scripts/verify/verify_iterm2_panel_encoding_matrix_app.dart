@@ -9,7 +9,6 @@ import 'package:cloudplayplus/core/ports/process_runner_host_adapter.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
-import 'package:webrtc_interface/webrtc_interface.dart';
 
 /// iTerm2 panel 编码矩阵验证（本地 loopback）
 ///
@@ -166,7 +165,7 @@ class _VerifyPageState extends State<_VerifyPage> {
           final codec = _extractInboundCodecMimeType(stats, inbound);
 
           final screenshotPath =
-              await _screenshotRemotePreviewTo(outDir, 'case_${caseTag}');
+              await _screenshotRemotePreviewTo(outDir, 'case_$caseTag');
           final screenshotAnalysis = await _analyzePngLooksNonBlack(
               File(screenshotPath).readAsBytesSync());
 
@@ -264,7 +263,7 @@ class _VerifyPageState extends State<_VerifyPage> {
       (p) => p.title.trim() == panelTitle.trim(),
       orElse: () => list.panels.isNotEmpty
           ? list.panels.first
-          : Iterm2PanelInfoCore(
+          : const Iterm2PanelInfoCore(
               id: '',
               title: '',
               detail: '',
@@ -345,10 +344,10 @@ class _VerifyPageState extends State<_VerifyPage> {
     final q1 = <RTCIceCandidate>[];
     final q2 = <RTCIceCandidate>[];
     _pc1!.onIceCandidate = (c) {
-      if (c != null) q1.add(c);
+      q1.add(c);
     };
     _pc2!.onIceCandidate = (c) {
-      if (c != null) q2.add(c);
+      q2.add(c);
     };
 
     final gotRemote = Completer<void>();
