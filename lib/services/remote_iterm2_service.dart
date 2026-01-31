@@ -76,6 +76,51 @@ class RemoteIterm2Service {
     });
   }
 
+  Future<void> selectPrevPanel(RTCDataChannel? channel) async {
+    await _selectRelativePanel(channel, -1);
+  }
+
+  Future<void> selectNextPanel(RTCDataChannel? channel) async {
+    await _selectRelativePanel(channel, 1);
+  }
+
+  Future<void> _selectRelativePanel(RTCDataChannel? channel, int delta) async {
+    if (channel == null || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      error.value = 'DataChannel 未连接';
+      return;
+    }
+
+    // Ensure we have at least some panels; best-effort request if empty.
+    if (panels.value.isEmpty) {
+      await requestPanels(channel);
+      // Do not block UI here; user can tap again once list arrives.
+      return;
+    }
+
+    final list = panels.value;
+    if (list.isEmpty) return;
+
+    final currentId =
+        (_pendingSelectSessionId?.isNotEmpty ?? false)
+            ? _pendingSelectSessionId!
+            : (selectedSessionId.value ?? '');
+
+    int idx = list.indexWhere((p) => p.id == currentId);
+    if (idx < 0) idx = 0;
+
+    int next = idx + delta;
+    if (list.isNotEmpty) {
+      next %= list.length;
+      if (next < 0) next += list.length;
+    } else {
+      next = 0;
+    }
+
+    final target = list[next];
+    if (target.id.isEmpty) return;
+    await selectPanel(channel, sessionId: target.id);
+  }
+
   void handleCaptureTargetSwitchResult(Map<String, dynamic> payload) {
     final type = payload['type']?.toString();
     if (type != 'iterm2') return;
