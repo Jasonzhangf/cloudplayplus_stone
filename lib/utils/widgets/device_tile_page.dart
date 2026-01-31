@@ -11,6 +11,7 @@ import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:cloudplayplus/services/lan/lan_address_service.dart';
+import 'package:cloudplayplus/services/lan/lan_reachability_service.dart';
 import 'package:cloudplayplus/utils/system_tray_manager.dart';
 import 'package:cloudplayplus/utils/widgets/global_remote_screen_renderer.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
@@ -214,7 +215,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     final addrs = device.lanAddrs;
     if (addrs.isEmpty) return;
 
-    // Prefer "best" address ordering (Tailscale/private IPv4 first).
+    // Prefer "best" address ordering.
     final ranked = LanAddressService.instance.rankHostsForConnect(addrs);
     final port = device.lanPort ?? kDefaultLanPort;
 
@@ -242,6 +243,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     );
     if (chosen == null || chosen.isEmpty) return;
 
+    await _connectViaLanHost(device: device, host: chosen, port: port);
+  }
+
+  Future<void> _connectViaLanHost({
+    required Device device,
+    required String host,
+    required int port,
+  }) async {
     // Reuse saved password if available.
     final savedPasswordKey = 'connectPassword_${device.uid}';
     final savedPassword =
@@ -252,10 +261,10 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
 
     try {
       // Remember last used LAN host for manual LAN connect page, too.
-      await SharedPreferencesManager.setString('lan.lastHost.v1', chosen);
+      await SharedPreferencesManager.setString('lan.lastHost.v1', host);
       await SharedPreferencesManager.setInt('lan.lastPort.v1', port);
       final target = await LanSignalingClient.instance.connectAndStartStreaming(
-        host: chosen,
+        host: host,
         port: port,
         connectPassword: password,
       );
@@ -286,96 +295,166 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
         : LanAddressService.instance.rankHostsForConnect(addrs);
     final port = device.lanPort ?? kDefaultLanPort;
 
+    final reachability = <String, LanReachabilityResult>{};
+    final checking = <String, bool>{};
+    bool started = false;
+
     await showModalBottomSheet<void>(
       context: context,
       showDragHandle: true,
       builder: (ctx) {
-        final canConnect = device.lanEnabled && addrs.isNotEmpty;
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.wifi_tethering),
-                title: const Text('局域网连接 (LAN/Tailscale)'),
-                subtitle: Text(
-                  device.lanEnabled ? 'Host 已开启，端口 $port' : 'Host 未开启局域网模式',
+        return StatefulBuilder(builder: (ctx, setState) {
+          Future<void> runProbe(
+              {Duration cacheTtl = const Duration(seconds: 5)}) async {
+            for (final ip in ranked) {
+              setState(() {
+                checking[ip] = true;
+              });
+              final res = await LanReachabilityService.instance.probeTcp(
+                host: ip,
+                port: port,
+                cacheTtl: cacheTtl,
+              );
+              setState(() {
+                reachability[ip] = res;
+                checking[ip] = false;
+              });
+            }
+          }
+
+          if (!started && ranked.isNotEmpty) {
+            started = true;
+            Future.microtask(() => runProbe());
+          }
+
+          final canConnect = device.lanEnabled && addrs.isNotEmpty;
+          final statusText = device.lanEnabled
+              ? 'Host 已开启，端口 $port（自动探测可达 IP）'
+              : (addrs.isNotEmpty
+                  ? 'Host 状态未知（已同步 IP）'
+                  : 'Host 未开启局域网模式 / 未同步 IP');
+
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  leading: const Icon(Icons.wifi_tethering),
+                  title: const Text('局域网连接 (LAN/Tailscale)'),
+                  subtitle: Text(statusText),
                 ),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: addrs.isEmpty
-                            ? null
-                            : () async {
-                                await Clipboard.setData(
-                                  ClipboardData(text: ranked.join('\n')),
-                                );
-                                if (!mounted) return;
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(content: Text('已复制 IP 列表')),
-                                );
-                              },
-                        icon: const Icon(Icons.copy),
-                        label: const Text('复制'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        onPressed: canConnect
-                            ? () async {
-                                Navigator.of(ctx).pop();
-                                await _connectViaLan(device);
-                              }
-                            : null,
-                        icon: const Icon(Icons.wifi_tethering),
-                        label: const Text('直连'),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (addrs.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
-                  child: Text(
-                    '暂无可用 IP（需要同账号设备在线同步，或在 Host 开启局域网模式）',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                )
-              else
-                Flexible(
-                  child: ListView.builder(
-                    shrinkWrap: true,
-                    itemCount: ranked.length,
-                    itemBuilder: (ctx, i) {
-                      final ip = ranked[i];
-                      return ListTile(
-                        leading: const Icon(Icons.lan),
-                        title: Text(ip),
-                        subtitle: Text('端口 $port'),
-                        trailing: IconButton(
-                          tooltip: '复制',
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: addrs.isEmpty
+                              ? null
+                              : () async {
+                                  await Clipboard.setData(
+                                    ClipboardData(text: ranked.join('\n')),
+                                  );
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(content: Text('已复制 IP 列表')),
+                                  );
+                                },
                           icon: const Icon(Icons.copy),
-                          onPressed: () async {
-                            await Clipboard.setData(ClipboardData(text: ip));
-                            if (!mounted) return;
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('已复制 IP')),
-                            );
-                          },
+                          label: const Text('复制'),
                         ),
-                      );
-                    },
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: ranked.isEmpty
+                              ? null
+                              : () async {
+                                  await runProbe(cacheTtl: Duration.zero);
+                                },
+                          icon: const Icon(Icons.refresh),
+                          label: const Text('刷新'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: canConnect
+                              ? () async {
+                                  Navigator.of(ctx).pop();
+                                  await _connectViaLan(device);
+                                }
+                              : null,
+                          icon: const Icon(Icons.wifi_tethering),
+                          label: const Text('直连'),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-            ],
-          ),
-        );
+                if (addrs.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    child: Text(
+                      '暂无可用 IP（需要同账号设备在线同步，或在 Host 开启局域网模式）',
+                      style: TextStyle(color: Colors.grey),
+                    ),
+                  )
+                else
+                  Flexible(
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: ranked.length,
+                      itemBuilder: (ctx, i) {
+                        final ip = ranked[i];
+                        final res = reachability[ip];
+                        final isChecking = checking[ip] == true;
+                        final ok = res?.ok == true;
+
+                        Widget leading() {
+                          if (isChecking) {
+                            return const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            );
+                          }
+                          if (res == null)
+                            return const Icon(Icons.help_outline);
+                          return Icon(
+                            ok ? Icons.check_circle : Icons.cancel,
+                            color: ok ? Colors.green : Colors.red,
+                          );
+                        }
+
+                        return ListTile(
+                          leading: leading(),
+                          title: Text(ip),
+                          subtitle: Text(
+                            '端口 $port${res == null ? '' : (ok ? ' • ${res.rttMs}ms' : ' • 不可达')}',
+                          ),
+                          trailing: IconButton(
+                            tooltip: ok ? '连接' : '不可达',
+                            icon: const Icon(Icons.login),
+                            onPressed: ok
+                                ? () async {
+                                    Navigator.of(ctx).pop();
+                                    await _connectViaLanHost(
+                                      device: device,
+                                      host: ip,
+                                      port: port,
+                                    );
+                                  }
+                                : null,
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          );
+        });
       },
     );
   }

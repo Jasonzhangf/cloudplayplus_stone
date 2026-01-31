@@ -124,12 +124,20 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final heightAny = payload['height'];
     final rttAny = payload['rttMs'];
     final lossAny = payload['lossFraction'] ?? payload['lossPct'];
+    final rxKbpsAny = payload['rxKbps'];
+    final jitterMsAny = payload['jitterMs'];
+    final freezeDeltaAny = payload['freezeDelta'];
+    final decodeMsAny = payload['decodeMsPerFrame'];
 
     final renderFps = (renderFpsAny is num) ? renderFpsAny.toDouble() : 0.0;
     final width = (widthAny is num) ? widthAny.toInt() : 0;
     final height = (heightAny is num) ? heightAny.toInt() : 0;
     final rttMs = (rttAny is num) ? rttAny.toDouble() : 0.0;
     final loss = (lossAny is num) ? lossAny.toDouble() : 0.0;
+    final rxKbps = (rxKbpsAny is num) ? rxKbpsAny.toDouble() : 0.0;
+    final jitterMs = (jitterMsAny is num) ? jitterMsAny.toDouble() : 0.0;
+    final freezeDelta = (freezeDeltaAny is num) ? freezeDeltaAny.toInt() : 0;
+    final decodeMsPerFrame = (decodeMsAny is num) ? decodeMsAny.toInt() : 0;
 
     if (renderFps <= 0 || width <= 0 || height <= 0) return;
 
@@ -164,8 +172,6 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     final best = _computeBestBitrateKbpsForCaptureType(fullBitrateKbps: full);
 
     final curBitrate = (streamSettings!.bitrate ?? full).clamp(80, 20000);
-    final rxKbpsAny = payload['rxKbps'];
-    final rxKbps = (rxKbpsAny is num) ? rxKbpsAny.toDouble() : 0.0;
 
     // Always report current host-side target to the controller for debug UI.
     _sendHostEncodingStatus(mode: mode, fullBitrateKbps: full);
@@ -338,13 +344,18 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
 
     // 2) (Good/OK) network: raise bitrate toward full.
     if ((okNetwork || goodNetwork) && curBitrate < maxAllowedBitrate) {
-      final targetBitrate = (curBitrate * 1.35).round().clamp(
-          computeAdaptiveMinBitrateKbps(
-            fullBitrateKbps: full,
-            targetFps: currentFps,
-            minFps: qualityFloorFps,
-          ),
-          maxAllowedBitrate);
+      final minBitrate = computeAdaptiveMinBitrateKbps(
+        fullBitrateKbps: full,
+        targetFps: currentFps,
+        minFps: qualityFloorFps,
+      );
+      final decodeBudgetMs = (1000.0 / currentFps);
+      final decoderHealthy = freezeDelta <= 0 &&
+          (decodeMsPerFrame <= 0 ||
+              decodeMsPerFrame <= (decodeBudgetMs * 1.25));
+      final ramp = (goodNetwork && decoderHealthy) ? 1.60 : 1.35;
+      final targetBitrate =
+          (curBitrate * ramp).round().clamp(minBitrate, maxAllowedBitrate);
       if (targetBitrate > curBitrate &&
           (nowMs - _adaptiveLastBitrateChangeAtMs) > 2500) {
         streamSettings!.bitrate = targetBitrate;
@@ -363,9 +374,13 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
     // 2.5) If encoder FPS is already at (quality) minimum but receiver still can't keep up,
     // reduce bitrate further even when loss/RTT look fine. This helps avoid
     // queue buildup (e.g. due to jitter buffer / decoder pressure).
+    final decodeBudgetMs = (1000.0 / currentFps);
+    final receiverStruggling = freezeDelta > 0 ||
+        (decodeMsPerFrame > 0 && decodeMsPerFrame > (decodeBudgetMs * 1.35));
+    final receiverLowFps = _adaptiveRenderFpsEwma > 0 &&
+        _adaptiveRenderFpsEwma < (qualityFloorFps - 1.5);
     if (currentFps <= qualityFloorFps &&
-        _adaptiveRenderFpsEwma > 0 &&
-        _adaptiveRenderFpsEwma < (qualityFloorFps - 1.5) &&
+        (receiverStruggling || receiverLowFps) &&
         (nowMs - _adaptiveLastBitrateChangeAtMs) > 4500) {
       final minBitrate = computeAdaptiveMinBitrateKbps(
         fullBitrateKbps: full,
@@ -378,7 +393,7 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
         streamSettings!.bitrate = targetBitrate;
         _adaptiveLastBitrateChangeAtMs = nowMs;
         InputDebugService.instance.log(
-            '[adaptive] min fps but receiver low (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)}) bitrate $curBitrate -> $targetBitrate (full=$full max=$maxAllowedBitrate)');
+            '[adaptive] min fps but receiver low (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} decode=${decodeMsPerFrame}ms freezeΔ=$freezeDelta) bitrate $curBitrate -> $targetBitrate (full=$full max=$maxAllowedBitrate)');
         _sendHostEncodingStatus(
             mode: mode, fullBitrateKbps: full, reason: 'min-fps-bitrate-down');
         await _maybeRenegotiateAfterCaptureSwitch(
@@ -413,22 +428,38 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       }
     }
 
-    // 4) Device bound: render fps is low but loss is low -> step down fps to keep quality.
-    final deviceBound = _adaptiveLossEwma <= 0.01 &&
-        _adaptiveRenderFpsEwma > 0 &&
-        _adaptiveRenderFpsEwma < currentFps * 0.75;
+    // 4) Device bound: rely on decoder/freeze signals rather than "low fps"
+    // (static screens can naturally have low fps without being device-limited).
+    final decodeBudgetMs2 = (1000.0 / currentFps);
+    final decodeSlow =
+        decodeMsPerFrame > 0 && decodeMsPerFrame > (decodeBudgetMs2 * 1.35);
+    final stuttering = freezeDelta > 0;
+    final deviceBound = _adaptiveLossEwma <= 0.01 && (decodeSlow || stuttering);
     if (deviceBound) {
-      final wantDown = pickAdaptiveTargetFps(
-        renderFps: _adaptiveRenderFpsEwma,
-        currentFps: currentFps,
-        minFps: minFps,
-      );
+      int wantDown = currentFps;
+      if (decodeMsPerFrame > 0) {
+        final maxFpsByDecode = (1000.0 / decodeMsPerFrame * 0.90).floor();
+        if (maxFpsByDecode < 10) {
+          wantDown = minFps;
+        } else if (maxFpsByDecode < 20) {
+          wantDown = qualityFloorFps;
+        } else if (maxFpsByDecode < 40) {
+          wantDown = 30;
+        }
+      } else {
+        wantDown = pickAdaptiveTargetFps(
+          renderFps: _adaptiveRenderFpsEwma,
+          currentFps: currentFps,
+          minFps: minFps,
+        );
+      }
+      wantDown = wantDown.clamp(minFps, currentFps);
       if (wantDown < currentFps &&
           (nowMs - _adaptiveLastFpsChangeAtMs) > 2500) {
         streamSettings!.framerate = wantDown;
         _adaptiveLastFpsChangeAtMs = nowMs;
         InputDebugService.instance.log(
-            '[adaptive] device bound fps $currentFps -> $wantDown (render~${_adaptiveRenderFpsEwma.toStringAsFixed(1)} loss~${lossPct.toStringAsFixed(2)}%)');
+            '[adaptive] device bound fps $currentFps -> $wantDown (decode=${decodeMsPerFrame}ms freezeΔ=$freezeDelta jitter=${jitterMs.toStringAsFixed(1)}ms loss~${lossPct.toStringAsFixed(2)}%)');
         _sendHostEncodingStatus(
             mode: mode, fullBitrateKbps: full, reason: 'device-bound-fps-down');
         await _reapplyCurrentCaptureForAdaptiveFps();

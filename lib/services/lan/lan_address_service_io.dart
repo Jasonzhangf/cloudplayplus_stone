@@ -28,27 +28,32 @@ class LanAddressService {
   List<String> rankHostsForConnect(List<String> addrs) {
     final list = addrs.toList(growable: false);
     int score(String ip) {
-      final isV4 = ip.contains('.') && !ip.contains(':');
-      // Prefer IPv4 first because ws:// + many routers are v4-only in practice.
-      int s = isV4 ? 0 : 100;
+      final isV6 = ip.contains(':');
+      final isV4 = ip.contains('.') && !isV6;
+      final isLinkLocal = ip.startsWith('fe80:') || ip.startsWith('169.254.');
 
       // Tailscale: 100.64.0.0/10 (IPv4) or fd7a:115c:a1e0::/48 (IPv6)
-      if (ip.startsWith('100.') || ip.startsWith('fd7a:115c:a1e0:')) s -= 50;
+      final isTailscale =
+          ip.startsWith('100.') || ip.startsWith('fd7a:115c:a1e0:');
+      final isPrivateV4 = isV4 &&
+          (ip.startsWith('192.168.') ||
+              ip.startsWith('10.') ||
+              ip.startsWith('172.16.') ||
+              ip.startsWith('172.17.') ||
+              ip.startsWith('172.18.') ||
+              ip.startsWith('172.19.') ||
+              ip.startsWith('172.2') ||
+              ip.startsWith('172.3'));
 
-      // Common private IPv4 ranges.
-      if (ip.startsWith('192.168.')) s -= 30;
-      if (ip.startsWith('10.')) s -= 25;
-      if (ip.startsWith('172.16.') ||
-          ip.startsWith('172.17.') ||
-          ip.startsWith('172.18.') ||
-          ip.startsWith('172.19.') ||
-          ip.startsWith('172.2') ||
-          ip.startsWith('172.3')) s -= 20;
-
-      // De-prioritize link-local.
-      if (ip.startsWith('169.254.') || ip.startsWith('fe80:')) s += 40;
-
-      return s;
+      // User preference: prefer IPv6 first, then Tailscale, then private IPv4.
+      // De-prioritize link-local last.
+      if (isLinkLocal) return 1000;
+      if (isV6 && !isTailscale) return 0;
+      if (isV6 && isTailscale) return 10;
+      if (isV4 && isTailscale) return 20;
+      if (isPrivateV4) return 30;
+      if (isV4) return 40;
+      return 50;
     }
 
     list.sort((a, b) {

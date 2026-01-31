@@ -3,7 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 void main() {
   test(
-      'rankHostsForConnect prefers tailscale/private IPv4 over link-local/IPv6',
+      'rankHostsForConnect prefers IPv6 then tailscale/private IPv4 over link-local',
       () {
     final svc = LanAddressService.instance;
     final ranked = svc.rankHostsForConnect([
@@ -15,13 +15,11 @@ void main() {
       '2001:db8::1',
     ]);
 
-    // Prefer Tailscale/private IPv4 first.
-    expect(ranked.first, '100.100.100.100');
-    expect(ranked[1], '192.168.1.10');
-    // Tailscale IPv6 should be ahead of generic IPv6/link-local.
-    expect(
-        ranked.indexOf('fd7a:115c:a1e0::1234') < ranked.indexOf('2001:db8::1'),
-        true);
+    // Prefer global IPv6 first, then Tailscale, then private IPv4.
+    expect(ranked.first, '2001:db8::1');
+    expect(ranked[1], 'fd7a:115c:a1e0::1234');
+    expect(ranked[2], '100.100.100.100');
+    expect(ranked[3], '192.168.1.10');
     // Link-local should be last-ish.
     expect(ranked.last == 'fe80::1' || ranked.last == '169.254.10.2', true);
   });

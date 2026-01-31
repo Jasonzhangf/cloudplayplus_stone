@@ -118,6 +118,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
   int _adaptivePrevPacketsLost = 0;
   int _adaptivePrevBytesReceived = 0;
   int _adaptivePrevFreezeCount = 0;
+  double _adaptivePrevTotalDecodeTimeSec = 0.0;
+  int _adaptivePrevFramesDecodedForDecode = 0;
 
   int _netBufferTargetFrames = 5;
   int _netBufferLastAppliedFrames = -1;
@@ -169,6 +171,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         int packetsReceived = 0;
         int packetsLost = 0;
         int bytesReceived = 0;
+        double totalDecodeTimeSec = 0.0;
         double rttMs = 0.0;
         double jitterMs = 0.0;
         int freezeCount = 0;
@@ -185,6 +188,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                   (values['packetsReceived'] as num?)?.toInt() ?? 0;
               packetsLost = (values['packetsLost'] as num?)?.toInt() ?? 0;
               bytesReceived = (values['bytesReceived'] as num?)?.toInt() ?? 0;
+              totalDecodeTimeSec =
+                  (values['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
               final jitterSec = (values['jitter'] as num?)?.toDouble() ?? 0.0;
               jitterMs = jitterSec * 1000.0;
               freezeCount = (values['freezeCount'] as num?)?.toInt() ?? 0;
@@ -221,6 +226,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
         final dtMs = (_adaptivePrevAtMs > 0) ? (nowMs - _adaptivePrevAtMs) : 0;
         double lossFraction = 0.0;
         double rxKbps = 0.0;
+        int freezeDelta = 0;
+        int decodeMsPerFrame = 0;
         if (dtMs > 0) {
           final dRecv = (packetsReceived - _adaptivePrevPacketsReceived)
               .clamp(0, 1 << 30);
@@ -233,19 +240,35 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
           final dBytes =
               (bytesReceived - _adaptivePrevBytesReceived).clamp(0, 1 << 30);
           rxKbps = dBytes * 8.0 / dtMs; // bytes->bits, ms->kbps
+
+          freezeDelta =
+              (freezeCount - _adaptivePrevFreezeCount).clamp(0, 1 << 30);
+
+          if (totalDecodeTimeSec > 0 && framesDecoded > 0) {
+            final prevTotal = _adaptivePrevTotalDecodeTimeSec;
+            final prevFrames = _adaptivePrevFramesDecodedForDecode;
+            if (prevTotal > 0 &&
+                prevFrames > 0 &&
+                totalDecodeTimeSec > prevTotal &&
+                framesDecoded > prevFrames) {
+              final dFrames = (framesDecoded - prevFrames).clamp(1, 1 << 30);
+              final dSec = (totalDecodeTimeSec - prevTotal);
+              decodeMsPerFrame = ((dSec / dFrames) * 1000.0).round();
+            }
+          }
         }
         _adaptivePrevAtMs = nowMs;
         _adaptivePrevPacketsReceived = packetsReceived;
         _adaptivePrevPacketsLost = packetsLost;
         _adaptivePrevBytesReceived = bytesReceived;
+        _adaptivePrevFreezeCount = freezeCount;
+        _adaptivePrevTotalDecodeTimeSec = totalDecodeTimeSec;
+        _adaptivePrevFramesDecodedForDecode = framesDecoded;
 
         // Controller-side network buffer (Android best-effort).
         if (!_netBufferUnsupported &&
             StreamingSettings.enableNetworkBuffer &&
             AppPlatform.isAndroid) {
-          final freezeDelta =
-              (freezeCount - _adaptivePrevFreezeCount).clamp(0, 1 << 30);
-          _adaptivePrevFreezeCount = freezeCount;
           final wantFrames = computeTargetBufferFrames(
             input: VideoBufferPolicyInput(
               jitterMs: jitterMs,
@@ -323,6 +346,9 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                 'rttMs': rttMs,
                 'lossFraction': lossFraction,
                 'rxKbps': rxKbps,
+                'jitterMs': jitterMs,
+                'freezeDelta': freezeDelta,
+                'decodeMsPerFrame': decodeMsPerFrame,
                 'mode': StreamingSettings.encodingMode.name,
               }
             }),

@@ -420,11 +420,15 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
     final hostMode = host?['mode']?.toString();
     final hostFps = host?['targetFps'];
     final hostBitrate = host?['targetBitrateKbps'];
+    final hostReason = host?['reason']?.toString();
     final hostText = (hostMode != null ||
             hostFps != null ||
             hostBitrate != null)
-        ? ' | 编码${hostMode ?? "--"} ${hostFps ?? "--"}fps ${hostBitrate ?? "--"}kbps'
+        ? ' | 编码${hostMode ?? "--"} ${hostFps ?? "--"}fps ${hostBitrate ?? "--"}kbps${hostReason != null && hostReason.isNotEmpty ? "($hostReason)" : ""}'
         : '';
+
+    final codecType = _videoInfo['codecType']?.toString() ?? '未知';
+    final isHw = _videoInfo['isHardwareDecoder'] == true;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -435,7 +439,7 @@ class _CompactVideoInfoContentState extends State<_CompactVideoInfoContent> {
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Text(
-          '${_videoInfo['width']}×${_videoInfo['height']} | 解码${fps}fps | 解码${instantDecodeMs > 0 ? '${instantDecodeMs}ms' : '--'} | GOP$gopText | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
+          '${_videoInfo['width']}×${_videoInfo['height']} | ${isHw ? "硬解" : "软解"} $codecType | 解码${fps}fps | 解码${instantDecodeMs > 0 ? '${instantDecodeMs}ms' : '--'} | GOP$gopText | 接收$bitrateText | 丢包${packetLossRate.toStringAsFixed(1)}% | RTT${rtt}ms$hostText',
           style: TextStyle(
               color: Colors.white, fontSize: 10, fontWeight: FontWeight.w500),
         ),
@@ -501,6 +505,20 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
   };
 
   try {
+    int asInt(dynamic v) {
+      if (v is int) return v;
+      if (v is num) return v.toInt();
+      if (v is String) return int.tryParse(v) ?? 0;
+      return 0;
+    }
+
+    double asDouble(dynamic v) {
+      if (v is double) return v;
+      if (v is num) return v.toDouble();
+      if (v is String) return double.tryParse(v) ?? 0.0;
+      return 0.0;
+    }
+
     // 查找视频入站RTP统计
     for (var report in stats) {
       if (report.type == 'inbound-rtp') {
@@ -511,10 +529,9 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
           videoInfo['hasVideo'] = true;
 
           // 基本视频信息
-          videoInfo['width'] = values['frameWidth'] ?? 0;
-          videoInfo['height'] = values['frameHeight'] ?? 0;
-          videoInfo['fps'] =
-              (values['framesPerSecond'] as num?)?.toDouble() ?? 0.0;
+          videoInfo['width'] = asInt(values['frameWidth']);
+          videoInfo['height'] = asInt(values['frameHeight']);
+          videoInfo['fps'] = asDouble(values['framesPerSecond']);
 
           // 解码器信息
           String decoderImpl = values['decoderImplementation'] ?? '未知';
@@ -524,9 +541,8 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
               values['powerEfficientDecoder'] ?? false;
 
           // 解码性能统计
-          final totalDecodeTime =
-              (values['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
-          final framesDecoded = values['framesDecoded'] ?? 0;
+          final totalDecodeTime = asDouble(values['totalDecodeTime']);
+          final framesDecoded = asInt(values['framesDecoded']);
           videoInfo['framesDecoded'] = framesDecoded;
           videoInfo['totalDecodeTime'] = totalDecodeTime;
 
@@ -536,25 +552,25 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
           }
 
           // 质量统计
-          videoInfo['framesDropped'] = values['framesDropped'] ?? 0;
-          videoInfo['keyFramesDecoded'] = values['keyFramesDecoded'] ?? 0;
-          videoInfo['packetsLost'] = values['packetsLost'] ?? 0;
-          videoInfo['packetsReceived'] = values['packetsReceived'] ?? 0;
-          videoInfo['bytesReceived'] = values['bytesReceived'] ?? 0;
-          videoInfo['jitter'] = (values['jitter'] as num?)?.toDouble() ?? 0.0;
+          videoInfo['framesDropped'] = asInt(values['framesDropped']);
+          videoInfo['keyFramesDecoded'] = asInt(values['keyFramesDecoded']);
+          videoInfo['packetsLost'] = asInt(values['packetsLost']);
+          videoInfo['packetsReceived'] = asInt(values['packetsReceived']);
+          videoInfo['bytesReceived'] = asInt(values['bytesReceived']);
+          videoInfo['jitter'] = asDouble(values['jitter']);
 
           // 网络控制统计
-          videoInfo['nackCount'] = values['nackCount'] ?? 0;
-          videoInfo['pliCount'] = values['pliCount'] ?? 0;
-          videoInfo['firCount'] = values['firCount'] ?? 0;
+          videoInfo['nackCount'] = asInt(values['nackCount']);
+          videoInfo['pliCount'] = asInt(values['pliCount']);
+          videoInfo['firCount'] = asInt(values['firCount']);
 
           // 播放质量统计
-          videoInfo['freezeCount'] = values['freezeCount'] ?? 0;
-          videoInfo['pauseCount'] = values['pauseCount'] ?? 0;
+          videoInfo['freezeCount'] = asInt(values['freezeCount']);
+          videoInfo['pauseCount'] = asInt(values['pauseCount']);
           videoInfo['totalFreezesDuration'] =
-              (values['totalFreezesDuration'] as num?)?.toDouble() ?? 0.0;
+              asDouble(values['totalFreezesDuration']);
           videoInfo['totalPausesDuration'] =
-              (values['totalPausesDuration'] as num?)?.toDouble() ?? 0.0;
+              asDouble(values['totalPausesDuration']);
 
           // 查找编解码器信息
           String? codecId = values['codecId'];
@@ -565,11 +581,25 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
             );
             if (codecReport.values.isNotEmpty) {
               videoInfo['codecType'] = codecReport.values['mimeType'] ?? '未知';
-              videoInfo['clockRate'] = codecReport.values['clockRate'] ?? 0;
-              videoInfo['payloadType'] = codecReport.values['payloadType'] ?? 0;
+              videoInfo['clockRate'] = asInt(codecReport.values['clockRate']);
+              videoInfo['payloadType'] =
+                  asInt(codecReport.values['payloadType']);
             }
           }
 
+          break;
+        }
+      }
+    }
+
+    // Fallback: some platforms populate bytesReceived on transport but not inbound-rtp.
+    if ((videoInfo['bytesReceived'] as num?)?.toInt() == 0) {
+      for (var report in stats) {
+        if (report.type != 'transport') continue;
+        final values = Map<String, dynamic>.from(report.values);
+        final b = asInt(values['bytesReceived']);
+        if (b > 0) {
+          videoInfo['bytesReceived'] = b;
           break;
         }
       }
@@ -580,10 +610,9 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
       if (report.type == 'candidate-pair') {
         final values = Map<String, dynamic>.from(report.values);
         if (values['state'] == 'succeeded' && values['nominated'] == true) {
-          videoInfo['roundTripTime'] =
-              (values['currentRoundTripTime'] as num?)?.toDouble() ?? 0.0;
+          videoInfo['roundTripTime'] = asDouble(values['currentRoundTripTime']);
           videoInfo['availableBandwidth'] =
-              (values['availableOutgoingBitrate'] as num?)?.toDouble() ?? 0.0;
+              asDouble(values['availableOutgoingBitrate']);
           break;
         }
       }

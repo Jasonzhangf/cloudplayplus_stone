@@ -1642,8 +1642,17 @@ class StreamingSession {
         case "hostEncodingStatus":
           final payload = data['hostEncodingStatus'];
           if (payload is Map) {
-            WebrtcService.hostEncodingStatus.value =
-                payload.map((k, v) => MapEntry(k.toString(), v));
+            final mapped = payload.map((k, v) => MapEntry(k.toString(), v));
+            WebrtcService.hostEncodingStatus.value = mapped;
+            final reason = mapped['reason']?.toString();
+            if (reason != null && reason.isNotEmpty) {
+              final mode = mapped['mode']?.toString();
+              final fps = mapped['targetFps'];
+              final br = mapped['targetBitrateKbps'];
+              final full = mapped['fullBitrateKbps'];
+              InputDebugService.instance.log(
+                  'IN hostEncodingStatus mode=$mode $fps fps $br kbps full=$full reason=$reason');
+            }
           }
           break;
         case "inputInjectResult":
