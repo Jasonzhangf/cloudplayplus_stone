@@ -49,7 +49,7 @@ void main() {
       120.0,
     );
 
-    // When IME shows (not already resized), we add full IME height + overlays.
+    // When IME shows (not already resized), we lift by IME height only.
     expect(
       computeRemoteVideoBottomPadding(
         mediaHeight: 800,
@@ -58,10 +58,11 @@ void main() {
         shortcutOverlayHeight: 100,
         virtualKeyboardOverlayHeight: 40,
       ),
-      440.0,
+      300.0,
     );
 
-    // If Scaffold already resized (constraints already excluded IME), IME pad is 0.
+    // If Scaffold already resized (constraints already excluded IME), IME pad is 0,
+    // and overlays should float (no extra reserved padding).
     expect(
       computeRemoteVideoBottomPadding(
         mediaHeight: 800,
@@ -70,7 +71,7 @@ void main() {
         shortcutOverlayHeight: 100,
         virtualKeyboardOverlayHeight: 40,
       ),
-      140.0,
+      0.0,
     );
 
     // No IME => total overlays are capped (even if virtual keyboard is tall).
@@ -83,6 +84,18 @@ void main() {
         virtualKeyboardOverlayHeight: 300,
       ),
       120.0,
+    );
+
+    // IME shown => overlays ignored, IME height applied.
+    expect(
+      computeRemoteVideoBottomPadding(
+        mediaHeight: 800,
+        constraintsHeight: 800,
+        keyboardInset: 300,
+        shortcutOverlayHeight: 500,
+        virtualKeyboardOverlayHeight: 500,
+      ),
+      300.0,
     );
   });
 }

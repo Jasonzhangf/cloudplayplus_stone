@@ -619,7 +619,15 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
     // - 不进行远程点按拖拽
     if (_videoScale > 1.0) {
       setState(() {
-        _videoOffset += Offset(deltaX, deltaY);
+        final next = _videoOffset + Offset(deltaX, deltaY);
+        final size = renderBox?.size ?? _lastRenderSize;
+        _videoOffset = (size == null)
+            ? next
+            : clampVideoOffsetToBounds(
+                size: size,
+                scale: _videoScale,
+                offset: next,
+              );
       });
       return;
     }
@@ -794,10 +802,25 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
           newOffset += focalDelta;
         }
 
-        _videoOffset = newOffset;
+        final size = renderBox?.size;
         _videoScale = newScale;
+        _videoOffset = (size == null)
+            ? newOffset
+            : clampVideoOffsetToBounds(
+                size: size,
+                scale: newScale,
+                offset: newOffset,
+              );
       } else {
+        final size = renderBox?.size ?? _lastRenderSize;
         _videoScale = newScale;
+        if (size != null) {
+          _videoOffset = clampVideoOffsetToBounds(
+            size: size,
+            scale: newScale,
+            offset: _videoOffset,
+          );
+        }
       }
 
       _lastPinchFocalPoint = _pinchFocalPoint;
@@ -1656,7 +1679,7 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                                                 .isNotEmpty) {
                                                               _resetTouchpadGestureState(
                                                                 lockSingleFinger:
-                                                                    true,
+                                                                    false,
                                                               );
                                                             }
                                                             if (_videoScale !=
@@ -1699,7 +1722,14 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer> {
                                                                   _videoOffset) {
                                                                 setState(() {
                                                                   _videoOffset =
-                                                                      adjusted;
+                                                                      clampVideoOffsetToBounds(
+                                                                    size:
+                                                                        newSize,
+                                                                    scale:
+                                                                        _videoScale,
+                                                                    offset:
+                                                                        adjusted,
+                                                                  );
                                                                 });
                                                               }
                                                             }

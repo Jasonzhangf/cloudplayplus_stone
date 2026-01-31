@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:async';
 
 import 'package:cloudplayplus/models/iterm2_panel.dart';
 import 'package:flutter/foundation.dart';
@@ -14,12 +15,17 @@ class RemoteIterm2Service {
   final ValueNotifier<String?> selectedSessionId = ValueNotifier<String?>(null);
   final ValueNotifier<bool> loading = ValueNotifier<bool>(false);
   final ValueNotifier<String?> error = ValueNotifier<String?>(null);
+  Timer? _timeoutTimer;
+  int _requestToken = 0;
 
   Future<void> requestPanels(RTCDataChannel? channel) async {
     if (channel == null || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
       error.value = 'DataChannel 未连接';
       return;
     }
+    _timeoutTimer?.cancel();
+    _requestToken++;
+    final token = _requestToken;
     loading.value = true;
     error.value = null;
     channel.send(
@@ -27,6 +33,12 @@ class RemoteIterm2Service {
         jsonEncode({'iterm2SourcesRequest': {}}),
       ),
     );
+    _timeoutTimer = Timer(const Duration(seconds: 3), () {
+      if (_requestToken != token) return;
+      if (!loading.value) return;
+      loading.value = false;
+      error.value = 'iTerm2 列表请求超时（请重试）';
+    });
   }
 
   Future<void> selectPanel(RTCDataChannel? channel, {required String sessionId}) async {
@@ -34,6 +46,7 @@ class RemoteIterm2Service {
       error.value = 'DataChannel 未连接';
       return;
     }
+    _timeoutTimer?.cancel();
     channel.send(
       RTCDataChannelMessage(
         jsonEncode({
@@ -48,6 +61,7 @@ class RemoteIterm2Service {
 
   void handleIterm2SourcesMessage(dynamic payload) {
     try {
+      _timeoutTimer?.cancel();
       final panelsAny = (payload is Map) ? payload['panels'] : null;
       final selectedAny = (payload is Map) ? payload['selectedSessionId'] : null;
       final errAny = (payload is Map) ? payload['error'] : null;

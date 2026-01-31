@@ -51,10 +51,12 @@ double computeRemoteVideoBottomPadding({
   // avoid pushing the stream content too far up (wasting viewport and bandwidth).
   final maxNoImePad = (mediaHeight * maxNoImeFraction).clamp(0.0, mediaHeight);
   final overlaySum = shortcutOverlayHeight + virtualKeyboardOverlayHeight;
-  final cappedOverlays =
-      (keyboardInset <= 0) ? overlaySum.clamp(0.0, maxNoImePad) : overlaySum;
+  final cappedOverlays = overlaySum.clamp(0.0, maxNoImePad);
 
-  final rawBottomPad = effectiveIme + cappedOverlays;
+  // When IME is visible, do not reserve additional overlay space: toolbars
+  // should float above the video instead of further shrinking the viewport.
+  final overlayPad = (keyboardInset > 0) ? 0.0 : cappedOverlays;
+  final rawBottomPad = effectiveIme + overlayPad;
 
   // Overflow protection: never shrink the video area to 0.
   final maxPad =

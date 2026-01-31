@@ -369,6 +369,7 @@ class StreamingSession {
         };*/
         } else {
           channel = newchannel;
+          WebrtcService.notifyDataChannelChanged();
           if (!useUnsafeDatachannel) {
             inputController = InputController(channel!, true, screenId);
             inputController?.setCaptureMapFromFrame(streamSettings?.windowFrame,
@@ -383,6 +384,7 @@ class StreamingSession {
           channel?.onDataChannelState = (state) async {
             VLOG0(
                 '[WebRTC] dataChannelState: ${controlled.websocketSessionid} label=${channel?.label} state=$state');
+            WebrtcService.notifyDataChannelChanged();
             if (state == RTCDataChannelState.RTCDataChannelOpen) {
               if (!_pingKickoffSent) {
                 await channel?.send(RTCDataChannelMessage.fromBinary(

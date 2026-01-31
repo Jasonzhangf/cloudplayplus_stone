@@ -28,10 +28,26 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
       _channel != null &&
       _channel!.state == RTCDataChannelState.RTCDataChannelOpen;
 
+  VoidCallback? _modeListener;
+  bool _didRefreshAfterChannelOpen = false;
+
   @override
   void initState() {
     super.initState();
+    _modeListener = () {
+      _refresh();
+    };
+    _quick.mode.addListener(_modeListener!);
     _refresh();
+  }
+
+  @override
+  void dispose() {
+    if (_modeListener != null) {
+      _quick.mode.removeListener(_modeListener!);
+      _modeListener = null;
+    }
+    super.dispose();
   }
 
   Future<void> _refresh() async {
@@ -194,37 +210,50 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
           ),
         ],
       ),
-      body: !_channelOpen
-          ? const Center(child: Text('未连接：请先建立串流连接'))
-          : ValueListenableBuilder<StreamMode>(
-              valueListenable: _quick.mode,
-              builder: (context, mode, _) {
-                switch (mode) {
-                  case StreamMode.desktop:
-                    return Center(
-                      child: ElevatedButton.icon(
-                        icon: const Icon(Icons.desktop_windows),
-                        label: const Text('切回整个桌面'),
-                        onPressed: () async {
-                          await _quick.applyTarget(
-                            _channel,
-                            const QuickStreamTarget(
-                              mode: StreamMode.desktop,
-                              id: 'screen',
-                              label: '整个桌面',
-                            ),
-                          );
-                          if (context.mounted) Navigator.pop(context);
-                        },
-                      ),
-                    );
-                  case StreamMode.window:
-                    return _buildWindowList();
-                  case StreamMode.iterm2:
-                    return _buildIterm2List();
-                }
-              },
-            ),
+      body: ValueListenableBuilder<int>(
+        valueListenable: WebrtcService.dataChannelRevision,
+        builder: (context, _, __) {
+          if (!_channelOpen) {
+            _didRefreshAfterChannelOpen = false;
+            return const Center(child: Text('连接未就绪：等待 DataChannel…'));
+          }
+          if (!_didRefreshAfterChannelOpen) {
+            _didRefreshAfterChannelOpen = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              _refresh();
+            });
+          }
+          return ValueListenableBuilder<StreamMode>(
+            valueListenable: _quick.mode,
+            builder: (context, mode, _) {
+              switch (mode) {
+                case StreamMode.desktop:
+                  return Center(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.desktop_windows),
+                      label: const Text('切回整个桌面'),
+                      onPressed: () async {
+                        await _quick.applyTarget(
+                          _channel,
+                          const QuickStreamTarget(
+                            mode: StreamMode.desktop,
+                            id: 'screen',
+                            label: '整个桌面',
+                          ),
+                        );
+                        if (context.mounted) Navigator.pop(context);
+                      },
+                    ),
+                  );
+                case StreamMode.window:
+                  return _buildWindowList();
+                case StreamMode.iterm2:
+                  return _buildIterm2List();
+              }
+            },
+          );
+        },
+      ),
     );
   }
 

@@ -134,4 +134,39 @@ void main() {
       expect(newContent.dy, closeTo(oldContent.dy, 0.0001));
     });
   });
+
+  group('video offset clamp', () {
+    test('clamps within bounds for zoomed content', () {
+      const size = Size(1000, 800);
+      const scale = 2.0;
+      // maxX = 500*(2-1)=500, maxY = 400*(2-1)=400
+      final clamped = clampVideoOffsetToBounds(
+        size: size,
+        scale: scale,
+        offset: const Offset(999, -999),
+      );
+      expect(clamped.dx, 500.0);
+      expect(clamped.dy, -400.0);
+    });
+
+    test('returns zero when scale ~ 1', () {
+      const size = Size(1000, 800);
+      expect(
+        clampVideoOffsetToBounds(
+          size: size,
+          scale: 1.0,
+          offset: const Offset(123, 456),
+        ),
+        Offset.zero,
+      );
+      expect(
+        clampVideoOffsetToBounds(
+          size: size,
+          scale: 1.0005,
+          offset: const Offset(123, 456),
+        ),
+        Offset.zero,
+      );
+    });
+  });
 }

@@ -7,6 +7,10 @@ import 'package:cloudplayplus/services/shared_preferences_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
+import 'package:cloudplayplus/services/lan/lan_address_service.dart';
+import 'package:cloudplayplus/services/lan/lan_connect_history_service.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:flutter/material.dart';
 import '../../../plugins/flutter_master_detail/flutter_master_detail.dart';
 import '../services/app_info_service.dart';
@@ -23,6 +27,7 @@ class DevicesPage extends StatefulWidget {
 class _DevicesPageState extends State<DevicesPage> {
   List<Device> _deviceList = defaultDeviceList;
   bool _autoRestoreAttempted = false;
+  final LanConnectHistoryService _lanHistory = LanConnectHistoryService.instance;
   void _openLanConnect() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const LanConnectPage()),
@@ -391,8 +396,17 @@ class _DevicesPageState extends State<DevicesPage> {
     Device data,
     bool isSelected,
   ) {
+    final showLan = (AppPlatform.isMobile || AppPlatform.isAndroidTV) &&
+        data.lanEnabled == true &&
+        data.lanAddrs.isNotEmpty;
+    final port = data.lanPort ?? kDefaultLanPort;
+    final rankedLanAddrs = showLan
+        ? LanAddressService.instance.rankHostsForConnect(data.lanAddrs)
+        : const <String>[];
+
     return ListTile(
       title: Text(data.devicename),
+      subtitle: showLan ? _buildLanAddrRow(rankedLanAddrs, port, data) : null,
       //subtitle: Text(data.devicetype),
       trailing: AppPlatform.isAndroidTV
           ? IconButton(
@@ -409,6 +423,181 @@ class _DevicesPageState extends State<DevicesPage> {
           //non-android TV
           : IconBuilder.findIconByName(data.devicetype),
       selected: isSelected,
+    );
+  }
+
+  Widget _buildLanAddrRow(List<String> addrs, int port, Device device) {
+    // Keep the list tile compact: show a few addresses, plus "更多".
+    final shown = addrs.take(3).toList(growable: false);
+    final hasMore = addrs.length > shown.length;
+
+    return SizedBox(
+      height: 30,
+      child: Row(
+        children: [
+          const Icon(Icons.wifi_tethering, size: 14),
+          const SizedBox(width: 6),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (final ip in shown) ...[
+                    _LanConnectChip(
+                      label: '$ip:$port',
+                      onPressed: () => _connectViaLan(host: ip, port: port, device: device),
+                    ),
+                    const SizedBox(width: 8),
+                  ],
+                  if (hasMore)
+                    _LanConnectChip(
+                      label: '更多(${addrs.length})',
+                      icon: Icons.more_horiz,
+                      onPressed: () => _showLanAddrPicker(addrs: addrs, port: port, device: device),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showLanAddrPicker({
+    required List<String> addrs,
+    required int port,
+    required Device device,
+  }) async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: ListView(
+            children: [
+              ListTile(
+                title: Text('选择 ${device.devicename} 的局域网地址'),
+                subtitle: const Text('优先选择可直连的 Tailscale / 局域网 IP'),
+              ),
+              for (final ip in addrs)
+                ListTile(
+                  leading: const Icon(Icons.wifi),
+                  title: Text('$ip:$port'),
+                  trailing: const Icon(Icons.play_arrow),
+                  onTap: () => Navigator.of(ctx).pop(ip),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null) return;
+    await _connectViaLan(host: picked, port: port, device: device);
+  }
+
+  Future<String?> _promptLanPassword() async {
+    final controller = TextEditingController(
+      text: StreamingSettings.connectPassword ?? '',
+    );
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('输入连接密码'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          decoration: const InputDecoration(
+            hintText: '与 Host 端一致',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text('连接'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _connectViaLan({
+    required String host,
+    required int port,
+    required Device device,
+  }) async {
+    try {
+      // Prefer saved password for this cloud device uid.
+      final saved =
+          SharedPreferencesManager.getString('connectPassword_${device.uid}') ??
+              '';
+      String password = saved.isNotEmpty ? saved : (StreamingSettings.connectPassword ?? '');
+      if (password.isEmpty) {
+        final picked = await _promptLanPassword();
+        if (picked == null) return;
+        password = picked;
+      }
+
+      final target = await LanSignalingClient.instance.connectAndStartStreaming(
+        host: host,
+        port: port,
+        connectPassword: password,
+      );
+      if (target == null) {
+        if (!mounted) return;
+        final err = LanSignalingClient.instance.error.value ?? 'LAN 连接失败';
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+        return;
+      }
+
+      await _lanHistory.recordSuccess(
+        host: host,
+        port: port,
+        aliasHint: device.devicename,
+      );
+
+      if (!mounted) return;
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('LAN 连接失败：$e')));
+    }
+  }
+}
+
+class _LanConnectChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final VoidCallback onPressed;
+
+  const _LanConnectChip({
+    required this.label,
+    this.icon = Icons.play_arrow,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return OutlinedButton.icon(
+      onPressed: onPressed,
+      icon: Icon(icon, size: 14),
+      label: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 12),
+      ),
+      style: OutlinedButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        minimumSize: const Size(0, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      ),
     );
   }
 }

@@ -115,3 +115,28 @@ Offset adjustVideoOffsetForRenderSizeChangeAnchoredTopLeft({
   );
   return oldOffset + (deltaCenter * (scale - 1));
 }
+
+/// Clamp video translation so the zoomed content stays reachable.
+///
+/// Coordinate model (matches `_calculatePositionPercent` in renderer):
+/// viewPos = center + (contentPos - center) * scale + offset
+///
+/// For scale > 1, the allowed translation range that keeps the content covering
+/// the viewport is `[-half*(scale-1), +half*(scale-1)]` per axis.
+@visibleForTesting
+Offset clampVideoOffsetToBounds({
+  required Size size,
+  required double scale,
+  required Offset offset,
+}) {
+  if (scale <= 1.001) return Offset.zero;
+  final s = scale.clamp(1.0, 1000.0);
+  final halfW = size.width / 2;
+  final halfH = size.height / 2;
+  final maxX = halfW * (s - 1);
+  final maxY = halfH * (s - 1);
+  return Offset(
+    offset.dx.clamp(-maxX, maxX).toDouble(),
+    offset.dy.clamp(-maxY, maxY).toDouble(),
+  );
+}

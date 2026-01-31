@@ -14,6 +14,8 @@ class WebrtcService {
   static String currentDeviceId = "";
   static final ValueNotifier<int> videoRevision = ValueNotifier<int>(0);
   static final ValueNotifier<int> audioRevision = ValueNotifier<int>(0);
+  // Bumps whenever the active DataChannel reference/state may have changed.
+  static final ValueNotifier<int> dataChannelRevision = ValueNotifier<int>(0);
   // Host-side encoder target state (bitrate/fps/mode), reported via DataChannel.
   static final ValueNotifier<Map<String, dynamic>?> hostEncodingStatus =
       ValueNotifier<Map<String, dynamic>?>(null);
@@ -34,6 +36,10 @@ class WebrtcService {
       return StreamingManager.sessions.values.first.channel;
     }
     return null;
+  }
+
+  static void notifyDataChannelChanged() {
+    dataChannelRevision.value++;
   }
 
   //seems we dont need to actually render audio on page.

@@ -1,6 +1,7 @@
 import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
+import 'package:cloudplayplus/services/lan/lan_connect_history_service.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:cloudplayplus/services/shared_preferences_manager.dart';
 import 'package:cloudplayplus/utils/widgets/device_tile_page.dart';
@@ -15,8 +16,7 @@ class LanConnectPage extends StatefulWidget {
 }
 
 class _LanConnectPageState extends State<LanConnectPage> {
-  static const _kLastHost = 'lan.lastHost.v1';
-  static const _kLastPort = 'lan.lastPort.v1';
+  final LanConnectHistoryService _history = LanConnectHistoryService.instance;
 
   late final TextEditingController _hostController;
   late final TextEditingController _portController;
@@ -24,13 +24,14 @@ class _LanConnectPageState extends State<LanConnectPage> {
 
   bool _connecting = false;
   String? _error;
+  List<LanConnectEntry> _entries = const [];
 
   @override
   void initState() {
     super.initState();
 
-    final lastHost = SharedPreferencesManager.getString(_kLastHost) ?? '';
-    final lastPort = SharedPreferencesManager.getInt(_kLastPort) ?? kDefaultLanPort;
+    final lastHost = _history.getLastHost() ?? '';
+    final lastPort = _history.getLastPort(kDefaultLanPort);
 
     if (AppPlatform.isAndroidTV) {
       _hostController = NativeTextFieldController(text: lastHost);
@@ -42,6 +43,8 @@ class _LanConnectPageState extends State<LanConnectPage> {
       _passwordController =
           TextEditingController(text: StreamingSettings.connectPassword ?? '');
     }
+
+    _loadHistory();
   }
 
   @override
@@ -50,6 +53,40 @@ class _LanConnectPageState extends State<LanConnectPage> {
     _portController.dispose();
     _passwordController.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadHistory() async {
+    final list = await _history.load();
+    if (!mounted) return;
+    setState(() {
+      _entries = list;
+    });
+  }
+
+  Future<String?> _promptAlias(LanConnectEntry e) async {
+    final controller = TextEditingController(text: e.alias ?? '');
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('改名'),
+        content: TextField(
+          controller: controller,
+          decoration: const InputDecoration(
+            hintText: '例如：家里 Mac / 办公室 Host（可留空）',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text.trim()),
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _connect() async {
@@ -79,11 +116,6 @@ class _LanConnectPageState extends State<LanConnectPage> {
     }
 
     try {
-      await SharedPreferencesManager.setString(_kLastHost, host);
-      await SharedPreferencesManager.setInt(_kLastPort, port);
-    } catch (_) {}
-
-    try {
       final target = await LanSignalingClient.instance.connectAndStartStreaming(
         host: host,
         port: port,
@@ -97,6 +129,10 @@ class _LanConnectPageState extends State<LanConnectPage> {
         return;
       }
 
+      // Only persist "last" and history after a successful connection.
+      await _history.recordSuccess(host: host, port: port);
+      await _loadHistory();
+
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
@@ -109,8 +145,16 @@ class _LanConnectPageState extends State<LanConnectPage> {
     }
   }
 
+  Future<void> _connectEntry(LanConnectEntry e) async {
+    _hostController.text = e.host;
+    _portController.text = e.port.toString();
+    await _connect();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final favorites = _entries.where((e) => e.favorite).toList(growable: false);
+    final history = _entries.where((e) => !e.favorite).toList(growable: false);
     return Scaffold(
       appBar: AppBar(title: const Text('局域网连接')),
       body: SafeArea(
@@ -173,10 +217,85 @@ class _LanConnectPageState extends State<LanConnectPage> {
                     )
                   : const Text('连接'),
             ),
+            const SizedBox(height: 18),
+            if (favorites.isNotEmpty) ...[
+              const Text('收藏夹', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              for (final e in favorites)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.star, color: Colors.amber),
+                    title: Text(e.displayName),
+                    subtitle: Text('${e.host}:${e.port}'),
+                    trailing: IconButton(
+                      tooltip: '连接',
+                      icon: const Icon(Icons.play_arrow),
+                      onPressed: _connecting ? null : () => _connectEntry(e),
+                    ),
+                    onLongPress: () async {
+                      final alias = await _promptAlias(e);
+                      if (alias == null) return;
+                      await _history.rename(
+                        host: e.host,
+                        port: e.port,
+                        alias: alias.isEmpty ? null : alias,
+                      );
+                      await _loadHistory();
+                    },
+                  ),
+                ),
+              const SizedBox(height: 12),
+            ],
+            if (history.isNotEmpty) ...[
+              const Text('历史（成功连接）', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              for (final e in history)
+                Card(
+                  child: ListTile(
+                    leading: const Icon(Icons.history),
+                    title: Text(e.displayName),
+                    subtitle: Text('${e.host}:${e.port} · ${e.successCount}次'),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          tooltip: e.favorite ? '取消收藏' : '收藏',
+                          icon: Icon(
+                            e.favorite ? Icons.star : Icons.star_border,
+                            color: Colors.amber,
+                          ),
+                          onPressed: () async {
+                            await _history.toggleFavorite(
+                              host: e.host,
+                              port: e.port,
+                            );
+                            await _loadHistory();
+                          },
+                        ),
+                        IconButton(
+                          tooltip: '连接',
+                          icon: const Icon(Icons.play_arrow),
+                          onPressed:
+                              _connecting ? null : () => _connectEntry(e),
+                        ),
+                      ],
+                    ),
+                    onLongPress: () async {
+                      final alias = await _promptAlias(e);
+                      if (alias == null) return;
+                      await _history.rename(
+                        host: e.host,
+                        port: e.port,
+                        alias: alias.isEmpty ? null : alias,
+                      );
+                      await _loadHistory();
+                    },
+                  ),
+                ),
+            ],
           ],
         ),
       ),
     );
   }
 }
-
