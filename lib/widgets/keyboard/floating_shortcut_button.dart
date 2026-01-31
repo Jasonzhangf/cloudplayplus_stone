@@ -208,7 +208,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     }
 
     final currentId = windows.selectedScreenSourceId.value ??
-        WebrtcService.currentRenderingSession?.streamSettings?.desktopSourceId ??
+        WebrtcService
+            .currentRenderingSession?.streamSettings?.desktopSourceId ??
         '';
     int idx = screens.indexWhere((s) => s.id == currentId);
     if (idx < 0) idx = 0;
@@ -488,7 +489,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     ScreenController.setShowVirtualKeyboard(false);
                     FocusScope.of(context)
                         .requestFocus(_systemKeyboardFocusNode);
-                      SystemChannels.textInput.invokeMethod('TextInput.show');
+                    SystemChannels.textInput.invokeMethod('TextInput.show');
                   },
                   onDisconnect: () async {
                     final session = WebrtcService.currentRenderingSession;
@@ -650,10 +651,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       }
     }
 
-    final settingsWithoutArrows = _settings.copyWith(
-      shortcuts:
-          _settings.shortcuts.where((s) => !_arrowIds.contains(s.id)).toList(),
-    );
     final session = WebrtcService.currentRenderingSession;
     final channel = WebrtcService.activeDataChannel;
     final hasSession = session != null || channel != null;
@@ -750,13 +747,15 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                               ),
                               const SizedBox(width: 8),
                               ShortcutBar(
-                                settings: settingsWithoutArrows,
+                                settings: _settings,
                                 onSettingsChanged: _handleSettingsChanged,
                                 onShortcutPressed: _handleShortcutPressed,
                                 showSettingsButton: false,
                                 showBackground: false,
                                 padding: EdgeInsets.zero,
                                 scrollable: false,
+                                hiddenShortcutIds: _arrowIds,
+                                showAddButton: true,
                               ),
                               const SizedBox(width: 16),
                             ],
@@ -932,8 +931,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: ElevatedButton(
-                              onPressed: () =>
-                                  Navigator.pop(context, controller.text.trim()),
+                              onPressed: () => Navigator.pop(
+                                  context, controller.text.trim()),
                               child: const Text('保存'),
                             ),
                           ),
@@ -1510,7 +1509,8 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   title: const Text('编码模式'),
-                  subtitle: const Text('高质量：按分辨率固定码率；动态：根据帧率/RTT自适应；关闭：不发送自适应反馈'),
+                  subtitle:
+                      const Text('高质量：按分辨率固定码率；动态：根据帧率/RTT自适应；关闭：不发送自适应反馈'),
                   trailing: DropdownButtonHideUnderline(
                     child: DropdownButton<EncodingMode>(
                       value: _encodingMode,

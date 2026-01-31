@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/shortcut.dart';
+import '../../pages/custom_shortcut_page.dart';
+import '../../utils/shortcut/shortcut_order_utils.dart';
 
 /// 快捷键条组件
 class ShortcutBar extends StatefulWidget {
@@ -21,6 +23,12 @@ class ShortcutBar extends StatefulWidget {
   /// Whether to wrap the row with a horizontal scroller.
   final bool scrollable;
 
+  /// Hide specific shortcuts from rendering (keeps them in settings/order).
+  final Set<String> hiddenShortcutIds;
+
+  /// Show a trailing "+" button to add custom shortcuts.
+  final bool showAddButton;
+
   /// 设置变化回调
   final ValueChanged<ShortcutSettings> onSettingsChanged;
 
@@ -36,6 +44,8 @@ class ShortcutBar extends StatefulWidget {
     this.showBackground = true,
     this.padding = const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
     this.scrollable = true,
+    this.hiddenShortcutIds = const {},
+    this.showAddButton = false,
   });
 
   @override
@@ -44,6 +54,34 @@ class ShortcutBar extends StatefulWidget {
 
 class _ShortcutBarState extends State<ShortcutBar> {
   final ScrollController _scrollController = ScrollController();
+
+  Future<void> _openAddShortcutPage() async {
+    final created = await Navigator.of(context).push<ShortcutItem?>(
+      MaterialPageRoute(
+        builder: (_) => CustomShortcutPage(
+          platform: widget.settings.currentPlatform,
+        ),
+      ),
+    );
+    if (created == null) return;
+
+    final maxOrder = widget.settings.shortcuts.isEmpty
+        ? 0
+        : widget.settings.shortcuts
+            .map((s) => s.order)
+            .reduce((a, b) => a > b ? a : b);
+    final updated = [
+      ...widget.settings.shortcuts,
+      created.copyWith(order: maxOrder + 1),
+    ]..sort((a, b) => a.order.compareTo(b.order));
+
+    final renumbered = <ShortcutItem>[];
+    for (int i = 0; i < updated.length; i++) {
+      renumbered.add(updated[i].copyWith(order: i + 1));
+    }
+
+    widget.onSettingsChanged(widget.settings.copyWith(shortcuts: renumbered));
+  }
 
   @override
   void dispose() {
@@ -66,7 +104,9 @@ class _ShortcutBarState extends State<ShortcutBar> {
 
   @override
   Widget build(BuildContext context) {
-    final shortcuts = widget.settings.enabledShortcuts;
+    final shortcuts = widget.settings.enabledShortcuts
+        .where((s) => !widget.hiddenShortcutIds.contains(s.id))
+        .toList();
     final arrowIds = {'arrow-left', 'arrow-right', 'arrow-up', 'arrow-down'};
     final arrowShortcuts = <String, ShortcutItem>{
       for (final s in shortcuts)
@@ -98,6 +138,14 @@ class _ShortcutBarState extends State<ShortcutBar> {
           arrowShortcuts,
           insertIndex,
         ),
+        if (widget.showAddButton) ...[
+          const SizedBox(width: 8),
+          _ShortcutButton(
+            label: '+',
+            isSettings: true,
+            onPressed: _openAddShortcutPage,
+          ),
+        ],
       ],
     );
 
@@ -192,8 +240,157 @@ class _ShortcutBarState extends State<ShortcutBar> {
         label: shortcut.label,
         repeatable: repeatable,
         onPressed: () => widget.onShortcutPressed(shortcut),
+        onLongPress: repeatable ? null : () => _openShortcutEditMenu(shortcut),
       ),
     );
+  }
+
+  Future<void> _openShortcutEditMenu(ShortcutItem shortcut) async {
+    final visible = widget.settings.enabledShortcuts
+        .where((s) => !widget.hiddenShortcutIds.contains(s.id))
+        .where((s) => s.id != 'arrow-left' && s.id != 'arrow-right')
+        .where((s) => s.id != 'arrow-up' && s.id != 'arrow-down')
+        .toList()
+      ..sort((a, b) => a.order.compareTo(b.order));
+
+    final visibleIds = visible.map((s) => s.id).toSet();
+    final idx = visible.indexWhere((s) => s.id == shortcut.id);
+    if (idx < 0) return;
+
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return SafeArea(
+          child: Container(
+            margin: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: Colors.black.withValues(alpha: 0.92),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: Colors.white.withValues(alpha: 0.12)),
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ListTile(
+                  title: Text(
+                    shortcut.label,
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.92),
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  subtitle: Text(
+                    formatShortcutKeys(shortcut.keys),
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.6),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                const Divider(height: 1),
+                ListTile(
+                  enabled: idx > 0,
+                  leading: const Icon(Icons.chevron_left, color: Colors.white),
+                  title:
+                      const Text('左移', style: TextStyle(color: Colors.white)),
+                  onTap: idx <= 0
+                      ? null
+                      : () {
+                          final updated = reorderShortcutsPreservingHiddenSlots(
+                            shortcuts: widget.settings.shortcuts,
+                            visibleIds: visibleIds,
+                            oldVisibleIndex: idx,
+                            newVisibleIndex: idx - 1,
+                          );
+                          widget.onSettingsChanged(
+                            widget.settings.copyWith(shortcuts: updated),
+                          );
+                          Navigator.pop(context);
+                        },
+                ),
+                ListTile(
+                  enabled: idx < visible.length - 1,
+                  leading: const Icon(Icons.chevron_right, color: Colors.white),
+                  title:
+                      const Text('右移', style: TextStyle(color: Colors.white)),
+                  onTap: idx >= visible.length - 1
+                      ? null
+                      : () {
+                          // Move right by one "final position". With reorder
+                          // semantics, we need to insert at idx+2.
+                          final updated = reorderShortcutsPreservingHiddenSlots(
+                            shortcuts: widget.settings.shortcuts,
+                            visibleIds: visibleIds,
+                            oldVisibleIndex: idx,
+                            newVisibleIndex: idx + 2,
+                          );
+                          widget.onSettingsChanged(
+                            widget.settings.copyWith(shortcuts: updated),
+                          );
+                          Navigator.pop(context);
+                        },
+                ),
+                ListTile(
+                  leading: const Icon(Icons.edit, color: Colors.white),
+                  title:
+                      const Text('改名', style: TextStyle(color: Colors.white)),
+                  onTap: () async {
+                    Navigator.pop(context);
+                    final renamed = await _promptRename(shortcut.label);
+                    if (renamed == null) return;
+                    final updated = widget.settings.shortcuts.map((s) {
+                      if (s.id == shortcut.id) {
+                        return s.copyWith(label: renamed);
+                      }
+                      return s;
+                    }).toList();
+                    widget.onSettingsChanged(
+                      widget.settings.copyWith(shortcuts: updated),
+                    );
+                  },
+                ),
+                const SizedBox(height: 8),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<String?> _promptRename(String initial) async {
+    final controller = TextEditingController(text: initial);
+    final res = await showDialog<String?>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('改名'),
+          content: TextField(
+            controller: controller,
+            maxLength: 5,
+            decoration: const InputDecoration(
+              hintText: '最多 5 个字',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('取消'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('确定'),
+            ),
+          ],
+        );
+      },
+    );
+    if (res == null) return null;
+    final trimmed = res.trim();
+    if (trimmed.isEmpty) return null;
+    return trimmed;
   }
 }
 
@@ -204,6 +401,7 @@ class _ShortcutButton extends StatefulWidget {
   final bool isSettings;
   final bool repeatable;
   final VoidCallback onPressed;
+  final VoidCallback? onLongPress;
 
   const _ShortcutButton({
     this.label,
@@ -211,6 +409,7 @@ class _ShortcutButton extends StatefulWidget {
     this.isSettings = false,
     this.repeatable = false,
     required this.onPressed,
+    this.onLongPress,
   });
 
   @override
@@ -266,6 +465,7 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
+      onLongPress: widget.onLongPress,
       onTapDown: _handleTapDown,
       onTapUp: _handleTapUp,
       onTapCancel: _handleTapCancel,
@@ -480,103 +680,29 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
     widget.onSettingsChanged(_settings);
   }
 
-  void _showAddShortcutSheet() {
-    // UI-only placeholder for now.
-    showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return Container(
-          height: MediaQuery.of(context).size.height * 0.85,
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-          ),
-          child: Column(
-            children: [
-              // Top drag indicator
-              Container(
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade300,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: Row(
-                  children: [
-                    IconButton(
-                      icon: const Icon(Icons.arrow_back),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                    const Expanded(
-                      child: Center(
-                        child: Text(
-                          '添加快捷键',
-                          style: TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 8),
-              // Tabs (visual)
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16),
-                child: SegmentedButton<int>(
-                  segments: const [
-                    ButtonSegment<int>(value: 0, label: Text('键盘按键')),
-                    ButtonSegment<int>(value: 1, label: Text('系统操作')),
-                  ],
-                  selected: const {0},
-                  showSelectedIcon: false,
-                  onSelectionChanged: (_) {},
-                  style: ButtonStyle(
-                    visualDensity: VisualDensity.compact,
-                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                  ),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Expanded(
-                child: Center(
-                  child: Text(
-                    'TODO: 下一步实现“添加快捷键”逻辑（按键选择/系统操作）',
-                    style: TextStyle(color: Colors.grey),
-                  ),
-                ),
-              ),
-              SafeArea(
-                top: false,
-                child: Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: SizedBox(
-                    width: double.infinity,
-                    height: 48,
-                    child: ElevatedButton(
-                      onPressed: null,
-                      child: const Text('添加'),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        );
-      },
+  Future<void> _openAddShortcutPage() async {
+    final created = await Navigator.of(context).push<ShortcutItem?>(
+      MaterialPageRoute(
+        builder: (_) => CustomShortcutPage(platform: _settings.currentPlatform),
+      ),
     );
+    if (created == null) return;
+
+    final maxOrder = _settings.shortcuts.isEmpty
+        ? 0
+        : _settings.shortcuts
+            .map((s) => s.order)
+            .reduce((a, b) => a > b ? a : b);
+    final updated = [
+      ..._settings.shortcuts,
+      created.copyWith(order: maxOrder + 1),
+    ]..sort((a, b) => a.order.compareTo(b.order));
+
+    final renumbered = <ShortcutItem>[];
+    for (int i = 0; i < updated.length; i++) {
+      renumbered.add(updated[i].copyWith(order: i + 1));
+    }
+    _updateSettings(_settings.copyWith(shortcuts: renumbered));
   }
 
   @override
@@ -645,7 +771,7 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                 ),
                 IconButton(
                   tooltip: '添加快捷键',
-                  onPressed: _showAddShortcutSheet,
+                  onPressed: _openAddShortcutPage,
                   icon: const Icon(Icons.add_circle_outline),
                 ),
                 IconButton(
@@ -678,6 +804,7 @@ class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
                   child: _ShortcutTile(
                     shortcut: shortcut,
                     reorderMode: _reorderMode,
+                    index: index,
                     onToggle: () {},
                     onDragHandle: () {
                       setState(() {
@@ -702,12 +829,14 @@ class _ShortcutTile extends StatelessWidget {
   final ShortcutItem shortcut;
   final VoidCallback onToggle;
   final bool reorderMode;
+  final int index;
   final VoidCallback? onDragHandle;
 
   const _ShortcutTile({
     required this.shortcut,
     required this.onToggle,
     this.reorderMode = false,
+    required this.index,
     this.onDragHandle,
   });
 
@@ -750,7 +879,7 @@ class _ShortcutTile extends StatelessWidget {
             ),
             // 右侧：默认是开关；长按/进入编辑后显示排序把手
             ReorderableDragStartListener(
-              index: shortcut.order - 1,
+              index: index,
               enabled: reorderMode,
               child: Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 8),
