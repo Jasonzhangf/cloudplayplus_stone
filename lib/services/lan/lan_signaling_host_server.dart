@@ -27,7 +27,7 @@ class LanSignalingHostServer {
   final ValueNotifier<int> port = ValueNotifier<int>(kDefaultLanPort);
   final ValueNotifier<String> hostId = ValueNotifier<String>('');
 
-  HttpServer? _server;
+  final List<HttpServer> _servers = <HttpServer>[];
   final Map<String, WebSocket> _clientsById = <String, WebSocket>{};
   final Map<WebSocket, String> _idsByClient = <WebSocket, String>{};
 
@@ -39,7 +39,8 @@ class LanSignalingHostServer {
     final p = SharedPreferencesManager.getInt(_kPort);
     port.value = (p ?? kDefaultLanPort).clamp(1024, 65535);
     final hid = SharedPreferencesManager.getString(_kHostId);
-    hostId.value = (hid != null && hid.isNotEmpty) ? hid : randomLanId('lan-host');
+    hostId.value =
+        (hid != null && hid.isNotEmpty) ? hid : randomLanId('lan-host');
     await SharedPreferencesManager.setString(_kHostId, hostId.value);
   }
 
@@ -57,7 +58,7 @@ class LanSignalingHostServer {
     final v = p.clamp(1024, 65535);
     port.value = v;
     await SharedPreferencesManager.setInt(_kPort, v);
-    if (_server != null) {
+    if (_servers.isNotEmpty) {
       await stop();
       await startIfPossible();
     }
@@ -66,14 +67,15 @@ class LanSignalingHostServer {
   Future<void> startIfPossible() async {
     if (!AppPlatform.isDeskTop) return;
     if (!enabled.value) return;
-    if (_server != null) return;
+    if (_servers.isNotEmpty) return;
     await init();
     await _start();
   }
 
   bool hasClient(String connectionId) => _clientsById.containsKey(connectionId);
 
-  void sendToClient(String connectionId, String event, Map<String, dynamic> data) {
+  void sendToClient(
+      String connectionId, String event, Map<String, dynamic> data) {
     final ws = _clientsById[connectionId];
     if (ws == null) return;
     try {
@@ -90,20 +92,48 @@ class LanSignalingHostServer {
       }
       _clientsById.clear();
       _idsByClient.clear();
-      await _server?.close(force: true);
-      _server = null;
+      for (final s in _servers) {
+        try {
+          await s.close(force: true);
+        } catch (_) {}
+      }
+      _servers.clear();
     } catch (_) {}
   }
 
   Future<void> _start() async {
     final listenPort = port.value;
     try {
-      _server = await HttpServer.bind(InternetAddress.anyIPv4, listenPort);
-      VLOG0('[lan] host server listening on 0.0.0.0:$listenPort hostId=${hostId.value}');
-      unawaited(_serveLoop(_server!));
+      HttpServer? serverV6;
+      HttpServer? serverV4;
+      try {
+        serverV6 = await HttpServer.bind(InternetAddress.anyIPv6, listenPort);
+        _servers.add(serverV6);
+        VLOG0(
+            '[lan] host server listening on [::]:$listenPort hostId=${hostId.value}');
+        unawaited(_serveLoop(serverV6));
+      } catch (e) {
+        VLOG0('[lan] host server failed to bind IPv6 port=$listenPort err=$e');
+      }
+
+      try {
+        serverV4 = await HttpServer.bind(InternetAddress.anyIPv4, listenPort);
+        _servers.add(serverV4);
+        VLOG0(
+            '[lan] host server listening on 0.0.0.0:$listenPort hostId=${hostId.value}');
+        unawaited(_serveLoop(serverV4));
+      } catch (e) {
+        // If IPv6 bind already created a dual-stack socket, IPv4 bind can fail.
+        VLOG0('[lan] host server failed to bind IPv4 port=$listenPort err=$e');
+      }
+
+      if (_servers.isEmpty) {
+        VLOG0(
+            '[lan] host server failed to start on port=$listenPort (no listeners)');
+      }
     } catch (e) {
       VLOG0('[lan] host server failed to start on port=$listenPort err=$e');
-      _server = null;
+      _servers.clear();
     }
   }
 
@@ -167,7 +197,8 @@ class LanSignalingHostServer {
 
     if (type == 'lanHello') {
       final clientId = (data['clientConnectionId'] ?? '').toString();
-      final chosenId = clientId.isNotEmpty ? clientId : randomLanId('lan-client');
+      final chosenId =
+          clientId.isNotEmpty ? clientId : randomLanId('lan-client');
       _clientsById[chosenId] = ws;
       _idsByClient[ws] = chosenId;
       try {
@@ -193,8 +224,7 @@ class LanSignalingHostServer {
       if (requesterAny is! Map || settingsAny is! Map) return;
       final requesterInfo =
           requesterAny.map((k, v) => MapEntry(k.toString(), v));
-      final settings =
-          settingsAny.map((k, v) => MapEntry(k.toString(), v));
+      final settings = settingsAny.map((k, v) => MapEntry(k.toString(), v));
 
       final requester = Device.fromJson(requesterInfo);
       final streamed = StreamedSettings.fromJson(settings);
@@ -245,5 +275,32 @@ class LanSignalingHostServer {
 
     // Unknown: ignore.
   }
-}
 
+  Future<List<String>> listLocalIpAddressesForDisplay() async {
+    final out = <String>{};
+    try {
+      final ifaces = await NetworkInterface.list(
+        includeLoopback: false,
+        includeLinkLocal: true,
+        type: InternetAddressType.any,
+      );
+      for (final iface in ifaces) {
+        for (final addr in iface.addresses) {
+          final ip = addr.address;
+          if (ip == '127.0.0.1' || ip == '::1') continue;
+          if (ip.isEmpty) continue;
+          out.add(ip);
+        }
+      }
+    } catch (_) {}
+
+    final list = out.toList(growable: false);
+    list.sort((a, b) {
+      final aIsV4 = a.contains('.') && !a.contains(':');
+      final bIsV4 = b.contains('.') && !b.contains(':');
+      if (aIsV4 != bIsV4) return aIsV4 ? -1 : 1;
+      return a.compareTo(b);
+    });
+    return list;
+  }
+}

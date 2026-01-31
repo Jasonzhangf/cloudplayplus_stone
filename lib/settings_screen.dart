@@ -10,6 +10,8 @@ import 'package:cloudplayplus/services/app_info_service.dart';
 import 'package:cloudplayplus/services/login_service.dart';
 import 'package:cloudplayplus/services/secure_storage_manager.dart';
 import 'package:cloudplayplus/services/websocket_service.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_host_server_platform.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 // import 'package:cloudplayplus/utils/widgets/text_field_wrapper.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -779,6 +781,12 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
   String customTurnServerUsername = "";
   String customTurnServerPassword = "";
 
+  // Desktop LAN host settings
+  bool _lanEnabled = true;
+  int _lanPort = kDefaultLanPort;
+  String _lanHostId = '';
+  Future<List<String>>? _lanIpsFuture;
+
   final FocusNode _addressfocusNode = FocusNode();
   final FocusNode _usernamefocusNode = FocusNode();
   final FocusNode _passwordfocusNode = FocusNode();
@@ -845,6 +853,18 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
     _addressController.text = customTurnServerAddress;
     _usernameController.text = customTurnServerUsername;
     _passwordController.text = customTurnServerPassword;
+
+    if (AppPlatform.isDeskTop) {
+      try {
+        await LanSignalingHostServer.instance.init();
+        _lanEnabled = LanSignalingHostServer.instance.enabled.value;
+        _lanPort = LanSignalingHostServer.instance.port.value;
+        _lanHostId = LanSignalingHostServer.instance.hostId.value;
+        _lanIpsFuture =
+            LanSignalingHostServer.instance.listLocalIpAddressesForDisplay();
+      } catch (_) {}
+    }
+    if (mounted) setState(() {});
   }
 
   Future<void> _saveTurnConfig(BuildContext context) async {
@@ -899,6 +919,122 @@ class _NetworkSettingsScreenState extends State<NetworkSettingsScreen> {
           applicationType: ApplicationType.cupertino,
           //platform: DevicePlatform.iOS,
           sections: [
+            if (AppPlatform.isDeskTop)
+              SettingsSection(
+                title: const Text('局域网连接 (LAN / Tailscale)'),
+                tiles: [
+                  SettingsTile.switchTile(
+                    title: const Text('允许局域网连接'),
+                    leading: const Icon(Icons.wifi_tethering),
+                    initialValue: _lanEnabled,
+                    onToggle: (bool value) async {
+                      await LanSignalingHostServer.instance.setEnabled(value);
+                      setState(() {
+                        _lanEnabled = value;
+                        _lanPort = LanSignalingHostServer.instance.port.value;
+                        _lanHostId =
+                            LanSignalingHostServer.instance.hostId.value;
+                        _lanIpsFuture = LanSignalingHostServer.instance
+                            .listLocalIpAddressesForDisplay();
+                      });
+                    },
+                  ),
+                  SettingsTile(
+                    title: const Text('端口'),
+                    leading: const Icon(Icons.numbers),
+                    trailing: Material(child: Text('$_lanPort')),
+                    onPressed: (BuildContext context) async {
+                      final c =
+                          TextEditingController(text: _lanPort.toString());
+                      final p = await showDialog<int>(
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                          title: const Text('设置 LAN 端口'),
+                          content: TextField(
+                            controller: c,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(
+                              hintText: '1024 ~ 65535（默认 17999）',
+                            ),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(ctx).pop(),
+                              child: const Text('取消'),
+                            ),
+                            TextButton(
+                              onPressed: () {
+                                final v = int.tryParse(c.text.trim());
+                                Navigator.of(ctx).pop(v);
+                              },
+                              child: const Text('确定'),
+                            ),
+                          ],
+                        ),
+                      );
+                      if (p == null) return;
+                      await LanSignalingHostServer.instance.setPort(p);
+                      setState(() {
+                        _lanPort = LanSignalingHostServer.instance.port.value;
+                        _lanIpsFuture = LanSignalingHostServer.instance
+                            .listLocalIpAddressesForDisplay();
+                      });
+                    },
+                  ),
+                  SettingsTile(
+                    title: const Text('Host ID'),
+                    leading: const Icon(Icons.fingerprint),
+                    trailing: Material(
+                      child: Text(
+                        _lanHostId.isEmpty ? '—' : _lanHostId,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  CustomSettingsTile(
+                    child: Material(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            const Text(
+                              '可用 IP 地址（在手机端输入其中一个）',
+                              style: TextStyle(fontWeight: FontWeight.bold),
+                            ),
+                            const SizedBox(height: 8),
+                            FutureBuilder<List<String>>(
+                              future: _lanIpsFuture ??
+                                  LanSignalingHostServer.instance
+                                      .listLocalIpAddressesForDisplay(),
+                              builder: (context, snap) {
+                                final ips = snap.data ?? const <String>[];
+                                if (snap.connectionState ==
+                                    ConnectionState.waiting) {
+                                  return const Text('正在获取…');
+                                }
+                                if (ips.isEmpty) {
+                                  return const Text('未检测到可用 IP（检查网络/权限）。');
+                                }
+                                return Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    for (final ip in ips)
+                                      SelectableText(
+                                        '$ip:$_lanPort',
+                                        style: const TextStyle(fontSize: 13),
+                                      ),
+                                  ],
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
             SettingsSection(
               title: const Text('键鼠/手柄指令重发次数(如果网络环境导致输入操作有延迟，但画面流畅，可提高此值)'),
               tiles: [

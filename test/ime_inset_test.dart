@@ -2,7 +2,9 @@ import 'package:cloudplayplus/utils/input/ime_inset.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  test('computeEffectiveKeyboardInset avoids double applying when already resized', () {
+  test(
+      'computeEffectiveKeyboardInset avoids double applying when already resized',
+      () {
     // Media height 800, keyboard 300 => expected resized height 500.
     expect(
       computeEffectiveKeyboardInset(
@@ -33,5 +35,42 @@ void main() {
       0.0,
     );
   });
-}
 
+  test('computeRemoteVideoBottomPadding caps shortcut pad when IME hidden', () {
+    // No IME => cap shortcut overlay to 15% of 800 = 120.
+    expect(
+      computeRemoteVideoBottomPadding(
+        mediaHeight: 800,
+        constraintsHeight: 800,
+        keyboardInset: 0,
+        shortcutOverlayHeight: 260,
+        virtualKeyboardOverlayHeight: 0,
+      ),
+      120.0,
+    );
+
+    // When IME shows (not already resized), we add full IME height + overlays.
+    expect(
+      computeRemoteVideoBottomPadding(
+        mediaHeight: 800,
+        constraintsHeight: 800,
+        keyboardInset: 300,
+        shortcutOverlayHeight: 100,
+        virtualKeyboardOverlayHeight: 40,
+      ),
+      440.0,
+    );
+
+    // If Scaffold already resized (constraints already excluded IME), IME pad is 0.
+    expect(
+      computeRemoteVideoBottomPadding(
+        mediaHeight: 800,
+        constraintsHeight: 500,
+        keyboardInset: 300,
+        shortcutOverlayHeight: 100,
+        virtualKeyboardOverlayHeight: 40,
+      ),
+      140.0,
+    );
+  });
+}

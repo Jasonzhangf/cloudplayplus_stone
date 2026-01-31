@@ -2,7 +2,7 @@ import 'dart:io' if (dart.library.js) 'utils/web_util.dart';
 
 import 'package:cloudplayplus/controller/hardware_input_controller.dart';
 import 'package:cloudplayplus/services/app_init_service.dart';
-import 'package:cloudplayplus/services/lan/lan_signaling_host_server.dart';
+import 'package:cloudplayplus/services/lan/lan_signaling_host_server_platform.dart';
 import 'package:cloudplayplus/services/webrtc/webrtc_initializer_platform.dart';
 import 'package:cloudplayplus/utils/system_tray_manager.dart';
 import 'package:flutter/material.dart';
