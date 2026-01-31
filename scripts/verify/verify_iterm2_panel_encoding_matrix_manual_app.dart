@@ -422,11 +422,14 @@ class _VerifyPageState extends State<_VerifyPage> {
       _busy = true;
     });
     try {
-      _log(
-          'apply MANUAL: fps=$fps bandwidthKbps=${bandwidthKbps ?? "-"} bitrateKbps=$bitrateKbps');
+      final effectiveKbps = (bandwidthKbps != null && bandwidthKbps > 0)
+          ? (bitrateKbps < bandwidthKbps ? bitrateKbps : bandwidthKbps)
+          : bitrateKbps;
+      _log('apply MANUAL: fps=$fps bandwidthKbps=${bandwidthKbps ?? "-"} '
+          'bitrateKbps=$bitrateKbps effectiveKbps=$effectiveKbps');
       await _applySenderParams(
         maxFramerate: fps,
-        maxBitrateBps: bitrateKbps * 1000,
+        maxBitrateBps: effectiveKbps * 1000,
       );
       await Future<void>.delayed(const Duration(milliseconds: 700));
       final stats = await _pc2!.getStats();
