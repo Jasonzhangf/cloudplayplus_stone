@@ -102,6 +102,10 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
       previous: _previousVideoInfo,
       current: _videoInfo,
     );
+    final instantDecodeMs = computeInstantDecodeTimeMsFromSamples(
+      previous: _previousVideoInfo,
+      current: _videoInfo,
+    );
     final gopMs = computeGopMsFromSamples(
       previous: _previousVideoInfo,
       current: _videoInfo,
@@ -132,7 +136,12 @@ class _VideoInfoContentState extends State<_VideoInfoContent> {
               _buildInfoItem('解码器', _getDecoderDisplayName(_videoInfo['decoderImplementation'], _videoInfo)),
               _buildInfoItem('丢包率', '${_calculatePacketLossRate(_videoInfo).toStringAsFixed(1)}%'),
               _buildInfoItem('往返时延', '${((_videoInfo['roundTripTime'] as num) * 1000).toStringAsFixed(0)} ms'),
-              _buildInfoItem('解码时间', '${(_videoInfo['avgDecodeTimeMs'] as num).toStringAsFixed(1)} ms'),
+              _buildInfoItem(
+                '解码时间',
+                instantDecodeMs > 0
+                    ? '${instantDecodeMs} ms (inst) / ${(_videoInfo['avgDecodeTimeMs'] as num).toStringAsFixed(1)} ms (avg)'
+                    : '${(_videoInfo['avgDecodeTimeMs'] as num).toStringAsFixed(1)} ms',
+              ),
               _buildInfoItem('抖动', '${((_videoInfo['jitter'] as num) * 1000).toStringAsFixed(1)} ms'),
               if (_hostFrameSize != null) ...[
                 _buildInfoItem(
@@ -412,6 +421,7 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
     'isHardwareDecoder': false,
     'codecType': '未知',
     'avgDecodeTimeMs': 0.0,
+    'totalDecodeTime': 0.0,
     'framesDecoded': 0,
     'framesDropped': 0,
     'keyFramesDecoded': 0,
@@ -455,6 +465,7 @@ Map<String, dynamic> _extractVideoInfo(List<StatsReport> stats) {
           final totalDecodeTime = (values['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
           final framesDecoded = values['framesDecoded'] ?? 0;
           videoInfo['framesDecoded'] = framesDecoded;
+          videoInfo['totalDecodeTime'] = totalDecodeTime;
           
           if (framesDecoded > 0 && totalDecodeTime > 0) {
             videoInfo['avgDecodeTimeMs'] = (totalDecodeTime / framesDecoded * 1000);
@@ -554,6 +565,24 @@ int computeGopMsFromSamples({
   return (dtMs / dkf).round().clamp(1, 60000);
 }
 
+@visibleForTesting
+int computeInstantDecodeTimeMsFromSamples({
+  required Map<String, dynamic> previous,
+  required Map<String, dynamic> current,
+}) {
+  if (previous.isEmpty) return 0;
+  final prevFrames = (previous['framesDecoded'] as num?)?.toInt() ?? 0;
+  final curFrames = (current['framesDecoded'] as num?)?.toInt() ?? 0;
+  final prevTotal = (previous['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
+  final curTotal = (current['totalDecodeTime'] as num?)?.toDouble() ?? 0.0;
+  if (curFrames <= prevFrames) return 0;
+  if (curTotal <= prevTotal) return 0;
+  final df = (curFrames - prevFrames).clamp(1, 1000000);
+  final dt = (curTotal - prevTotal);
+  final ms = (dt / df * 1000.0).round();
+  return ms.clamp(0, 10000);
+}
+
 String formatGop(int gopMs) {
   if (gopMs <= 0) return '--';
   if (gopMs >= 1000) {
@@ -570,6 +599,8 @@ bool _isHardwareDecoder(String implementation) {
   // 硬件解码器关键字（不区分大小写）
   List<String> hardwareKeywords = [
     'mediacodec',     // Android MediaCodec
+    'c2.',            // Android Codec2 (e.g. c2.qti.avc.decoder)
+    'omx.',           // Legacy OMX codec names
     'videotoolbox',   // iOS VideoToolbox
     'hardware',       // 通用硬件标识
     'hw',            // 硬件缩写
