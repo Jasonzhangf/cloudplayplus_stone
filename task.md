@@ -204,6 +204,43 @@ iterm2.run_until_complete(main)
 PY
 ```
 
+---
+
+# Strategy Lab（本地 Loopback 验证台）- 计划与任务
+
+> 目的：在不依赖手机/远端的情况下，把「裁切/编码参数/网络策略」验证做成可复现、可交互的工具，避免盲测。
+> 入口：`scripts/verify/verify_iterm2_panel_encoding_matrix_manual_app.dart`
+
+## 一、当前能力（已实现）
+
+- [x] iTerm2 panel 裁切 + WebRTC 本地 loopback（实时预览）
+- [x] Next/Prev 按矩阵切换 fps/bitrate 组合（从最低画质开始）
+- [x] 手动输入：帧率/目标码率/模拟带宽，点击 `OK` 立即生效
+- [x] 实时 stats overlay：RX/TX kbps、fps、loss、rtt、jitter、decode(ms/frame)、freezeΔ
+- [x] 策略实验台（Strategy Lab）：
+  - [x] RX buffer 策略（latency-first / adaptive / smoothness）
+  - [x] TX 策略（capByBandwidth / stepDownBitrate / stepDownFpsThenBitrate）
+  - [x] overflow 处理（降码率/降帧率/重置 buffer）并打印策略切换日志
+- [x] 编码端整数倍缩小（`scaleResolutionDownBy`）策略：`integerScaleDown`
+- [x] 解码端整数倍放大（仅 UI 预览）：右上角 `1x/2x/3x/4x`（不影响网络）
+- [x] 单测：`test/verify_strategy_policy_test.dart`
+
+## 二、使用方式（macOS）
+
+```bash
+ITERM2_PANEL_TITLE=1.1.2 \
+FPS_LIST=60,30,15 \
+BITRATE_KBPS_LIST=2000,1000,500,250,125,80 \
+flutter run -d macos -t scripts/verify/verify_iterm2_panel_encoding_matrix_manual_app.dart
+```
+
+## 三、待办（下一步）
+
+- [ ] 将「策略切换原因」日志统一成固定格式（便于 grep / 对比）
+- [ ] 增加 TX 策略：允许“高质量基准”自动上探（当 measured bandwidth 足够时自动升档）
+- [ ] 将「模拟带宽」从“硬 cap”扩展为：可选 token bucket / pacing（更贴近真实）
+- [ ] 增加一键导出当前策略配置 + stats 快照（用于 issue 复现）
+
 ### 2.2 WebRTC 窗口捕获基础能力（后续验证项）
 
 - [ ] `desktopCapturer.getSources(types: [SourceType.Window])` 能列出 iTerm2 窗口源

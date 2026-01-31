@@ -67,28 +67,6 @@ void main() {
   });
 
   group('trackBufferFull', () {
-    test('full frames triggers after 3 consecutive ticks at max', () {
-      var t = const BufferFullTracker.initial();
-      BufferFullResult r;
-      for (int i = 0; i < 2; i++) {
-        r = trackBufferFull(
-          previous: t,
-          targetFrames: 60,
-          maxFrames: 60,
-          freezeDelta: 0,
-        );
-        t = r.tracker;
-        expect(r.bufferFull, isFalse);
-      }
-      r = trackBufferFull(
-        previous: t,
-        targetFrames: 60,
-        maxFrames: 60,
-        freezeDelta: 0,
-      );
-      expect(r.bufferFull, isTrue);
-    });
-
     test('freeze triggers when near max for 2 ticks', () {
       var t = const BufferFullTracker.initial();
       BufferFullResult r;
@@ -107,6 +85,51 @@ void main() {
         freezeDelta: 1,
       );
       expect(r.bufferFull, isTrue);
+    });
+
+    test('max frames without freeze does not trigger', () {
+      var t = const BufferFullTracker.initial();
+      BufferFullResult r;
+      for (int i = 0; i < 10; i++) {
+        r = trackBufferFull(
+          previous: t,
+          targetFrames: 60,
+          maxFrames: 60,
+          freezeDelta: 0,
+        );
+        t = r.tracker;
+        expect(r.bufferFull, isFalse);
+      }
+    });
+  });
+
+  group('pickIntegerScaleDownBy', () {
+    test('returns 1 when bandwidth fits', () {
+      final s = pickIntegerScaleDownBy(
+        targetBitrateKbps: 500,
+        measuredBandwidthKbps: 1000,
+        headroom: 1.0,
+      );
+      expect(s, 1);
+    });
+
+    test('returns 2 when needs ~4x area reduction', () {
+      final s = pickIntegerScaleDownBy(
+        targetBitrateKbps: 2000,
+        measuredBandwidthKbps: 600,
+        headroom: 1.0,
+      );
+      expect(s, 2);
+    });
+
+    test('clamps to maxScale', () {
+      final s = pickIntegerScaleDownBy(
+        targetBitrateKbps: 20000,
+        measuredBandwidthKbps: 100,
+        headroom: 1.0,
+        maxScale: 3,
+      );
+      expect(s, 3);
     });
   });
 }

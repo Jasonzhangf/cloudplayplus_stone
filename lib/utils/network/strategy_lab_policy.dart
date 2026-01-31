@@ -110,29 +110,61 @@ int capBitrateByBandwidthKbps({
   return targetBitrateKbps.clamp(minBitrateKbps, cap);
 }
 
+/// Choose an integer `scaleResolutionDownBy` factor (1,2,3,4...) so that
+/// `targetBitrate / scale^2` can fit into measured bandwidth (with headroom).
+///
+/// If bandwidth is unknown (<=0), returns 1.
+int pickIntegerScaleDownBy({
+  required int targetBitrateKbps,
+  required int measuredBandwidthKbps,
+  double headroom = 0.85,
+  int minScale = 1,
+  int maxScale = 4,
+}) {
+  final minS = minScale.clamp(1, 16);
+  final maxS = maxScale.clamp(minS, 16);
+  if (targetBitrateKbps <= 0) return minS;
+  if (measuredBandwidthKbps <= 0) return minS;
+  final denom = measuredBandwidthKbps * headroom;
+  if (denom <= 0) return minS;
+
+  final ratio = targetBitrateKbps / denom;
+  if (ratio <= 1.0) return minS;
+
+  // Need scale >= sqrt(ratio), pick smallest integer meeting it.
+  int s = 1;
+  while (s * s < ratio) {
+    s++;
+    if (s >= maxS) break;
+  }
+  return s.clamp(minS, maxS);
+}
+
 /// Decide whether we consider the receiver-side buffer "full" (overflow risk).
 ///
 /// A conservative, deterministic rule:
-/// - bufferFull if targetFrames == maxFrames for `fullRequiredConsecutive` ticks,
-///   OR if freezeDelta > 0 for `freezeRequiredConsecutive` ticks while
-///   targetFrames >= maxFrames * 0.9.
+/// - Treat as "full / overflow-risk" only when the stream keeps freezing while
+///   we are already near max buffering.
+///
+/// Rationale:
+/// - Simply reaching `maxFrames` is not necessarily bad; it may be an intended
+///   policy choice (e.g. smoothness mode) and can persist for a long time while
+///   ramping down.
+/// - What we actually care about is "max buffering still doesn't prevent
+///   freezes", which indicates we should take corrective actions (reduce fps,
+///   reduce bitrate, etc.).
 @immutable
 class BufferFullTracker {
-  final int fullConsecutive;
   final int freezeConsecutive;
 
   const BufferFullTracker({
-    required this.fullConsecutive,
     required this.freezeConsecutive,
   });
 
-  const BufferFullTracker.initial()
-      : fullConsecutive = 0,
-        freezeConsecutive = 0;
+  const BufferFullTracker.initial() : freezeConsecutive = 0;
 
-  BufferFullTracker copyWith({int? fullConsecutive, int? freezeConsecutive}) {
+  BufferFullTracker copyWith({int? freezeConsecutive}) {
     return BufferFullTracker(
-      fullConsecutive: fullConsecutive ?? this.fullConsecutive,
       freezeConsecutive: freezeConsecutive ?? this.freezeConsecutive,
     );
   }
@@ -151,21 +183,13 @@ BufferFullResult trackBufferFull({
   required int targetFrames,
   required int maxFrames,
   required int freezeDelta,
-  int fullRequiredConsecutive = 3,
   int freezeRequiredConsecutive = 2,
   double nearMaxRatio = 0.90,
 }) {
   final maxF = maxFrames <= 0 ? 1 : maxFrames;
   final t = targetFrames.clamp(0, maxF);
 
-  int fullConsecutive = previous.fullConsecutive;
   int freezeConsecutive = previous.freezeConsecutive;
-
-  if (t == maxF) {
-    fullConsecutive = (fullConsecutive + 1).clamp(0, 1 << 30);
-  } else {
-    fullConsecutive = 0;
-  }
 
   final nearMax = t >= (maxF * nearMaxRatio).floor();
   if (nearMax && freezeDelta > 0) {
@@ -174,12 +198,10 @@ BufferFullResult trackBufferFull({
     freezeConsecutive = 0;
   }
 
-  final bufferFull = (fullConsecutive >= fullRequiredConsecutive) ||
-      (freezeConsecutive >= freezeRequiredConsecutive);
+  final bufferFull = freezeConsecutive >= freezeRequiredConsecutive;
 
   return BufferFullResult(
     tracker: previous.copyWith(
-      fullConsecutive: fullConsecutive,
       freezeConsecutive: freezeConsecutive,
     ),
     bufferFull: bufferFull,

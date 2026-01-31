@@ -104,6 +104,7 @@ class _VerifyPageState extends State<_VerifyPage> {
   // What we actually apply to the sender after TX policy + overflow caps.
   int _effectiveFps = 30;
   int _effectiveBitrateKbps = 250;
+  double _effectiveScaleDownBy = 1.0;
 
   // Latest sampled metrics (per-second).
   _RxMetrics _rx = const _RxMetrics.empty();
@@ -112,6 +113,9 @@ class _VerifyPageState extends State<_VerifyPage> {
   // Strategy Lab selections (verification-only).
   _TxPolicy _txPolicy = _TxPolicy.capByBandwidth;
   _RxPolicy _rxPolicy = _RxPolicy.adaptiveBuffer;
+
+  // Display-only (receiver-side) integer zoom.
+  int _displayZoom = 1; // 1x/2x/3x/4x
 
   bool _simUseBandwidthInput = true;
   bool _simLossJitter = false;
@@ -141,11 +145,15 @@ class _VerifyPageState extends State<_VerifyPage> {
   int _bufferOkConsecutive = 0;
   int? _emergencyMaxBitrateKbps;
   int? _emergencyMaxFps;
+  int _emergencyMaxBitrateUntilMs = 0;
+  int _emergencyMaxFpsUntilMs = 0;
+  int _overflowLastAtMs = 0;
 
   // Throttle setParameters calls.
   int _txLastAppliedAtMs = 0;
   int _txLastAppliedBitrateBps = -1;
   int _txLastAppliedFps = -1;
+  double _txLastAppliedScaleDownBy = -1.0;
 
   // RX delta sampling state.
   int _rxPrevAtMs = 0;
@@ -436,6 +444,7 @@ class _VerifyPageState extends State<_VerifyPage> {
   Future<void> _applySenderParams({
     required int maxBitrateBps,
     required int maxFramerate,
+    required double scaleDownBy,
     required String reason,
   }) async {
     final s = _sender;
@@ -443,7 +452,8 @@ class _VerifyPageState extends State<_VerifyPage> {
 
     final nowMs = DateTime.now().millisecondsSinceEpoch;
     if (maxBitrateBps == _txLastAppliedBitrateBps &&
-        maxFramerate == _txLastAppliedFps) {
+        maxFramerate == _txLastAppliedFps &&
+        scaleDownBy == _txLastAppliedScaleDownBy) {
       return;
     }
     if ((nowMs - _txLastAppliedAtMs) < 800) {
@@ -457,13 +467,17 @@ class _VerifyPageState extends State<_VerifyPage> {
     final e0 = p.encodings!.first;
     e0.maxBitrate = maxBitrateBps;
     e0.maxFramerate = maxFramerate;
+    // Integer scale-down is encoded side; decoder-side "scale up" is handled
+    // by UI only in this verifier.
+    e0.scaleResolutionDownBy = scaleDownBy;
     await s.setParameters(p);
 
     _txLastAppliedAtMs = nowMs;
     _txLastAppliedBitrateBps = maxBitrateBps;
     _txLastAppliedFps = maxFramerate;
+    _txLastAppliedScaleDownBy = scaleDownBy;
     _log(
-        'TX setParameters fps=$maxFramerate bitrateBps=$maxBitrateBps reason=$reason');
+        'TX setParameters fps=$maxFramerate bitrateBps=$maxBitrateBps scaleDownBy=$scaleDownBy reason=$reason');
   }
 
   Future<void> _applyCurrentCase() async {
@@ -820,6 +834,19 @@ class _VerifyPageState extends State<_VerifyPage> {
     if (_sender == null) return;
     final nowMs = DateTime.now().millisecondsSinceEpoch;
 
+    // Expire emergency caps so we can recover when conditions improve.
+    if (_emergencyMaxBitrateKbps != null &&
+        nowMs > _emergencyMaxBitrateUntilMs) {
+      final old = _emergencyMaxBitrateKbps;
+      setState(() => _emergencyMaxBitrateKbps = null);
+      _log('TX emergency bitrate cap expired: was <=${old}kbps');
+    }
+    if (_emergencyMaxFps != null && nowMs > _emergencyMaxFpsUntilMs) {
+      final old = _emergencyMaxFps;
+      setState(() => _emergencyMaxFps = null);
+      _log('TX emergency fps cap expired: was <=${old}fps');
+    }
+
     // Parse optional simulation overrides.
     final simLossPct =
         double.tryParse(_simLossPctController.text.trim()) ?? 0.0;
@@ -901,10 +928,16 @@ class _VerifyPageState extends State<_VerifyPage> {
 
     if (fullRes.bufferFull) {
       _bufferOkConsecutive = 0;
-      await _handleBufferOverflow(
-        measuredBandwidthKbps: _pickMeasuredBandwidthKbps(),
-        reason: 'rx-buffer-full',
-      );
+      // Cooldown to avoid spamming logs/actions.
+      if ((nowMs - _overflowLastAtMs) >= 2000) {
+        _overflowLastAtMs = nowMs;
+        await _handleBufferOverflow(
+          measuredBandwidthKbps: _pickMeasuredBandwidthKbps(),
+          freezeDeltaUsed: rxFreezeDelta,
+          freezeDeltaRaw: _rx.freezeDelta,
+          reason: 'rx-buffer-full',
+        );
+      }
     } else {
       _bufferOkConsecutive = (_bufferOkConsecutive + 1).clamp(0, 1 << 30);
       if (_bufferOkConsecutive >= 5) {
@@ -913,6 +946,7 @@ class _VerifyPageState extends State<_VerifyPage> {
             _emergencyMaxBitrateKbps = null;
             _emergencyMaxFps = null;
           });
+          _log('TX emergency caps cleared (buffer ok for 5 ticks)');
         }
       }
     }
@@ -928,11 +962,29 @@ class _VerifyPageState extends State<_VerifyPage> {
 
     int decidedFps = _targetFps;
     int decidedBitrate = _targetBitrateKbps;
+    double decidedScaleDownBy = 1.0;
 
     switch (_txPolicy) {
       case _TxPolicy.off:
+        decidedScaleDownBy = 1.0;
         break;
       case _TxPolicy.capByBandwidth:
+        decidedBitrate = capBitrateByBandwidthKbps(
+          targetBitrateKbps: _targetBitrateKbps,
+          measuredBandwidthKbps: measuredBwKbps,
+          headroom: _txHeadroom,
+          minBitrateKbps: 1,
+        );
+        decidedScaleDownBy = 1.0;
+        break;
+      case _TxPolicy.integerScaleDown:
+        decidedScaleDownBy = pickIntegerScaleDownBy(
+          targetBitrateKbps: _targetBitrateKbps,
+          measuredBandwidthKbps: measuredBwKbps,
+          headroom: _txHeadroom,
+          minScale: 1,
+          maxScale: 6,
+        ).toDouble();
         decidedBitrate = capBitrateByBandwidthKbps(
           targetBitrateKbps: _targetBitrateKbps,
           measuredBandwidthKbps: measuredBwKbps,
@@ -952,6 +1004,7 @@ class _VerifyPageState extends State<_VerifyPage> {
         } else {
           decidedBitrate = _effectiveBitrateKbps;
         }
+        decidedScaleDownBy = 1.0;
         break;
       case _TxPolicy.stepDownFpsThenBitrate:
         if (bwRes.insufficient) {
@@ -978,6 +1031,7 @@ class _VerifyPageState extends State<_VerifyPage> {
           decidedBitrate = _effectiveBitrateKbps;
           decidedFps = _effectiveFps;
         }
+        decidedScaleDownBy = 1.0;
         break;
     }
 
@@ -992,16 +1046,20 @@ class _VerifyPageState extends State<_VerifyPage> {
     // Apply now if changed.
     final willApplyBitrateBps = (decidedBitrate * 1000).clamp(1000, 200000000);
     final willApplyFps = decidedFps.clamp(1, 120);
+    final willApplyScaleDownBy = decidedScaleDownBy.clamp(1.0, 16.0);
 
     if (willApplyFps != _effectiveFps ||
-        decidedBitrate != _effectiveBitrateKbps) {
+        decidedBitrate != _effectiveBitrateKbps ||
+        willApplyScaleDownBy != _effectiveScaleDownBy) {
       setState(() {
         _effectiveFps = willApplyFps;
         _effectiveBitrateKbps = decidedBitrate;
+        _effectiveScaleDownBy = willApplyScaleDownBy;
       });
       await _applySenderParams(
         maxFramerate: willApplyFps,
         maxBitrateBps: willApplyBitrateBps,
+        scaleDownBy: willApplyScaleDownBy,
         reason:
             '$reason txPolicy=${_txPolicy.name} bw=${measuredBwKbps}kbps insufficient=${bwRes.insufficient} recovered=${bwRes.recovered}',
       );
@@ -1038,10 +1096,12 @@ class _VerifyPageState extends State<_VerifyPage> {
 
   Future<void> _handleBufferOverflow({
     required int measuredBandwidthKbps,
+    required int freezeDeltaUsed,
+    required int freezeDeltaRaw,
     required String reason,
   }) async {
     _log(
-        'RX buffer overflow detected: reason=$reason frames=$_rxTargetBufferFrames/${_bufferMaxFrames} freezeΔ=${_rx.freezeDelta} measBw=${measuredBandwidthKbps > 0 ? "${measuredBandwidthKbps}kbps" : "-"}');
+        'RX buffer overflow detected: reason=$reason frames=$_rxTargetBufferFrames/${_bufferMaxFrames} freezeΔ(raw)=$freezeDeltaRaw used=$freezeDeltaUsed measBw=${measuredBandwidthKbps > 0 ? "${measuredBandwidthKbps}kbps" : "-"}');
 
     if (_overflowResetRxBuffer) {
       setState(() {
@@ -1064,6 +1124,8 @@ class _VerifyPageState extends State<_VerifyPage> {
       }
       setState(() {
         _emergencyMaxBitrateKbps = emergency;
+        _emergencyMaxBitrateUntilMs =
+            DateTime.now().millisecondsSinceEpoch + 6000;
       });
       _log(
           'RX overflow action: cap TX bitrate <= ${_emergencyMaxBitrateKbps}kbps');
@@ -1072,6 +1134,7 @@ class _VerifyPageState extends State<_VerifyPage> {
     if (_overflowForceTxFpsDown) {
       setState(() {
         _emergencyMaxFps = _stepDownFps(_effectiveFps);
+        _emergencyMaxFpsUntilMs = DateTime.now().millisecondsSinceEpoch + 6000;
       });
       _log('RX overflow action: cap TX fps <= ${_emergencyMaxFps}');
     }
@@ -1135,11 +1198,17 @@ class _VerifyPageState extends State<_VerifyPage> {
                 flex: 3,
                 child: Container(
                   color: Colors.black,
-                  child: RTCVideoView(
-                    _remoteRenderer,
-                    mirror: false,
-                    objectFit:
-                        RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                  child: ClipRect(
+                    child: Transform.scale(
+                      scale: _displayZoom.toDouble(),
+                      alignment: Alignment.center,
+                      child: RTCVideoView(
+                        _remoteRenderer,
+                        mirror: false,
+                        objectFit:
+                            RTCVideoViewObjectFit.RTCVideoViewObjectFitContain,
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -1179,7 +1248,7 @@ class _VerifyPageState extends State<_VerifyPage> {
                       style: const TextStyle(fontSize: 11),
                     ),
                     Text(
-                      'TX tx=${_tx.txKbps.toStringAsFixed(0)}kbps availOut=${_tx.availableOutgoingKbps.toStringAsFixed(0)}kbps measBw=${_pickMeasuredBandwidthKbps()}kbps policy=${_txPolicy.name}/${_rxPolicy.name}',
+                      'TX tx=${_tx.txKbps.toStringAsFixed(0)}kbps availOut=${_tx.availableOutgoingKbps.toStringAsFixed(0)}kbps measBw=${_pickMeasuredBandwidthKbps()}kbps scaleDownBy=$_effectiveScaleDownBy policy=${_txPolicy.name}/${_rxPolicy.name}',
                       style: const TextStyle(fontSize: 11),
                     ),
                     const SizedBox(height: 10),
@@ -1203,6 +1272,20 @@ class _VerifyPageState extends State<_VerifyPage> {
                         if (_busy)
                           const Text('应用中...', style: TextStyle(fontSize: 12)),
                         const Spacer(),
+                        DropdownButton<int>(
+                          value: _displayZoom.clamp(1, 4),
+                          underline: const SizedBox.shrink(),
+                          items: const [
+                            DropdownMenuItem(value: 1, child: Text('1x')),
+                            DropdownMenuItem(value: 2, child: Text('2x')),
+                            DropdownMenuItem(value: 3, child: Text('3x')),
+                            DropdownMenuItem(value: 4, child: Text('4x')),
+                          ],
+                          onChanged: (!_ready || _busy)
+                              ? null
+                              : (v) => setState(() => _displayZoom = v ?? 1),
+                        ),
+                        const SizedBox(width: 10),
                         Text(
                           '快捷键：Space/→ = 下一组',
                           style: TextStyle(
@@ -1585,6 +1668,7 @@ class _Case {
 enum _TxPolicy {
   off,
   capByBandwidth,
+  integerScaleDown,
   stepDownBitrate,
   stepDownFpsThenBitrate,
 }
