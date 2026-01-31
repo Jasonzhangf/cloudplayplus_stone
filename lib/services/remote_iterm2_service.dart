@@ -16,7 +16,11 @@ class RemoteIterm2Service {
   final ValueNotifier<bool> loading = ValueNotifier<bool>(false);
   final ValueNotifier<String?> error = ValueNotifier<String?>(null);
   Timer? _timeoutTimer;
+  Timer? _pendingRetryTimer;
   int _requestToken = 0;
+  String? _pendingSelectSessionId;
+  int _pendingSelectRetries = 0;
+  RTCDataChannel? _lastChannel;
 
   Future<void> requestPanels(RTCDataChannel? channel) async {
     if (channel == null || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
@@ -47,6 +51,13 @@ class RemoteIterm2Service {
       return;
     }
     _timeoutTimer?.cancel();
+    _pendingRetryTimer?.cancel();
+    _pendingRetryTimer = null;
+    _lastChannel = channel;
+    _pendingSelectSessionId = sessionId;
+    _pendingSelectRetries = 0;
+    loading.value = true;
+    error.value = null;
     channel.send(
       RTCDataChannelMessage(
         jsonEncode({
@@ -57,6 +68,85 @@ class RemoteIterm2Service {
         }),
       ),
     );
+    _timeoutTimer = Timer(const Duration(seconds: 8), () {
+      if (_pendingSelectSessionId != sessionId) return;
+      if (!loading.value) return;
+      loading.value = false;
+      error.value = 'iTerm2 切换超时（请重试）';
+    });
+  }
+
+  void handleCaptureTargetSwitchResult(Map<String, dynamic> payload) {
+    final type = payload['type']?.toString();
+    if (type != 'iterm2') return;
+
+    final sid = payload['sessionId']?.toString();
+    if (sid == null || sid.isEmpty) return;
+
+    final okAny = payload['ok'];
+    final ok = okAny is bool ? okAny : null;
+    final status = payload['status']?.toString() ?? '';
+    final reason = payload['reason']?.toString() ?? '';
+
+    // Only handle results for the currently pending selection (if any), or the
+    // currently selected session.
+    final pending = _pendingSelectSessionId;
+    final current = selectedSessionId.value;
+    final matches = (pending != null && sid == pending) || (sid == current);
+    if (!matches) return;
+
+    if (status == 'deferred' && ok == false) {
+      // Host not ready yet (common right after connect). Retry a few times.
+      if (pending == null) return;
+      if (_pendingSelectRetries >= 10) return;
+      if (!reason.contains('videoSenderNotReady')) return;
+      _pendingSelectRetries++;
+      _pendingRetryTimer?.cancel();
+      final delayMs = (120 * _pendingSelectRetries).clamp(120, 1200).toInt();
+      _pendingRetryTimer = Timer(Duration(milliseconds: delayMs), () {
+        _pendingRetryTimer = null;
+        final ch = _lastChannel;
+        if (ch == null || ch.state != RTCDataChannelState.RTCDataChannelOpen) {
+          return;
+        }
+        final sid2 = _pendingSelectSessionId;
+        if (sid2 == null || sid2 != sid) return;
+        ch.send(
+          RTCDataChannelMessage(
+            jsonEncode({
+              'setCaptureTarget': {
+                'type': 'iterm2',
+                'sessionId': sid2,
+              }
+            }),
+          ),
+        );
+      });
+      return;
+    }
+
+    // If applied/ignored, clear pending state.
+    if (ok == true && (status == 'applied' || status == 'ignored')) {
+      _timeoutTimer?.cancel();
+      _pendingRetryTimer?.cancel();
+      _pendingRetryTimer = null;
+      _pendingSelectSessionId = null;
+      _pendingSelectRetries = 0;
+      selectedSessionId.value = sid;
+      loading.value = false;
+      error.value = null;
+      return;
+    }
+
+    if (ok == false && status == 'failed') {
+      _timeoutTimer?.cancel();
+      _pendingRetryTimer?.cancel();
+      _pendingRetryTimer = null;
+      loading.value = false;
+      error.value = reason.isNotEmpty ? reason : 'iTerm2 切换失败';
+      // Keep pending id so user can retry by tapping again; do not auto-clear.
+      return;
+    }
   }
 
   void handleIterm2SourcesMessage(dynamic payload) {

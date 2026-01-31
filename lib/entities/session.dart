@@ -222,6 +222,14 @@ class StreamingSession {
   int? _iterm2MinWidthConstraint;
   int? _iterm2MinHeightConstraint;
 
+  // Host-side: controller may send setCaptureTarget right after the DataChannel
+  // opens while the host is still wiring up the initial video sender. Keep one
+  // pending request and drain once the sender is ready.
+  Map<String, dynamic>? _pendingCaptureTargetPayload;
+  Timer? _pendingCaptureTargetTimer;
+  int _pendingCaptureTargetQueuedAtMs = 0;
+  int _pendingCaptureTargetRetryCount = 0;
+
   // Adaptive encoding state (controller -> host feedback loop).
   int _adaptiveLastFpsChangeAtMs = 0;
   int _adaptiveLastBitrateChangeAtMs = 0;
@@ -244,6 +252,52 @@ class StreamingSession {
   }
 
   Function(String mediatype, MediaStream stream)? onAddRemoteStream;
+
+  void _sendCaptureTargetSwitchResult(Map<String, dynamic> payload) {
+    final dc = channel;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    try {
+      dc.send(RTCDataChannelMessage(jsonEncode({
+        'captureTargetSwitchResult': payload,
+      })));
+    } catch (_) {}
+  }
+
+  void _scheduleDrainPendingCaptureTarget() {
+    _pendingCaptureTargetTimer?.cancel();
+    _pendingCaptureTargetTimer = null;
+
+    final payload = _pendingCaptureTargetPayload;
+    if (payload == null) return;
+
+    // Exponential-ish backoff capped at ~1s.
+    final delayMs =
+        (120 * (1 + _pendingCaptureTargetRetryCount)).clamp(120, 1000).toInt();
+    _pendingCaptureTargetTimer = Timer(Duration(milliseconds: delayMs), () {
+      _pendingCaptureTargetTimer = null;
+      unawaited(_drainPendingCaptureTarget());
+    });
+  }
+
+  Future<void> _drainPendingCaptureTarget() async {
+    if (selfSessionType != SelfSessionType.controlled) return;
+    final payload = _pendingCaptureTargetPayload;
+    if (payload == null) return;
+    if (channel == null ||
+        channel!.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    if (videoSender == null) {
+      _pendingCaptureTargetRetryCount++;
+      _scheduleDrainPendingCaptureTarget();
+      return;
+    }
+
+    // Drain once: clear before applying to avoid infinite loops if apply fails.
+    _pendingCaptureTargetPayload = null;
+    _pendingCaptureTargetRetryCount = 0;
+    await _handleSetCaptureTarget(payload);
+  }
 
   //We are the controller
   void startRequest() async {
@@ -666,12 +720,16 @@ class StreamingSession {
 
       if (StreamedManager.localVideoStreams[settings.screenId] != null) {
         // one track expected.
-        StreamedManager.localVideoStreams[settings.screenId]!
-            .getTracks()
-            .forEach((track) async {
-          videoSender = (await pc!.addTrack(
-              track, StreamedManager.localVideoStreams[settings.screenId]!));
-        });
+        final stream = StreamedManager.localVideoStreams[settings.screenId]!;
+        final videoTracks = stream.getVideoTracks();
+        if (videoTracks.isNotEmpty) {
+          videoSender = await pc!.addTrack(videoTracks.first, stream);
+        } else {
+          final anyTracks = stream.getTracks();
+          if (anyTracks.isNotEmpty) {
+            videoSender = await pc!.addTrack(anyTracks.first, stream);
+          }
+        }
       }
 
       /* deprecated. using RTCutils instead.
@@ -995,6 +1053,10 @@ class StreamingSession {
     }
     _resetPingState();
     _stopRestoreTargetRetry();
+    _pendingCaptureTargetTimer?.cancel();
+    _pendingCaptureTargetTimer = null;
+    _pendingCaptureTargetPayload = null;
+    _pendingCaptureTargetRetryCount = 0;
     final iterm2Listener = _autoIterm2PanelsListener;
     if (iterm2Listener != null) {
       try {
@@ -1775,6 +1837,25 @@ class StreamingSession {
             }
           }
           break;
+        case "captureTargetSwitchResult":
+          final payload = data['captureTargetSwitchResult'];
+          if (payload is Map) {
+            final mapped = payload.map((k, v) => MapEntry(k.toString(), v));
+            final okAny = mapped['ok'];
+            final ok = okAny is bool ? okAny : null;
+            final type = mapped['type']?.toString();
+            final status = mapped['status']?.toString();
+            final reason = mapped['reason']?.toString();
+            InputDebugService.instance.log(
+              'IN captureTargetSwitchResult ok=$ok type=$type status=$status reason=${reason ?? ""}',
+            );
+            try {
+              RemoteIterm2Service.instance.handleCaptureTargetSwitchResult(
+                mapped,
+              );
+            } catch (_) {}
+          }
+          break;
         case "inputInjectResult":
           final payload = data['inputInjectResult'];
           if (payload is Map) {
@@ -1924,7 +2005,7 @@ class StreamingSession {
       return;
     }
     const runner = HostCommandRunner();
-    const timeout = Duration(seconds: 2);
+    const timeout = Duration(seconds: 5);
 
     const script = iterm2SourcesPythonScript;
 
@@ -1984,11 +2065,31 @@ class StreamingSession {
         channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
       return;
     }
-    if (videoSender == null) return;
+    // videoSender may still be wiring up when controller sends the first
+    // setCaptureTarget right after DataChannel open.
+    if (videoSender == null) {
+      if (payload is Map) {
+        _pendingCaptureTargetPayload =
+            payload.map((k, v) => MapEntry(k.toString(), v));
+        _pendingCaptureTargetQueuedAtMs =
+            DateTime.now().millisecondsSinceEpoch;
+        _pendingCaptureTargetRetryCount = 0;
+        _sendCaptureTargetSwitchResult({
+          'ok': false,
+          'status': 'deferred',
+          'reason': 'videoSenderNotReady',
+          'queuedAtMs': _pendingCaptureTargetQueuedAtMs,
+          'type': (_pendingCaptureTargetPayload?['type'] ?? '').toString(),
+        });
+        _scheduleDrainPendingCaptureTarget();
+      }
+      return;
+    }
 
     await _captureSwitchLock.synchronized(() async {
       final typeAny = (payload is Map) ? payload['type'] : null;
       final type = typeAny?.toString() ?? 'window';
+      final startedAtMs = DateTime.now().millisecondsSinceEpoch;
 
       // Switching capture targets can leave modifier state "stuck" (e.g. missed key-up).
       // Reset for safety, especially for iTerm2 TTY injection.
@@ -2002,6 +2103,14 @@ class StreamingSession {
           if (reqSourceId.isEmpty ||
               (streamSettings!.desktopSourceId != null &&
                   streamSettings!.desktopSourceId == reqSourceId)) {
+            _sendCaptureTargetSwitchResult({
+              'ok': true,
+              'status': 'ignored',
+              'type': 'screen',
+              'sourceId': streamSettings!.desktopSourceId,
+              'durationMs':
+                  DateTime.now().millisecondsSinceEpoch - startedAtMs,
+            });
             return;
           }
         }
@@ -2010,6 +2119,14 @@ class StreamingSession {
           if (streamSettings!.captureTargetType == 'window' &&
               windowIdAny is num &&
               streamSettings!.windowId == windowIdAny.toInt()) {
+            _sendCaptureTargetSwitchResult({
+              'ok': true,
+              'status': 'ignored',
+              'type': 'window',
+              'windowId': streamSettings!.windowId,
+              'durationMs':
+                  DateTime.now().millisecondsSinceEpoch - startedAtMs,
+            });
             return;
           }
         }
@@ -2019,6 +2136,14 @@ class StreamingSession {
           if (sessionId.isNotEmpty &&
               streamSettings!.captureTargetType == 'iterm2' &&
               streamSettings!.iterm2SessionId == sessionId) {
+            _sendCaptureTargetSwitchResult({
+              'ok': true,
+              'status': 'ignored',
+              'type': 'iterm2',
+              'sessionId': sessionId,
+              'durationMs':
+                  DateTime.now().millisecondsSinceEpoch - startedAtMs,
+            });
             return;
           }
         }
@@ -2137,8 +2262,20 @@ class StreamingSession {
             selected = hint;
           }
         }
-        if (selected == null) return;
-        await _switchCaptureToSource(
+        final windowId =
+            (windowIdAny is num) ? windowIdAny.toInt() : int.tryParse('$windowIdAny');
+        if (selected == null) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'window',
+            'reason': 'windowNotFound',
+            'windowId': windowId,
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
+          return;
+        }
+        final ok = await _switchCaptureToSource(
           selected,
           extraCaptureTarget: const {
             'captureTargetType': 'window',
@@ -2146,6 +2283,13 @@ class StreamingSession {
             'cropRect': null,
           },
         );
+        _sendCaptureTargetSwitchResult({
+          'ok': ok,
+          'status': ok ? 'applied' : 'failed',
+          'type': 'window',
+          'windowId': selected.windowId,
+          'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+        });
         return;
       }
 
@@ -2159,7 +2303,16 @@ class StreamingSession {
         }
         final screens =
             await desktopCapturer.getSources(types: [SourceType.Screen]);
-        if (screens.isEmpty) return;
+        if (screens.isEmpty) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'screen',
+            'reason': 'noScreens',
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
+          return;
+        }
         DesktopCapturerSource? selected;
         final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
         final sourceId = sourceIdAny?.toString() ?? '';
@@ -2177,7 +2330,7 @@ class StreamingSession {
               ? screens[idx]
               : screens.first;
         }();
-        await _switchCaptureToSource(
+        final ok = await _switchCaptureToSource(
           selected,
           extraCaptureTarget: const {
             'captureTargetType': 'screen',
@@ -2185,20 +2338,36 @@ class StreamingSession {
             'cropRect': null,
           },
         );
+        _sendCaptureTargetSwitchResult({
+          'ok': ok,
+          'status': ok ? 'applied' : 'failed',
+          'type': 'screen',
+          'sourceId': selected.id,
+          'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+        });
         return;
       }
 
       if (type == 'iterm2') {
         final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
         final sessionId = sessionIdAny?.toString() ?? '';
-        if (sessionId.isEmpty) return;
+        if (sessionId.isEmpty) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'iterm2',
+            'reason': 'missingSessionId',
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
+          return;
+        }
         if (streamSettings != null) {
           streamSettings!.captureTargetType = 'iterm2';
           streamSettings!.iterm2SessionId = sessionId;
         }
 
         const runner = HostCommandRunner();
-        const timeout = Duration(seconds: 2);
+        const timeout = Duration(seconds: 5);
         const script = iterm2ActivateAndCropPythonScript;
 
         HostCommandResult meta;
@@ -2206,9 +2375,28 @@ class StreamingSession {
           meta = await runner.run('python3', ['-c', script, sessionId],
               timeout: timeout);
         } catch (e) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'iterm2',
+            'sessionId': sessionId,
+            'reason': 'activateAndCropException:$e',
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
           return;
         }
-        if (meta.exitCode != 0) return;
+        if (meta.exitCode != 0) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'iterm2',
+            'sessionId': sessionId,
+            'reason': 'activateAndCropExit:${meta.exitCode}',
+            'stderr': meta.stderrText,
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
+          return;
+        }
 
         int? windowId;
         Map<String, dynamic>? metaAny;
@@ -2284,6 +2472,23 @@ class StreamingSession {
               }
             }
           }
+        }
+
+        // iTerm2 panel capture requires an explicit crop rect. If we can't compute it,
+        // do not silently fall back to full-window (wastes bandwidth and breaks UX).
+        if (cropRectNorm == null ||
+            iterm2MinWidth == null ||
+            iterm2MinHeight == null) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'iterm2',
+            'sessionId': sessionId,
+            'reason': 'cropRectUnavailable',
+            'meta': metaAny,
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
+          return;
         }
 
         final sources =
@@ -2368,7 +2573,17 @@ class StreamingSession {
           }
         }
         selected ??= sources.isNotEmpty ? sources.first : null;
-        if (selected == null) return;
+        if (selected == null) {
+          _sendCaptureTargetSwitchResult({
+            'ok': false,
+            'status': 'failed',
+            'type': 'iterm2',
+            'sessionId': sessionId,
+            'reason': 'noWindowSources',
+            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+          });
+          return;
+        }
         if (streamSettings != null) {
           streamSettings!.cropRect = cropRectNorm;
         }
@@ -2385,7 +2600,7 @@ class StreamingSession {
           'matchedAppName': selected.appName,
           'matchedFrame': selected.frame,
         };
-        await _switchCaptureToSource(
+        final ok = await _switchCaptureToSource(
           selected,
           extraCaptureTarget: {
             'captureTargetType': 'iterm2',
@@ -2399,19 +2614,36 @@ class StreamingSession {
         );
         _iterm2MinWidthConstraint = iterm2MinWidth;
         _iterm2MinHeightConstraint = iterm2MinHeight;
+        _sendCaptureTargetSwitchResult({
+          'ok': ok,
+          'status': ok ? 'applied' : 'failed',
+          'type': 'iterm2',
+          'sessionId': sessionId,
+          'windowId': selected.windowId,
+          'cropRectNorm': cropRectNorm,
+          'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+        });
         return;
       }
+
+      _sendCaptureTargetSwitchResult({
+        'ok': false,
+        'status': 'failed',
+        'type': type,
+        'reason': 'unknownType',
+        'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+      });
     });
   }
 
-  Future<void> _switchCaptureToSource(
+  Future<bool> _switchCaptureToSource(
     DesktopCapturerSource source, {
     Map<String, dynamic>? extraCaptureTarget,
     Map<String, double>? cropRectNormalized,
     int? minWidthConstraint,
     int? minHeightConstraint,
   }) async {
-    if (pc == null || videoSender == null) return;
+    if (pc == null || videoSender == null) return false;
 
     final int fps = streamSettings?.framerate ?? 30;
     final frameAny = source.frame;
@@ -2453,13 +2685,13 @@ class StreamingSession {
           await navigator.mediaDevices.getDisplayMedia(mediaConstraints);
     } catch (e) {
       VLOG0("switch capture getDisplayMedia failed.$e");
-      return;
+      return false;
     }
 
     final tracks = newStream.getVideoTracks();
     if (tracks.isEmpty) {
       await newStream.dispose();
-      return;
+      return false;
     }
     final newTrack = tracks.first;
     try {
@@ -2467,7 +2699,7 @@ class StreamingSession {
     } catch (e) {
       VLOG0("switch capture replaceTrack failed.$e");
       await newStream.dispose();
-      return;
+      return false;
     }
 
     // Stop previous switched stream (do NOT stop the shared stream in StreamedManager).
@@ -2531,6 +2763,7 @@ class StreamingSession {
         }),
       ),
     );
+    return true;
   }
 
   Future<bool> _handleIterm2TtyKeyEvent({

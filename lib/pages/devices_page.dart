@@ -29,6 +29,7 @@ class _DevicesPageState extends State<DevicesPage> {
   List<Device> _deviceList = defaultDeviceList;
   bool _autoRestoreAttempted = false;
   final LanConnectHistoryService _lanHistory = LanConnectHistoryService.instance;
+  bool _autoRestoreNavigated = false;
   void _openLanConnect() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const LanConnectPage()),
@@ -383,26 +384,60 @@ class _DevicesPageState extends State<DevicesPage> {
       }
 
       // Ensure detail page is visible so user returns to the last streaming page.
-      try {
-        Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
-        );
-      } catch (_) {}
+      if (!_autoRestoreNavigated) {
+        _autoRestoreNavigated = true;
+        try {
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
+          );
+        } catch (_) {}
+      }
 
       try {
-        // Best-effort: start streaming if not already connected.
-        final state = StreamingManager.getStreamingStateto(target);
-        if (state != StreamingSessionConnectionState.connected &&
-            state != StreamingSessionConnectionState.connceting &&
-            state != StreamingSessionConnectionState.requestSent &&
-            state != StreamingSessionConnectionState.offerSent &&
-            state != StreamingSessionConnectionState.answerSent &&
-            state != StreamingSessionConnectionState.answerReceived) {
-          await Future<void>.delayed(const Duration(milliseconds: 60));
-          StreamingManager.startStreaming(target);
-        }
+        await _autoRestoreStartStreamingWithRetries(target);
       } catch (_) {}
     });
+  }
+
+  Future<void> _autoRestoreStartStreamingWithRetries(Device target) async {
+    // Cold-starts can be racy: websocket may still be negotiating and the first
+    // requestRemoteControl can be dropped. Retry a few times automatically so
+    // users don't have to kill/relaunch the app.
+    const maxAttempts = 3;
+    const perAttemptWait = Duration(seconds: 8);
+
+    bool isConnectedState(StreamingSessionConnectionState s) =>
+        s == StreamingSessionConnectionState.connected;
+
+    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
+      if (!mounted) return;
+      final state = StreamingManager.getStreamingStateto(target);
+      if (isConnectedState(state)) return;
+
+      // If the previous attempt left a stale session behind, restart it.
+      if (state != StreamingSessionConnectionState.free) {
+        try {
+          StreamingManager.stopStreaming(target);
+        } catch (_) {}
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+
+      try {
+        WebSocketService.reconnect();
+      } catch (_) {}
+      await _waitForWebSocketConnected(timeout: const Duration(seconds: 10));
+
+      try {
+        StreamingManager.startStreaming(target);
+      } catch (_) {}
+
+      final deadline = DateTime.now().add(perAttemptWait);
+      while (mounted && DateTime.now().isBefore(deadline)) {
+        final s = StreamingManager.getStreamingStateto(target);
+        if (isConnectedState(s)) return;
+        await Future<void>.delayed(const Duration(milliseconds: 250));
+      }
+    }
   }
 
   Widget _buildListTile(
