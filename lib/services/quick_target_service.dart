@@ -66,6 +66,7 @@ class QuickTargetService {
   static const _kFavorites = 'controller.favorites.v1';
   static const _kToolbarOpacity = 'controller.toolbarOpacity.v1';
   static const _kRestoreOnConnect = 'controller.restoreLastTargetOnConnect.v1';
+  static const int defaultFavoriteSlots = 8;
 
   final ValueNotifier<StreamMode> mode = ValueNotifier(StreamMode.desktop);
   final ValueNotifier<int?> lastDeviceUid = ValueNotifier<int?>(null);
@@ -75,7 +76,7 @@ class QuickTargetService {
       ValueNotifier<QuickStreamTarget?>(null);
   final ValueNotifier<List<QuickStreamTarget?>> favorites =
       ValueNotifier<List<QuickStreamTarget?>>(
-          List<QuickStreamTarget?>.filled(4, null));
+          List<QuickStreamTarget?>.filled(defaultFavoriteSlots, null));
   final ValueNotifier<double> toolbarOpacity = ValueNotifier<double>(0.72);
   final ValueNotifier<bool> restoreLastTargetOnConnect =
       ValueNotifier<bool>(true);
@@ -105,11 +106,14 @@ class QuickTargetService {
 
     final favRaw = SharedPreferencesManager.getStringList(_kFavorites);
     if (favRaw != null && favRaw.isNotEmpty) {
-      final list = List<QuickStreamTarget?>.filled(4, null);
+      final list = List<QuickStreamTarget?>.filled(defaultFavoriteSlots, null);
       for (int i = 0; i < favRaw.length && i < list.length; i++) {
         list[i] = QuickStreamTarget.tryParse(favRaw[i]);
       }
       favorites.value = list;
+    } else {
+      favorites.value =
+          List<QuickStreamTarget?>.filled(defaultFavoriteSlots, null);
     }
 
     final op = SharedPreferencesManager.getDouble(_kToolbarOpacity);

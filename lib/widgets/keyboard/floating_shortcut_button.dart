@@ -680,8 +680,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
           clipBehavior: Clip.none,
           child: Container(
             key: const Key('shortcutPanelContainer'),
-            height: 86,
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            height: 78,
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
             decoration: BoxDecoration(
               color: bg,
               borderRadius: BorderRadius.circular(16),
@@ -697,7 +697,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
               children: [
                 SizedBox(
                   key: const Key('shortcutPanelStreamControls'),
-                  height: 32,
+                  height: 28,
                   child: _StreamControlRow(
                     enabled: hasSession,
                     onPickMode: () => _showStreamModePicker(context, channel),
@@ -711,12 +711,13 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                     onApplyFavorite: (target) {
                       _applyQuickTarget(target);
                     },
+                    onAddFavorite: () => _openTargetPicker(context),
                     onFavoriteAction: (slot, action) {
                       _handleFavoriteAction(context, slot, action);
                     },
                   ),
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(height: 4),
                 Expanded(
                   child: Row(
                     children: [
@@ -1065,6 +1066,7 @@ class _StreamControlRow extends StatelessWidget {
   final VoidCallback onPickTarget;
   final VoidCallback onQuickNextScreen;
   final ValueChanged<QuickStreamTarget> onApplyFavorite;
+  final VoidCallback onAddFavorite;
   final void Function(int slot, _FavoriteAction action) onFavoriteAction;
 
   const _StreamControlRow({
@@ -1074,6 +1076,7 @@ class _StreamControlRow extends StatelessWidget {
     required this.onPickTarget,
     required this.onQuickNextScreen,
     required this.onApplyFavorite,
+    required this.onAddFavorite,
     required this.onFavoriteAction,
   });
 
@@ -1092,7 +1095,7 @@ class _StreamControlRow extends StatelessWidget {
             enabled: enabled,
             onTap: onPickMode,
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           ValueListenableBuilder<StreamMode>(
             valueListenable: quick.mode,
             builder: (context, mode, _) {
@@ -1113,14 +1116,14 @@ class _StreamControlRow extends StatelessWidget {
               );
             },
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           _PillButton(
             icon: Icons.list_alt,
             label: '选择',
             enabled: enabled,
             onTap: onPickTarget,
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           ValueListenableBuilder<StreamMode>(
             valueListenable: quick.mode,
             builder: (context, mode, _) {
@@ -1134,7 +1137,7 @@ class _StreamControlRow extends StatelessWidget {
                     enabled: enabled,
                     onTap: onQuickNextScreen,
                   ),
-                  const SizedBox(width: 6),
+                  const SizedBox(width: 4),
                 ],
               );
             },
@@ -1142,27 +1145,35 @@ class _StreamControlRow extends StatelessWidget {
           ValueListenableBuilder<List<QuickStreamTarget?>>(
             valueListenable: quick.favorites,
             builder: (context, favorites, _) {
+              final entries = <(int slot, QuickStreamTarget target)>[];
+              for (int i = 0; i < favorites.length; i++) {
+                final t = favorites[i];
+                if (t == null) continue;
+                entries.add((i, t));
+              }
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (int i = 0; i < favorites.length; i++) ...[
+                  for (final e in entries) ...[
                     _FavoriteButton(
-                      slot: i,
-                      target: favorites[i],
+                      slot: e.$1,
+                      target: e.$2,
                       enabled: enabled,
-                      onTap: favorites[i] == null
-                          ? null
-                          : () => onApplyFavorite(favorites[i]!),
-                      onLongPress: favorites[i] == null
-                          ? null
-                          : () => _showFavoriteMenu(
-                                context,
-                                slot: i,
-                                onAction: onFavoriteAction,
-                              ),
+                      onTap: () => onApplyFavorite(e.$2),
+                      onLongPress: () => _showFavoriteMenu(
+                        context,
+                        slot: e.$1,
+                        onAction: onFavoriteAction,
+                      ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                   ],
+                  _IconPillButton(
+                    icon: Icons.add,
+                    enabled: enabled,
+                    tooltip: '添加快捷切换（在列表里长按保存）',
+                    onTap: onAddFavorite,
+                  ),
                 ],
               );
             },
@@ -1228,30 +1239,65 @@ class _PillButton extends StatelessWidget {
       onTap: enabled ? onTap : null,
       borderRadius: BorderRadius.circular(10),
       child: Container(
-        height: 30,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        height: 26,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         decoration: BoxDecoration(
           color: Colors.white.withValues(alpha: enabled ? 0.10 : 0.06),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.14),
-            width: 1,
-          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.92)),
-            const SizedBox(width: 6),
+            const SizedBox(width: 5),
             Text(
               label,
               style: TextStyle(
-                fontSize: 12,
+                fontSize: 11,
                 fontWeight: FontWeight.w700,
                 color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
               ),
             ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+class _IconPillButton extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  const _IconPillButton({
+    required this.icon,
+    required this.enabled,
+    required this.tooltip,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          height: 26,
+          width: 26,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: Colors.white.withValues(alpha: enabled ? 0.10 : 0.06),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
+          ),
         ),
       ),
     );
@@ -1275,45 +1321,37 @@ class _FavoriteButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final label = target?.shortDisplayLabel() ?? '快捷 ${slot + 1}';
+    final label = target?.shortDisplayLabel() ?? '快捷';
     return InkWell(
       onTap: enabled ? onTap : null,
       onLongPress: enabled ? onLongPress : null,
       borderRadius: BorderRadius.circular(10),
       child: Container(
-        height: 30,
-        constraints: const BoxConstraints(minWidth: 60),
-        padding: const EdgeInsets.symmetric(horizontal: 8),
+        height: 26,
+        padding: const EdgeInsets.symmetric(horizontal: 6),
         decoration: BoxDecoration(
           color: Colors.black.withValues(alpha: 0.25),
           borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-            color: Colors.white.withValues(alpha: 0.14),
-            width: 1,
-          ),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
-              target == null ? Icons.star_border : Icons.star,
-              size: 14,
-              color: target == null
-                  ? Colors.white.withValues(alpha: 0.35)
-                  : Colors.amber,
+              Icons.star,
+              size: 12,
+              color: Colors.amber.withValues(alpha: enabled ? 0.95 : 0.45),
             ),
-            const SizedBox(width: 6),
-            SizedBox(
-              width: 72,
+            const SizedBox(width: 5),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxWidth: 64),
               child: Text(
                 label,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white
-                      .withValues(alpha: target == null ? 0.45 : 0.92),
+                  color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
                 ),
               ),
             ),

@@ -23,6 +23,7 @@ import 'package:cloudplayplus/utils/host/host_command_runner.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
 import 'package:cloudplayplus/models/quick_stream_target.dart';
 import 'package:cloudplayplus/models/stream_mode.dart';
+import 'package:cloudplayplus/models/iterm2_panel.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:hardware_simulator/hardware_simulator.dart';
@@ -397,8 +398,16 @@ class StreamingSession {
               if (selfSessionType == SelfSessionType.controller &&
                   (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
                 final quick = QuickTargetService.instance;
-                final desired =
+                QuickStreamTarget? desired =
                     _restoreTargetSnapshot ?? quick.lastTarget.value;
+                // If user is currently in iTerm2 mode, only restore an actual panel target.
+                if (quick.mode.value == StreamMode.iterm2) {
+                  if (desired == null ||
+                      desired.mode != StreamMode.iterm2 ||
+                      desired.id.trim().isEmpty) {
+                    desired = null;
+                  }
+                }
                 final shouldRestore =
                     (desired != null) && quick.restoreLastTargetOnConnect.value;
                 if (shouldRestore && channel != null) {
@@ -412,6 +421,10 @@ class StreamingSession {
                   _restoreTargetSnapshot = null;
                   _restoreTargetPending = false;
                 }
+                await _maybeAutoSelectIterm2DefaultPanel(
+                  channel!,
+                  shouldRestore: shouldRestore,
+                );
               }
               if (StreamingSettings.streamAudio!) {
                 StreamingSettings.audioBitrate ??= 32;
@@ -434,35 +447,60 @@ class StreamingSession {
       // forcing an initial full-desktop stream.
       if (AppPlatform.isMobile || AppPlatform.isAndroidTV) {
         final quick = QuickTargetService.instance;
-        final t = quick.lastTarget.value;
-        final restore = (t != null) && quick.restoreLastTargetOnConnect.value;
+        final mode = quick.mode.value;
+        final last = quick.lastTarget.value;
+
+        QuickStreamTarget? restoreTarget;
+        if (quick.restoreLastTargetOnConnect.value && last != null) {
+          if (mode == StreamMode.iterm2) {
+            if (last.mode == StreamMode.iterm2 && last.id.trim().isNotEmpty) {
+              restoreTarget = last;
+            }
+          } else if (mode == StreamMode.window) {
+            if (last.mode == StreamMode.window && last.windowId != null) {
+              restoreTarget = last;
+            }
+          } else {
+            if (last.mode == StreamMode.desktop) restoreTarget = last;
+          }
+        }
+
         // Snapshot the desired restore target early, so it won't be overwritten
         // by any initial captureTargetChanged messages (e.g. host defaulting to screen).
-        _restoreTargetSnapshot = restore ? t : null;
-        _restoreTargetPending = restore;
-        if (restore) {
-          try {
-            if (t!.mode == StreamMode.window && t.windowId != null) {
+        _restoreTargetSnapshot = restoreTarget;
+        _restoreTargetPending = restoreTarget != null;
+
+        // Always send current mode intent on connect, so host won't default to a 4K desktop
+        // stream when user is in window/iTerm2 mode.
+        try {
+          if (mode == StreamMode.window) {
+            settings['captureTargetType'] = 'window';
+            if (restoreTarget != null) {
               settings['sourceType'] = 'window';
-              settings['windowId'] = t.windowId;
-              // On macOS desktopCapturer sources, window id typically matches source id.
-              settings['desktopSourceId'] = t.windowId.toString();
-              settings['captureTargetType'] = 'window';
-            } else if (t.mode == StreamMode.iterm2) {
-              // Start with iTerm2 intent; capture will be refined once datachannel opens.
-              if (t.windowId != null) {
-                settings['sourceType'] = 'window';
-                settings['windowId'] = t.windowId;
-                settings['desktopSourceId'] = t.windowId.toString();
-              }
-              settings['captureTargetType'] = 'iterm2';
-              settings['iterm2SessionId'] = t.id;
-            } else {
-              settings['sourceType'] = 'screen';
-              settings['captureTargetType'] = 'screen';
+              settings['windowId'] = restoreTarget.windowId;
+              settings['desktopSourceId'] = restoreTarget.windowId.toString();
             }
-          } catch (_) {}
-        }
+          } else if (mode == StreamMode.iterm2) {
+            settings['captureTargetType'] = 'iterm2';
+            if (restoreTarget != null) {
+              if (restoreTarget.windowId != null) {
+                settings['sourceType'] = 'window';
+                settings['windowId'] = restoreTarget.windowId;
+                settings['desktopSourceId'] = restoreTarget.windowId.toString();
+              }
+              settings['iterm2SessionId'] = restoreTarget.id;
+            }
+          } else {
+            settings['captureTargetType'] = 'screen';
+            if (restoreTarget != null) {
+              settings['sourceType'] = 'screen';
+              final sid = restoreTarget.id.trim();
+              if (sid.isNotEmpty && sid != 'screen') {
+                settings['desktopSourceId'] = sid;
+              }
+            }
+          }
+        } catch (_) {}
       }
       // Ensure signaling transport is ready before requesting a remote session;
       // otherwise the request may be ignored on cold start.
@@ -957,6 +995,13 @@ class StreamingSession {
     }
     _resetPingState();
     _stopRestoreTargetRetry();
+    final iterm2Listener = _autoIterm2PanelsListener;
+    if (iterm2Listener != null) {
+      try {
+        RemoteIterm2Service.instance.panels.removeListener(iterm2Listener);
+      } catch (_) {}
+      _autoIterm2PanelsListener = null;
+    }
     connectionState = StreamingSessionConnectionState.disconnecting;
 
     await _lock.synchronized(() async {
@@ -1065,6 +1110,8 @@ class StreamingSession {
   int _restoreTargetRetryLastAtMs = 0;
   bool _loggedOfferCodecs = false;
   final Set<int> _iterm2ModifiersDown = <int>{};
+  bool _autoIterm2DefaultPanelAttempted = false;
+  VoidCallback? _autoIterm2PanelsListener;
 
   @visibleForTesting
   void debugSetRestoreTargetPending(QuickStreamTarget? target) {
@@ -1155,6 +1202,79 @@ class StreamingSession {
     } finally {
       _restoreTargetAttemptInFlight = false;
     }
+  }
+
+  Future<void> _maybeAutoSelectIterm2DefaultPanel(
+    RTCDataChannel channel, {
+    required bool shouldRestore,
+  }) async {
+    if (!AppPlatform.isMobile && !AppPlatform.isAndroidTV) return;
+    if (_autoIterm2DefaultPanelAttempted) return;
+    if (channel.state != RTCDataChannelState.RTCDataChannelOpen) return;
+
+    final quick = QuickTargetService.instance;
+    if (quick.mode.value != StreamMode.iterm2) return;
+    if (shouldRestore) return;
+
+    // If user explicitly selected a non-iterm2 target, do not override.
+    final last = quick.lastTarget.value;
+    if (last != null && last.mode == StreamMode.iterm2 && last.id.isNotEmpty) {
+      // We have a concrete panel id already; nothing to auto-pick.
+      return;
+    }
+
+    _autoIterm2DefaultPanelAttempted = true;
+
+    Future<void> applyFirstPanel(List<ITerm2PanelInfo> panels) async {
+      if (panels.isEmpty) return;
+      final first = panels.first;
+      if (first.id.isEmpty) return;
+      try {
+        InputDebugService.instance
+            .log('[iterm2] auto-pick first panel id=${first.id}');
+        await quick.rememberTarget(
+          QuickStreamTarget(
+            mode: StreamMode.iterm2,
+            id: first.id,
+            label: first.title.isNotEmpty ? first.title : 'iTerm2',
+            windowId: first.windowId,
+            appName: 'iTerm2',
+          ),
+        );
+        await RemoteIterm2Service.instance
+            .selectPanel(channel, sessionId: first.id);
+      } catch (_) {}
+    }
+
+    // If we already have cached panels, apply immediately.
+    final cached = RemoteIterm2Service.instance.panels.value;
+    if (cached.isNotEmpty) {
+      await applyFirstPanel(cached);
+      return;
+    }
+
+    // Otherwise request and wait once.
+    Future<void> onPanelsMaybeReady() async {
+      final list = RemoteIterm2Service.instance.panels.value;
+      if (list.isEmpty) return;
+      final listener = _autoIterm2PanelsListener;
+      if (listener != null) {
+        try {
+          RemoteIterm2Service.instance.panels.removeListener(listener);
+        } catch (_) {}
+      }
+      _autoIterm2PanelsListener = null;
+      await applyFirstPanel(list);
+    }
+
+    _autoIterm2PanelsListener ??= () {
+      unawaited(onPanelsMaybeReady());
+    };
+    try {
+      RemoteIterm2Service.instance.panels
+          .addListener(_autoIterm2PanelsListener!);
+    } catch (_) {}
+    await RemoteIterm2Service.instance.requestPanels(channel);
   }
 
   void _startRestoreTargetRetryLoop(RTCDataChannel channel) {
