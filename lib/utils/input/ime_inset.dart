@@ -53,10 +53,10 @@ double computeRemoteVideoBottomPadding({
   final overlaySum = shortcutOverlayHeight + virtualKeyboardOverlayHeight;
   final cappedOverlays = overlaySum.clamp(0.0, maxNoImePad);
 
-  // When IME is visible, do not reserve additional overlay space: toolbars
-  // should float above the video instead of further shrinking the viewport.
-  final overlayPad = (keyboardInset > 0) ? 0.0 : cappedOverlays;
-  final rawBottomPad = effectiveIme + overlayPad;
+  // Always reserve a small overlay pad (capped to a fraction of the screen).
+  // This ensures the shortcut bar doesn't cover the focused input area when
+  // the system IME is visible.
+  final rawBottomPad = effectiveIme + cappedOverlays;
 
   // Overflow protection: never shrink the video area to 0.
   final maxPad =
