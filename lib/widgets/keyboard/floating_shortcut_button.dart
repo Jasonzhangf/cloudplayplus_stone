@@ -456,86 +456,99 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
               Positioned(
                 right: 12,
                 bottom: (bottom > 0 ? bottom : 12) + 86 + 8,
-                child: _TopRightActions(
-                  useSystemKeyboard: _useSystemKeyboard,
-                  onToggleKeyboard: () {
-                    if (_useSystemKeyboard) {
-                      // Toggle IME visibility (manual only).
-                      final want = !_systemKeyboardWanted;
-                      final nowMs = DateTime.now().millisecondsSinceEpoch;
-                      setState(() => _systemKeyboardWanted = want);
-                      ScreenController.setSystemImeActive(want);
-                      if (want) {
-                        _forceImeShowUntilMs = nowMs + 1600;
+                child: ValueListenableBuilder<bool>(
+                  valueListenable: ScreenController.showVirtualMouse,
+                  builder: (context, showMouse, _) {
+                    return _TopRightActions(
+                      useSystemKeyboard: _useSystemKeyboard,
+                      showVirtualMouse: showMouse,
+                      onToggleMouse: () {
+                        ScreenController.setShowVirtualMouse(!showMouse);
+                      },
+                      onToggleKeyboard: () {
+                        if (_useSystemKeyboard) {
+                          // Toggle IME visibility (manual only).
+                          final want = !_systemKeyboardWanted;
+                          final nowMs = DateTime.now().millisecondsSinceEpoch;
+                          setState(() => _systemKeyboardWanted = want);
+                          ScreenController.setSystemImeActive(want);
+                          if (want) {
+                            _forceImeShowUntilMs = nowMs + 1600;
+                            ScreenController.setShowVirtualKeyboard(false);
+                            FocusScope.of(context)
+                                .requestFocus(_systemKeyboardFocusNode);
+                            SystemChannels.textInput
+                                .invokeMethod('TextInput.show');
+                          } else {
+                            _forceImeShowUntilMs = 0;
+                            SystemChannels.textInput
+                                .invokeMethod('TextInput.hide');
+                            FocusScope.of(context).unfocus();
+                          }
+                          return;
+                        }
+                        // If currently in virtual keyboard mode, switch to system IME and show it.
+                        setState(() {
+                          _useSystemKeyboard = true;
+                          _systemKeyboardWanted = true;
+                        });
+                        _forceImeShowUntilMs =
+                            DateTime.now().millisecondsSinceEpoch + 1600;
+                        ScreenController.setSystemImeActive(true);
                         ScreenController.setShowVirtualKeyboard(false);
                         FocusScope.of(context)
                             .requestFocus(_systemKeyboardFocusNode);
                         SystemChannels.textInput.invokeMethod('TextInput.show');
-                      } else {
+                      },
+                      onDisconnect: () async {
+                        final session = WebrtcService.currentRenderingSession;
+                        final device = session?.controlled;
+                        if (device == null) return;
+                        final ok = await showDialog<bool>(
+                              context: context,
+                              builder: (ctx) => AlertDialog(
+                                title: const Text('断开连接？'),
+                                content: const Text('将停止当前串流连接。'),
+                                actions: [
+                                  TextButton(
+                                    onPressed: () =>
+                                        Navigator.of(ctx).pop(false),
+                                    child: const Text('取消'),
+                                  ),
+                                  ElevatedButton(
+                                    onPressed: () =>
+                                        Navigator.of(ctx).pop(true),
+                                    child: const Text('断开'),
+                                  ),
+                                ],
+                              ),
+                            ) ??
+                            false;
+                        if (!ok) return;
+                        try {
+                          StreamingManager.stopStreaming(device);
+                        } catch (_) {}
+                        if (!mounted) return;
+                        setState(() => _isPanelVisible = false);
+                        _systemKeyboardWanted = false;
                         _forceImeShowUntilMs = 0;
-                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        ScreenController.setSystemImeActive(false);
+                        ScreenController.setShowVirtualKeyboard(false);
+                        ScreenController.setShortcutOverlayHeight(0);
                         FocusScope.of(context).unfocus();
-                      }
-                      return;
-                    }
-                    // If currently in virtual keyboard mode, switch to system IME and show it.
-                    setState(() {
-                      _useSystemKeyboard = true;
-                      _systemKeyboardWanted = true;
-                    });
-                    _forceImeShowUntilMs =
-                        DateTime.now().millisecondsSinceEpoch + 1600;
-                    ScreenController.setSystemImeActive(true);
-                    ScreenController.setShowVirtualKeyboard(false);
-                    FocusScope.of(context)
-                        .requestFocus(_systemKeyboardFocusNode);
-                    SystemChannels.textInput.invokeMethod('TextInput.show');
-                  },
-                  onDisconnect: () async {
-                    final session = WebrtcService.currentRenderingSession;
-                    final device = session?.controlled;
-                    if (device == null) return;
-                    final ok = await showDialog<bool>(
-                          context: context,
-                          builder: (ctx) => AlertDialog(
-                            title: const Text('断开连接？'),
-                            content: const Text('将停止当前串流连接。'),
-                            actions: [
-                              TextButton(
-                                onPressed: () => Navigator.of(ctx).pop(false),
-                                child: const Text('取消'),
-                              ),
-                              ElevatedButton(
-                                onPressed: () => Navigator.of(ctx).pop(true),
-                                child: const Text('断开'),
-                              ),
-                            ],
-                          ),
-                        ) ??
-                        false;
-                    if (!ok) return;
-                    try {
-                      StreamingManager.stopStreaming(device);
-                    } catch (_) {}
-                    if (!mounted) return;
-                    setState(() => _isPanelVisible = false);
-                    _systemKeyboardWanted = false;
-                    _forceImeShowUntilMs = 0;
-                    ScreenController.setSystemImeActive(false);
-                    ScreenController.setShowVirtualKeyboard(false);
-                    ScreenController.setShortcutOverlayHeight(0);
-                    FocusScope.of(context).unfocus();
-                    SystemChannels.textInput.invokeMethod('TextInput.hide');
-                  },
-                  onClose: () {
-                    setState(() => _isPanelVisible = false);
-                    _systemKeyboardWanted = false;
-                    _forceImeShowUntilMs = 0;
-                    ScreenController.setSystemImeActive(false);
-                    ScreenController.setShowVirtualKeyboard(false);
-                    ScreenController.setShortcutOverlayHeight(0);
-                    FocusScope.of(context).unfocus();
-                    SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                      },
+                      onClose: () {
+                        setState(() => _isPanelVisible = false);
+                        _systemKeyboardWanted = false;
+                        _forceImeShowUntilMs = 0;
+                        ScreenController.setSystemImeActive(false);
+                        ScreenController.setShowVirtualKeyboard(false);
+                        ScreenController.setShortcutOverlayHeight(0);
+                        FocusScope.of(context).unfocus();
+                        SystemChannels.textInput.invokeMethod('TextInput.hide');
+                      },
+                    );
                   },
                 ),
               ),
@@ -959,12 +972,16 @@ enum _FavoriteAction { rename, delete }
 
 class _TopRightActions extends StatelessWidget {
   final bool useSystemKeyboard;
+  final bool showVirtualMouse;
+  final VoidCallback onToggleMouse;
   final VoidCallback onToggleKeyboard;
   final VoidCallback onDisconnect;
   final VoidCallback onClose;
 
   const _TopRightActions({
     required this.useSystemKeyboard,
+    required this.showVirtualMouse,
+    required this.onToggleMouse,
     required this.onToggleKeyboard,
     required this.onDisconnect,
     required this.onClose,
@@ -995,6 +1012,19 @@ class _TopRightActions extends StatelessWidget {
             ),
             tooltip: useSystemKeyboard ? '手机键盘' : '电脑键盘',
             onPressed: onToggleKeyboard,
+            iconSize: 18,
+            padding: const EdgeInsets.all(0),
+            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+            color: Colors.white.withValues(alpha: 0.92),
+          ),
+          const SizedBox(width: 2),
+          IconButton(
+            key: const Key('shortcutPanelMouseToggle'),
+            icon: Icon(
+              showVirtualMouse ? Icons.mouse : Icons.mouse_outlined,
+            ),
+            tooltip: showVirtualMouse ? '隐藏鼠标' : '显示鼠标',
+            onPressed: onToggleMouse,
             iconSize: 18,
             padding: const EdgeInsets.all(0),
             constraints: const BoxConstraints.tightFor(width: 26, height: 26),

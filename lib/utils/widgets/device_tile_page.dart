@@ -594,10 +594,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                             !ScreenController.onlyShowRemoteScreen);
                       }
                       if (index == 2) {
-                        ScreenController.setShowVirtualMouse(
-                            !ScreenController.showVirtualMouse.value);
-                      }
-                      if (index == 3) {
                         ScreenController.setshowVirtualGamePad(
                             !ScreenController.showVirtualGamePad.value);
                       }
@@ -605,7 +601,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                     buttons: const [
                       Icons.crop_free,
                       Icons.open_in_full,
-                      Icons.mouse,
                       Icons.gamepad,
                     ],
                   ),
