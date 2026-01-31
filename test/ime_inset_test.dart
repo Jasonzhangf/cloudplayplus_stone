@@ -37,7 +37,7 @@ void main() {
   });
 
   test('computeRemoteVideoBottomPadding caps shortcut pad when IME hidden', () {
-    // No IME => cap shortcut overlay to 15% of 800 = 120.
+    // No IME => cap total overlay (shortcut + in-app keyboard) to 15% of 800 = 120.
     expect(
       computeRemoteVideoBottomPadding(
         mediaHeight: 800,
@@ -71,6 +71,18 @@ void main() {
         virtualKeyboardOverlayHeight: 40,
       ),
       140.0,
+    );
+
+    // No IME => total overlays are capped (even if virtual keyboard is tall).
+    expect(
+      computeRemoteVideoBottomPadding(
+        mediaHeight: 800,
+        constraintsHeight: 800,
+        keyboardInset: 0,
+        shortcutOverlayHeight: 40,
+        virtualKeyboardOverlayHeight: 300,
+      ),
+      120.0,
     );
   });
 }

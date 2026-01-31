@@ -19,6 +19,8 @@ import '../entities/user.dart';
 import '../utils/websocket.dart'
     if (dart.library.js) '../utils/websocket_web.dart';
 import 'app_info_service.dart';
+import 'lan/lan_address_service.dart';
+import 'lan/lan_signaling_host_server_platform.dart';
 import 'secure_storage_manager.dart';
 
 enum WebSocketConnectionState {
@@ -102,11 +104,14 @@ class WebSocketService {
         _baseUrl = "ws://127.0.0.1:8000/ws/";
       }
     }
-    if (!kIsWeb && !DevelopSettings.useLocalServer && DevelopSettings.useUnsafeServer) {
+    if (!kIsWeb &&
+        !DevelopSettings.useLocalServer &&
+        DevelopSettings.useUnsafeServer) {
       _baseUrl = 'ws://101.132.58.198:8001/ws/';
     }
     if (_baseUrl != initialBaseUrl) {
-      VLOG0('[WebSocketService] init: _baseUrl changed from $initialBaseUrl to $_baseUrl');
+      VLOG0(
+          '[WebSocketService] init: _baseUrl changed from $initialBaseUrl to $_baseUrl');
     } else {
       VLOG0('[WebSocketService] init: _baseUrl is $_baseUrl');
     }
@@ -123,8 +128,10 @@ class WebSocketService {
       accessToken = SharedPreferencesManager.getString('access_token');
       refreshToken = SharedPreferencesManager.getString('refresh_token');
     }
-    VLOG0('[WebSocketService] init: accessToken=${accessToken != null ? accessToken.substring(0, 12) + '...' : 'null'}');
-    VLOG0('[WebSocketService] init: refreshToken=${refreshToken != null ? refreshToken.substring(0, 12) + '...' : 'null'}');
+    VLOG0(
+        '[WebSocketService] init: accessToken=${accessToken != null ? accessToken.substring(0, 12) + '...' : 'null'}');
+    VLOG0(
+        '[WebSocketService] init: refreshToken=${refreshToken != null ? refreshToken.substring(0, 12) + '...' : 'null'}');
     if (accessToken == null || refreshToken == null) {
       //TODO(haichao): show error dialog.
       VLOG0("error: no access token");
@@ -133,14 +140,17 @@ class WebSocketService {
 
     VLOG0('[WebSocketService] init: checking token validity.');
     if (!LoginService.isTokenValid(accessToken)) {
-      VLOG0('[WebSocketService] init: access token invalid, attempting to refresh.');
+      VLOG0(
+          '[WebSocketService] init: access token invalid, attempting to refresh.');
       final newAccessToken = await LoginService.doRefreshToken(refreshToken);
       if (newAccessToken != null && LoginService.isTokenValid(newAccessToken)) {
         if (DevelopSettings.useSecureStorage) {
-          VLOG0('[WebSocketService] init: refresh successful, saving new access token.');
+          VLOG0(
+              '[WebSocketService] init: refresh successful, saving new access token.');
           await SecureStorageManager.setString('access_token', newAccessToken);
         } else {
-          VLOG0('[WebSocketService] init: refresh successful, saving new access token.');
+          VLOG0(
+              '[WebSocketService] init: refresh successful, saving new access token.');
           await SharedPreferencesManager.setString(
               'access_token', newAccessToken);
         }
@@ -170,7 +180,8 @@ class WebSocketService {
     };
 
     _socket?.onClose = (code, message) async {
-      VLOG0('[WebSocketService] onClose: WebSocket closed (code: $code, message: $message).');
+      VLOG0(
+          '[WebSocketService] onClose: WebSocket closed (code: $code, message: $message).');
       int ownerId = 0;
       String ownerNickname = '';
       String selfConnectionId = '';
@@ -219,11 +230,27 @@ class WebSocketService {
   }
 
   static Future<void> updateDeviceInfo() async {
+    List<String> lanAddrs = const <String>[];
+    try {
+      lanAddrs = await LanAddressService.instance.listLocalAddresses();
+    } catch (_) {}
+
+    bool lanEnabled = false;
+    int lanPort = 0;
+    try {
+      // Only meaningful on desktop host; on controller/mobile this will be stubbed.
+      lanEnabled = LanSignalingHostServer.instance.enabled.value;
+      lanPort = LanSignalingHostServer.instance.port.value;
+    } catch (_) {}
+
     send('updateDeviceInfo', {
       'deviceName': ApplicationInfo.deviceName,
       'deviceType': ApplicationInfo.deviceTypeName,
       'connective': ApplicationInfo.connectable,
       'screenCount': ApplicationInfo.screenCount,
+      'lanEnabled': lanEnabled,
+      'lanPort': lanPort,
+      'lanAddrs': lanAddrs,
     });
   }
 
@@ -265,16 +292,12 @@ class WebSocketService {
       case 'connection_info':
         {
           //This is first response from server. update device info.
-          AppStateService.lastwebsocketSessionid = AppStateService.websocketSessionid;
+          AppStateService.lastwebsocketSessionid =
+              AppStateService.websocketSessionid;
           AppStateService.websocketSessionid = data['connection_id'];
           ApplicationInfo.user =
               User(uid: data['uid'], nickname: data['nickname']);
-          send('updateDeviceInfo', {
-            'deviceName': ApplicationInfo.deviceName,
-            'deviceType': ApplicationInfo.deviceTypeName,
-            'connective': ApplicationInfo.connectable,
-            'screenCount': ApplicationInfo.screenCount,
-          });
+          unawaited(updateDeviceInfo());
           ApplicationInfo.thisDevice = (Device(
               uid: ApplicationInfo.user.uid,
               nickname: ApplicationInfo.user.nickname,
@@ -356,7 +379,7 @@ class WebSocketService {
     VLOG0("staring heartbeat timer");
     _heartbeatTimer?.cancel();
     _pongTimeoutTimer?.cancel();
-    
+
     _heartbeatTimer = Timer.periodic(const Duration(minutes: 5), (Timer timer) {
       VLOG0("sending ping message");
       _sendPing();
@@ -364,19 +387,21 @@ class WebSocketService {
   }
 
   static void _sendPing() {
-    if (!AppPlatform.isDeskTop || connectionState != WebSocketConnectionState.connected) {
+    if (!AppPlatform.isDeskTop ||
+        connectionState != WebSocketConnectionState.connected) {
       return;
     }
     VLOG0("sending ping");
     send('ping', {});
-    
+
     _pongTimeoutTimer?.cancel();
-    
+
     _pongTimeoutTimer = Timer(const Duration(seconds: 10), () {
       VLOG0("no pong received within 10 seconds, reconnecting");
       _pongTimeoutTimer?.cancel();
       _pongTimeoutTimer = null;
-      if (connectionState == WebSocketConnectionState.connected && AppPlatform.isDeskTop) {
+      if (connectionState == WebSocketConnectionState.connected &&
+          AppPlatform.isDeskTop) {
         reconnect();
       }
     });

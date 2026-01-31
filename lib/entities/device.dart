@@ -13,6 +13,11 @@ class Device {
   bool connective;
   int screencount;
 
+  // Optional LAN hints propagated via cloud signaling, to allow one-tap LAN connect.
+  List<String> lanAddrs;
+  int? lanPort;
+  bool lanEnabled;
+
   ValueNotifier<StreamingSessionConnectionState> connectionState =
       ValueNotifier(StreamingSessionConnectionState.free);
 
@@ -23,9 +28,23 @@ class Device {
       required this.devicetype,
       required this.websocketSessionid,
       required this.connective,
-      required this.screencount});
+      required this.screencount,
+      List<String>? lanAddrs,
+      int? lanPort,
+      bool? lanEnabled})
+      : lanAddrs = lanAddrs ?? const <String>[],
+        lanPort = lanPort,
+        lanEnabled = lanEnabled ?? false;
 
   static Device fromJson(Map<String, dynamic> deviceinfo) {
+    final addrsAny = deviceinfo['lanAddrs'];
+    final addrs = <String>[];
+    if (addrsAny is List) {
+      for (final a in addrsAny) {
+        final s = a?.toString() ?? '';
+        if (s.isNotEmpty) addrs.add(s);
+      }
+    }
     return Device(
       uid: deviceinfo['owner_id'] as int,
       nickname: deviceinfo['owner_nickname'] as String,
@@ -34,6 +53,13 @@ class Device {
       websocketSessionid: deviceinfo['connection_id'] as String,
       connective: deviceinfo['connective'] as bool,
       screencount: deviceinfo['screen_count'] as int,
+      lanAddrs: addrs,
+      lanPort: (deviceinfo['lanPort'] is num)
+          ? (deviceinfo['lanPort'] as num).toInt()
+          : null,
+      lanEnabled: (deviceinfo['lanEnabled'] is bool)
+          ? (deviceinfo['lanEnabled'] as bool)
+          : false,
     );
   }
 }
@@ -47,5 +73,7 @@ final defaultDeviceList = [
     websocketSessionid: '',
     connective: false,
     screencount: 0,
+    lanAddrs: const <String>[],
+    lanEnabled: false,
   )
 ];

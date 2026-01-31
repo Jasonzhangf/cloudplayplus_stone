@@ -71,9 +71,10 @@ class _DevicesPageState extends State<DevicesPage> {
         if (deviceInstance == null && lastSelected != null) {
           final lastId = lastSelected.websocketSessionid;
           final directMatch = connId == lastId;
-          final reconnectMatch = (AppStateService.lastwebsocketSessionid != null &&
-              AppStateService.lastwebsocketSessionid == lastId &&
-              connId == AppStateService.websocketSessionid);
+          final reconnectMatch =
+              (AppStateService.lastwebsocketSessionid != null &&
+                  AppStateService.lastwebsocketSessionid == lastId &&
+                  connId == AppStateService.websocketSessionid);
           if (directMatch || reconnectMatch) {
             deviceInstance = lastSelected;
           }
@@ -88,12 +89,36 @@ class _DevicesPageState extends State<DevicesPage> {
             websocketSessionid: connId,
             connective: device['connective'],
             screencount: device['screen_count'],
+            lanAddrs: (device['lanAddrs'] is List)
+                ? (device['lanAddrs'] as List)
+                    .map((e) => e?.toString() ?? '')
+                    .where((e) => e.isNotEmpty)
+                    .toList(growable: false)
+                : const <String>[],
+            lanPort: (device['lanPort'] is num)
+                ? (device['lanPort'] as num).toInt()
+                : null,
+            lanEnabled: (device['lanEnabled'] is bool)
+                ? (device['lanEnabled'] as bool)
+                : false,
           );
         } else {
           deviceInstance.devicename = device['device_name'];
           deviceInstance.connective = device['connective'];
           deviceInstance.screencount = device['screen_count'];
           deviceInstance.websocketSessionid = connId;
+          deviceInstance.lanAddrs = (device['lanAddrs'] is List)
+              ? (device['lanAddrs'] as List)
+                  .map((e) => e?.toString() ?? '')
+                  .where((e) => e.isNotEmpty)
+                  .toList(growable: false)
+              : const <String>[];
+          deviceInstance.lanPort = (device['lanPort'] is num)
+              ? (device['lanPort'] as num).toInt()
+              : null;
+          deviceInstance.lanEnabled = (device['lanEnabled'] is bool)
+              ? (device['lanEnabled'] as bool)
+              : false;
         }
 
         nextList.add(deviceInstance);
@@ -285,7 +310,8 @@ class _DevicesPageState extends State<DevicesPage> {
       final candidates = _deviceList.where((d) => d.uid > 0).toList();
       Device? best;
       for (final d in candidates) {
-        if (d.devicename == hint.devicename && d.devicetype == hint.devicetype) {
+        if (d.devicename == hint.devicename &&
+            d.devicetype == hint.devicetype) {
           if (hint.nickname.isNotEmpty && d.nickname == hint.nickname) {
             return d;
           }
@@ -298,7 +324,8 @@ class _DevicesPageState extends State<DevicesPage> {
     final uid = quick.lastDeviceUid.value;
     if (uid != null && uid > 0) {
       // Fallback: if only one device is available for this uid, restore it.
-      final matches = _deviceList.where((d) => d.uid == uid && d.uid > 0).toList();
+      final matches =
+          _deviceList.where((d) => d.uid == uid && d.uid > 0).toList();
       if (matches.length == 1) return matches.first;
       // If multiple, pick the first connective one.
       for (final d in matches) {
@@ -367,20 +394,20 @@ class _DevicesPageState extends State<DevicesPage> {
     return ListTile(
       title: Text(data.devicename),
       //subtitle: Text(data.devicetype),
-      trailing: AppPlatform.isAndroidTV? 
-      IconButton(
-        icon: IconBuilder.findIconByName(data.devicetype),
-        color: Theme.of(context).iconTheme.color,
-        onPressed: () {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-                builder: (context) => DeviceDetailPage(device: data)),
-          );
-        },
-      )
-      //non-android TV
-      :IconBuilder.findIconByName(data.devicetype),
+      trailing: AppPlatform.isAndroidTV
+          ? IconButton(
+              icon: IconBuilder.findIconByName(data.devicetype),
+              color: Theme.of(context).iconTheme.color,
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) => DeviceDetailPage(device: data)),
+                );
+              },
+            )
+          //non-android TV
+          : IconBuilder.findIconByName(data.devicetype),
       selected: isSelected,
     );
   }

@@ -47,15 +47,14 @@ double computeRemoteVideoBottomPadding({
     keyboardInset: keyboardInset,
   );
 
-  // When the system IME is hidden, cap the shortcut/toolbar reserved height to avoid
-  // pushing the stream content too far up (wasting viewport and bandwidth).
+  // When the system IME is hidden, cap the *total* overlay reserved height to
+  // avoid pushing the stream content too far up (wasting viewport and bandwidth).
   final maxNoImePad = (mediaHeight * maxNoImeFraction).clamp(0.0, mediaHeight);
-  final cappedShortcut = (keyboardInset <= 0)
-      ? shortcutOverlayHeight.clamp(0.0, maxNoImePad)
-      : shortcutOverlayHeight;
+  final overlaySum = shortcutOverlayHeight + virtualKeyboardOverlayHeight;
+  final cappedOverlays =
+      (keyboardInset <= 0) ? overlaySum.clamp(0.0, maxNoImePad) : overlaySum;
 
-  final rawBottomPad =
-      effectiveIme + cappedShortcut + virtualKeyboardOverlayHeight;
+  final rawBottomPad = effectiveIme + cappedOverlays;
 
   // Overflow protection: never shrink the video area to 0.
   final maxPad =

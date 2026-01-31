@@ -12,6 +12,7 @@ import '../../services/shared_preferences_manager.dart';
 import '../../services/streamed_manager.dart';
 import '../signaling/signaling_transport.dart';
 import '../signaling/cloud_signaling_transport.dart';
+import 'lan_address_service.dart';
 import 'lan_signaling_protocol.dart';
 import 'lan_signaling_host_transport.dart';
 
@@ -277,30 +278,6 @@ class LanSignalingHostServer {
   }
 
   Future<List<String>> listLocalIpAddressesForDisplay() async {
-    final out = <String>{};
-    try {
-      final ifaces = await NetworkInterface.list(
-        includeLoopback: false,
-        includeLinkLocal: true,
-        type: InternetAddressType.any,
-      );
-      for (final iface in ifaces) {
-        for (final addr in iface.addresses) {
-          final ip = addr.address;
-          if (ip == '127.0.0.1' || ip == '::1') continue;
-          if (ip.isEmpty) continue;
-          out.add(ip);
-        }
-      }
-    } catch (_) {}
-
-    final list = out.toList(growable: false);
-    list.sort((a, b) {
-      final aIsV4 = a.contains('.') && !a.contains(':');
-      final bIsV4 = b.contains('.') && !b.contains(':');
-      if (aIsV4 != bIsV4) return aIsV4 ? -1 : 1;
-      return a.compareTo(b);
-    });
-    return list;
+    return LanAddressService.instance.listLocalAddresses();
   }
 }
