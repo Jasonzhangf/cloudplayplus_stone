@@ -77,5 +77,32 @@ void main() {
       isTrue,
     );
   });
-}
 
+  test('restore pending: only record matching desktop source id', () {
+    final session = StreamingSession(_device(1), _device(2));
+    session.debugSetRestoreTargetPending(
+      const QuickStreamTarget(
+        mode: StreamMode.desktop,
+        id: '9',
+        label: '桌面',
+      ),
+    );
+
+    // Host may start streaming a different screen first.
+    expect(
+      session.debugShouldRecordLastConnected(<String, dynamic>{
+        'captureTargetType': 'screen',
+        'desktopSourceId': '1',
+      }),
+      isFalse,
+    );
+
+    expect(
+      session.debugShouldRecordLastConnected(<String, dynamic>{
+        'captureTargetType': 'screen',
+        'desktopSourceId': '9',
+      }),
+      isTrue,
+    );
+  });
+}

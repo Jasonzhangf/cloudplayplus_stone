@@ -391,19 +391,26 @@ class StreamingSession {
                     Uint8List.fromList([LP_PING, RP_PING])));
                 _pingKickoffSent = true;
               }
-              // Android controller: optionally restore last selected window/panel on reconnect.
-              if (!_restoreTargetApplied &&
-                  selfSessionType == SelfSessionType.controller &&
+              // Mobile controller: restore last selected window/panel/screen on connect.
+              // Do NOT mark it as applied until we observe a matching captureTargetChanged;
+              // host may temporarily default to screen on cold start/reconnect.
+              if (selfSessionType == SelfSessionType.controller &&
                   (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
                 final quick = QuickTargetService.instance;
-                final t = _restoreTargetSnapshot ?? quick.lastTarget.value;
-                if (t != null && quick.restoreLastTargetOnConnect.value) {
-                  try {
-                    await quick.applyTarget(channel, t);
-                  } catch (_) {}
+                final desired = _restoreTargetSnapshot ?? quick.lastTarget.value;
+                final shouldRestore =
+                    (desired != null) && quick.restoreLastTargetOnConnect.value;
+                if (shouldRestore && channel != null) {
+                  _restoreTargetSnapshot = desired;
+                  _restoreTargetPending = true;
+                  _restoreTargetApplied = false;
+                  _startRestoreTargetRetryLoop(channel!);
+                  unawaited(_attemptRestoreTargetOnce(channel!));
+                } else {
+                  _stopRestoreTargetRetry();
+                  _restoreTargetSnapshot = null;
+                  _restoreTargetPending = false;
                 }
-                _restoreTargetApplied = true;
-                _restoreTargetPending = false;
               }
               if (StreamingSettings.streamAudio!) {
                 StreamingSettings.audioBitrate ??= 32;
@@ -941,6 +948,7 @@ class StreamingSession {
       return;
     }
     _resetPingState();
+    _stopRestoreTargetRetry();
     connectionState = StreamingSessionConnectionState.disconnecting;
 
     await _lock.synchronized(() async {
@@ -1042,6 +1050,11 @@ class StreamingSession {
   bool _restoreTargetApplied = false;
   QuickStreamTarget? _restoreTargetSnapshot;
   bool _restoreTargetPending = false;
+  Timer? _restoreTargetRetryTimer;
+  VoidCallback? _restoreTargetLastTargetListener;
+  bool _restoreTargetAttemptInFlight = false;
+  int _restoreTargetRetryStartAtMs = 0;
+  int _restoreTargetRetryLastAtMs = 0;
   bool _loggedOfferCodecs = false;
   final Set<int> _iterm2ModifiersDown = <int>{};
 
@@ -1050,6 +1063,7 @@ class StreamingSession {
     _restoreTargetSnapshot = target;
     _restoreTargetPending = target != null;
     _restoreTargetApplied = false;
+    _stopRestoreTargetRetry();
   }
 
   @visibleForTesting
@@ -1071,7 +1085,125 @@ class StreamingSession {
       final wid = (widAny is num) ? widAny.toInt() : null;
       return (ct == 'window') && (wid != null) && (wid == desired.windowId);
     }
+    if (desired.mode == StreamMode.desktop) {
+      // For multi-screen restore, only record when we reach the desired screen id.
+      if (ct != 'screen') return false;
+      final desiredId = desired.id.trim();
+      if (desiredId.isEmpty || desiredId == 'screen') return true;
+      final sid = payload['desktopSourceId']?.toString() ?? '';
+      return sid == desiredId;
+    }
     return true;
+  }
+
+  bool _isDesiredTargetActive(QuickStreamTarget desired) {
+    final ct = (streamSettings?.captureTargetType ?? streamSettings?.sourceType)
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (desired.mode == StreamMode.iterm2) {
+      return ct == 'iterm2' &&
+          (streamSettings?.iterm2SessionId ?? '').toString() == desired.id;
+    }
+    if (desired.mode == StreamMode.window) {
+      return ct == 'window' && streamSettings?.windowId == desired.windowId;
+    }
+    // Desktop: if we have a concrete screen source id, match it.
+    if (ct != 'screen') return false;
+    final desiredId = desired.id.trim();
+    if (desiredId.isEmpty || desiredId == 'screen') return true;
+    final sid = (streamSettings?.desktopSourceId ?? '').toString();
+    return sid == desiredId;
+  }
+
+  void _stopRestoreTargetRetry() {
+    _restoreTargetRetryTimer?.cancel();
+    _restoreTargetRetryTimer = null;
+    final listener = _restoreTargetLastTargetListener;
+    if (listener != null) {
+      try {
+        QuickTargetService.instance.lastTarget.removeListener(listener);
+      } catch (_) {}
+    }
+    _restoreTargetLastTargetListener = null;
+    _restoreTargetAttemptInFlight = false;
+    _restoreTargetRetryStartAtMs = 0;
+    _restoreTargetRetryLastAtMs = 0;
+  }
+
+  Future<void> _attemptRestoreTargetOnce(RTCDataChannel channel) async {
+    if (_restoreTargetAttemptInFlight) return;
+    final desired = _restoreTargetSnapshot;
+    if (desired == null) return;
+    if (channel.state != RTCDataChannelState.RTCDataChannelOpen) return;
+    if (_isDesiredTargetActive(desired)) return;
+
+    _restoreTargetAttemptInFlight = true;
+    try {
+      final quick = QuickTargetService.instance;
+      await quick.applyTarget(channel, desired);
+    } catch (_) {
+      // Best effort: ignore.
+    } finally {
+      _restoreTargetAttemptInFlight = false;
+    }
+  }
+
+  void _startRestoreTargetRetryLoop(RTCDataChannel channel) {
+    if (_restoreTargetRetryTimer != null) return;
+    if (_restoreTargetLastTargetListener == null) {
+      final quick = QuickTargetService.instance;
+      _restoreTargetLastTargetListener = () {
+        if (!_restoreTargetPending) return;
+        final desired = _restoreTargetSnapshot;
+        final latest = quick.lastTarget.value;
+        if (desired == null || latest == null) return;
+        if (desired.encode() == latest.encode()) return;
+        // User explicitly selected a different target; stop restore loop.
+        _restoreTargetApplied = true;
+        _restoreTargetSnapshot = null;
+        _restoreTargetPending = false;
+        _stopRestoreTargetRetry();
+      };
+      quick.lastTarget.addListener(_restoreTargetLastTargetListener!);
+    }
+
+    _restoreTargetRetryStartAtMs = DateTime.now().millisecondsSinceEpoch;
+    _restoreTargetRetryLastAtMs = 0;
+    _restoreTargetRetryTimer =
+        Timer.periodic(const Duration(milliseconds: 1000), (_) async {
+      final desired = _restoreTargetSnapshot;
+      if (desired == null || !_restoreTargetPending) {
+        _stopRestoreTargetRetry();
+        return;
+      }
+      if (channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+        _stopRestoreTargetRetry();
+        return;
+      }
+      if (_isDesiredTargetActive(desired)) {
+        _restoreTargetApplied = true;
+        _restoreTargetPending = false;
+        _restoreTargetSnapshot = null;
+        _stopRestoreTargetRetry();
+        return;
+      }
+      final now = DateTime.now().millisecondsSinceEpoch;
+      final elapsed = now - _restoreTargetRetryStartAtMs;
+      if (elapsed >= 30000) {
+        // Give up after 30s to avoid infinite spam.
+        _restoreTargetPending = false;
+        _restoreTargetSnapshot = null;
+        _stopRestoreTargetRetry();
+        return;
+      }
+      if (_restoreTargetRetryLastAtMs > 0 &&
+          (now - _restoreTargetRetryLastAtMs) < 950) {
+        return;
+      }
+      _restoreTargetRetryLastAtMs = now;
+      await _attemptRestoreTargetOnce(channel);
+    });
   }
 
   void _resetPingState() {
@@ -1469,9 +1601,16 @@ class StreamingSession {
                       payload: payload.map((k, v) => MapEntry(k.toString(), v)),
                     ),
                   );
-                  // After we observe the desired target, we can clear snapshot.
-                  _restoreTargetSnapshot = null;
-                  _restoreTargetPending = false;
+                  // After we observe the desired restore target, stop retrying.
+                  final desired = _restoreTargetSnapshot;
+                  if (_restoreTargetPending &&
+                      desired != null &&
+                      _isDesiredTargetActive(desired)) {
+                    _restoreTargetApplied = true;
+                    _restoreTargetSnapshot = null;
+                    _restoreTargetPending = false;
+                    _stopRestoreTargetRetry();
+                  }
                 }
               } catch (_) {}
             }
