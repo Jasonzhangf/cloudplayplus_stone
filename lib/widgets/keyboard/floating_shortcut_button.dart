@@ -398,10 +398,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       final route = ModalRoute.of(context);
-      // When a modal (bottom sheet/dialog) is on top, don't steal focus or force-show IME.
-      if (route != null && route.isCurrent != true) {
-        return;
-      }
       _maybeSyncShortcutPlatformWithRemoteHost();
       final prevImeVisible = _lastImeVisible;
       final imeVisible = bottomInset > 0;
@@ -411,28 +407,27 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       // - only show/hide when user taps the keyboard button
       // - do NOT auto-dismiss when user taps the remote screen
       if (_useSystemKeyboard && _systemKeyboardWanted) {
+        // While user is editing local UI text, do not fight focus/IME.
+        if (ScreenController.localTextEditing.value) return;
+
         ScreenController.setSystemImeActive(true);
         if (!_systemKeyboardFocusNode.hasFocus) {
           FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
         }
-        // If user dismisses IME via system UI, respect it and stop forcing.
+
+        // Keep IME stable: if it hides due to focus churn, re-show it, but never
+        // auto-toggle the "wanted" state off. The keyboard button is the only
+        // user-controlled toggle.
+        //
+        // IMPORTANT: throttle `TextInput.show` to avoid flicker.
         if (prevImeVisible && !imeVisible) {
-          setState(() => _systemKeyboardWanted = false);
-          ScreenController.setSystemImeActive(false);
-          FocusScope.of(context).unfocus();
-          try {
-            SystemChannels.textInput.invokeMethod('TextInput.hide');
-          } catch (_) {}
-        } else {
-          // Some Android IMEs may hide when focus briefly changes; keep it stable
-          // only shortly after user explicitly requested it.
-          if (!imeVisible) {
-            final nowMs = DateTime.now().millisecondsSinceEpoch;
-            if (nowMs <= _forceImeShowUntilMs &&
-                nowMs - _lastImeShowAtMs >= 350) {
-              _lastImeShowAtMs = nowMs;
-              SystemChannels.textInput.invokeMethod('TextInput.show');
-            }
+          InputDebugService.instance.log('IME hidden by system -> keep wanted');
+        }
+        if (!imeVisible) {
+          final nowMs = DateTime.now().millisecondsSinceEpoch;
+          if (nowMs - _lastImeShowAtMs >= 800) {
+            _lastImeShowAtMs = nowMs;
+            SystemChannels.textInput.invokeMethod('TextInput.show');
           }
         }
       }
@@ -525,7 +520,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                           setState(() => _systemKeyboardWanted = want);
                           ScreenController.setSystemImeActive(want);
                           if (want) {
-                            _forceImeShowUntilMs = nowMs + 1600;
+                            _forceImeShowUntilMs = 0;
                             ScreenController.setShowVirtualKeyboard(false);
                             FocusScope.of(context)
                                 .requestFocus(_systemKeyboardFocusNode);
@@ -544,8 +539,7 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                           _useSystemKeyboard = true;
                           _systemKeyboardWanted = true;
                         });
-                        _forceImeShowUntilMs =
-                            DateTime.now().millisecondsSinceEpoch + 1600;
+                        _forceImeShowUntilMs = 0;
                         ScreenController.setSystemImeActive(true);
                         ScreenController.setShowVirtualKeyboard(false);
                         FocusScope.of(context)
@@ -1355,20 +1349,42 @@ class _StreamControlRow extends StatelessWidget {
               return Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  for (final e in entries) ...[
-                    _FavoriteButton(
-                      slot: e.$1,
-                      target: e.$2,
-                      enabled: enabled,
-                      onTap: () => onApplyFavorite(e.$2),
-                      onLongPress: () => _showFavoriteMenu(
-                        context,
-                        slot: e.$1,
-                        onAction: onFavoriteAction,
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                  ],
+                  ValueListenableBuilder<QuickStreamTarget?>(
+                    valueListenable: quick.lastTarget,
+                    builder: (context, current, __) {
+                      bool isSame(QuickStreamTarget a, QuickStreamTarget b) {
+                        if (a.mode != b.mode) return false;
+                        if (a.windowId != null || b.windowId != null) {
+                          return a.windowId != null &&
+                              b.windowId != null &&
+                              a.windowId == b.windowId;
+                        }
+                        return a.id == b.id;
+                      }
+
+                      return Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          for (final e in entries) ...[
+                            _FavoriteButton(
+                              slot: e.$1,
+                              target: e.$2,
+                              enabled: enabled,
+                              selected:
+                                  current != null && isSame(current, e.$2),
+                              onTap: () => onApplyFavorite(e.$2),
+                              onLongPress: () => _showFavoriteMenu(
+                                context,
+                                slot: e.$1,
+                                onAction: onFavoriteAction,
+                              ),
+                            ),
+                            const SizedBox(width: 4),
+                          ],
+                        ],
+                      );
+                    },
+                  ),
                   _IconPillButton(
                     icon: Icons.add,
                     enabled: enabled,
@@ -1509,6 +1525,7 @@ class _FavoriteButton extends StatelessWidget {
   final int slot;
   final QuickStreamTarget? target;
   final bool enabled;
+  final bool selected;
   final VoidCallback? onTap;
   final VoidCallback? onLongPress;
 
@@ -1516,6 +1533,7 @@ class _FavoriteButton extends StatelessWidget {
     required this.slot,
     required this.target,
     required this.enabled,
+    required this.selected,
     required this.onTap,
     required this.onLongPress,
   });
@@ -1531,8 +1549,16 @@ class _FavoriteButton extends StatelessWidget {
         height: 26,
         padding: const EdgeInsets.symmetric(horizontal: 6),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: 0.25),
+          color: selected
+              ? Colors.blueAccent.withValues(alpha: enabled ? 0.35 : 0.18)
+              : Colors.black.withValues(alpha: 0.25),
           borderRadius: BorderRadius.circular(10),
+          border: selected
+              ? Border.all(
+                  color: Colors.white.withValues(alpha: 0.40),
+                  width: 1,
+                )
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -1540,7 +1566,9 @@ class _FavoriteButton extends StatelessWidget {
             Icon(
               Icons.star,
               size: 12,
-              color: Colors.amber.withValues(alpha: enabled ? 0.95 : 0.45),
+              color: selected
+                  ? Colors.amber.withValues(alpha: enabled ? 1.0 : 0.55)
+                  : Colors.amber.withValues(alpha: enabled ? 0.95 : 0.45),
             ),
             const SizedBox(width: 5),
             ConstrainedBox(
@@ -1552,7 +1580,8 @@ class _FavoriteButton extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w600,
-                  color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
+                  color: Colors.white.withValues(
+                      alpha: enabled ? (selected ? 1.0 : 0.92) : 0.45),
                 ),
               ),
             ),

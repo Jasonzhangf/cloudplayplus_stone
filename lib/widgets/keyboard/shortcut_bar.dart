@@ -54,6 +54,34 @@ class ShortcutBar extends StatefulWidget {
 
 class _ShortcutBarState extends State<ShortcutBar> {
   final ScrollController _scrollController = ScrollController();
+  String? _stickyShortcutId;
+  Timer? _stickyTimer;
+
+  void _toggleSticky(ShortcutItem shortcut) {
+    if (_stickyShortcutId == shortcut.id) {
+      _stopSticky();
+      return;
+    }
+    _stopSticky();
+    setState(() => _stickyShortcutId = shortcut.id);
+    HapticFeedback.mediumImpact();
+    // Fire immediately, then repeat.
+    widget.onShortcutPressed(shortcut);
+    _stickyTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
+      widget.onShortcutPressed(shortcut);
+    });
+  }
+
+  void _stopSticky() {
+    if (_stickyTimer != null) {
+      _stickyTimer?.cancel();
+      _stickyTimer = null;
+    }
+    if (_stickyShortcutId != null) {
+      setState(() => _stickyShortcutId = null);
+      HapticFeedback.lightImpact();
+    }
+  }
 
   Future<void> _openAddShortcutPage() async {
     final created = await Navigator.of(context).push<ShortcutItem?>(
@@ -85,6 +113,7 @@ class _ShortcutBarState extends State<ShortcutBar> {
 
   @override
   void dispose() {
+    _stickyTimer?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -195,6 +224,8 @@ class _ShortcutBarState extends State<ShortcutBar> {
           up: arrows['arrow-up'],
           down: arrows['arrow-down'],
           onShortcutPressed: widget.onShortcutPressed,
+          isSticky: (s) => _stickyShortcutId == s.id,
+          onToggleSticky: _toggleSticky,
         ));
         widgets.add(const SizedBox(width: 8));
       }
@@ -208,6 +239,8 @@ class _ShortcutBarState extends State<ShortcutBar> {
         up: arrows['arrow-up'],
         down: arrows['arrow-down'],
         onShortcutPressed: widget.onShortcutPressed,
+        isSticky: (s) => _stickyShortcutId == s.id,
+        onToggleSticky: _toggleSticky,
       ));
     }
     return widgets;
@@ -234,13 +267,22 @@ class _ShortcutBarState extends State<ShortcutBar> {
     };
     final repeatable = shortcut.keys.length == 1 &&
         repeatableSingleKeys.contains(shortcut.keys.first.keyCode);
+    final sticky = repeatable && _stickyShortcutId == shortcut.id;
     return Padding(
       padding: const EdgeInsets.only(right: 8),
       child: _ShortcutButton(
         label: shortcut.label,
         repeatable: repeatable,
-        onPressed: () => widget.onShortcutPressed(shortcut),
-        onLongPress: repeatable ? null : () => _openShortcutEditMenu(shortcut),
+        sticky: sticky,
+        onPressed: () {
+          // If this is currently sticky-repeating, tapping should not add extra
+          // trailing clicks; user long-presses again to stop.
+          if (sticky) return;
+          widget.onShortcutPressed(shortcut);
+        },
+        onLongPress: repeatable
+            ? () => _toggleSticky(shortcut)
+            : () => _openShortcutEditMenu(shortcut),
       ),
     );
   }
@@ -400,6 +442,7 @@ class _ShortcutButton extends StatefulWidget {
   final String? keysText;
   final bool isSettings;
   final bool repeatable;
+  final bool sticky;
   final VoidCallback onPressed;
   final VoidCallback? onLongPress;
 
@@ -408,6 +451,7 @@ class _ShortcutButton extends StatefulWidget {
     this.keysText,
     this.isSettings = false,
     this.repeatable = false,
+    this.sticky = false,
     required this.onPressed,
     this.onLongPress,
   });
@@ -418,52 +462,29 @@ class _ShortcutButton extends StatefulWidget {
 
 class _ShortcutButtonState extends State<_ShortcutButton> {
   bool _isPressed = false;
-  bool _didRepeat = false;
-  Timer? _repeatDelayTimer;
-  Timer? _repeatTimer;
 
   void _handleTapDown(TapDownDetails details) {
     setState(() => _isPressed = true);
     HapticFeedback.lightImpact();
-
-    if (!widget.repeatable) return;
-    _didRepeat = false;
-    _repeatDelayTimer?.cancel();
-    _repeatTimer?.cancel();
-    _repeatDelayTimer = Timer(const Duration(milliseconds: 320), () {
-      _didRepeat = true;
-      _repeatTimer?.cancel();
-      _repeatTimer = Timer.periodic(const Duration(milliseconds: 60), (_) {
-        widget.onPressed();
-      });
-    });
   }
 
   void _handleTapUp(TapUpDetails details) {
     setState(() => _isPressed = false);
-    _repeatDelayTimer?.cancel();
-    _repeatTimer?.cancel();
-    // If we already repeated, avoid firing an extra trailing click.
-    if (!widget.repeatable || !_didRepeat) {
-      widget.onPressed();
-    }
+    widget.onPressed();
   }
 
   void _handleTapCancel() {
     setState(() => _isPressed = false);
-    _repeatDelayTimer?.cancel();
-    _repeatTimer?.cancel();
   }
 
   @override
   void dispose() {
-    _repeatDelayTimer?.cancel();
-    _repeatTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
+    final pressed = _isPressed || widget.sticky;
     return GestureDetector(
       onLongPress: widget.onLongPress,
       onTapDown: _handleTapDown,
@@ -473,12 +494,18 @@ class _ShortcutButtonState extends State<_ShortcutButton> {
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOut,
         transform: Matrix4.identity()
-          ..scaleByDouble(_isPressed ? 0.95 : 1.0, _isPressed ? 0.95 : 1.0,
-              _isPressed ? 0.95 : 1.0, 1.0),
+          ..scaleByDouble(
+            pressed ? 0.95 : 1.0,
+            pressed ? 0.95 : 1.0,
+            pressed ? 0.95 : 1.0,
+            1.0,
+          ),
         decoration: BoxDecoration(
-          color: Colors.black.withValues(alpha: widget.isSettings ? 0.9 : 0.65),
+          color: widget.sticky
+              ? Colors.blueAccent.withValues(alpha: 0.55)
+              : Colors.black.withValues(alpha: widget.isSettings ? 0.9 : 0.65),
           border: Border.all(
-            color: _isPressed
+            color: pressed
                 ? Colors.white.withValues(alpha: 0.35)
                 : Colors.white.withValues(alpha: 0.18),
             width: 1.5,
@@ -535,6 +562,8 @@ class _ArrowClusterButton extends StatelessWidget {
   final ShortcutItem? up;
   final ShortcutItem? down;
   final ValueChanged<ShortcutItem> onShortcutPressed;
+  final bool Function(ShortcutItem shortcut)? isSticky;
+  final void Function(ShortcutItem shortcut)? onToggleSticky;
 
   const _ArrowClusterButton({
     required this.left,
@@ -542,23 +571,38 @@ class _ArrowClusterButton extends StatelessWidget {
     required this.up,
     required this.down,
     required this.onShortcutPressed,
+    this.isSticky,
+    this.onToggleSticky,
   });
 
   @override
   Widget build(BuildContext context) {
     Widget buildKey(String label, ShortcutItem? shortcut) {
-      return InkWell(
-        onTap: shortcut == null ? null : () => onShortcutPressed(shortcut),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
+      final sticky = shortcut != null && (isSticky?.call(shortcut) ?? false);
+      return GestureDetector(
+        onLongPress: (shortcut != null && onToggleSticky != null)
+            ? () => onToggleSticky!(shortcut)
+            : null,
+        onTap: () {
+          if (shortcut == null) return;
+          if (sticky) return;
+          onShortcutPressed(shortcut);
+        },
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 120),
+          curve: Curves.easeOut,
           width: 28,
           height: 28,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.65),
+            color: sticky
+                ? Colors.blueAccent.withValues(alpha: 0.55)
+                : Colors.black.withValues(alpha: 0.65),
             borderRadius: BorderRadius.circular(8),
             border: Border.all(
-              color: Colors.white.withValues(alpha: 0.18),
+              color: sticky
+                  ? Colors.white.withValues(alpha: 0.35)
+                  : Colors.white.withValues(alpha: 0.18),
               width: 1,
             ),
           ),
