@@ -47,11 +47,41 @@ class LanDeviceNameCodec {
       final s = a.trim();
       if (s.isEmpty) continue;
       cleaned.add(s);
-      if (cleaned.length >= maxAddrs) break;
+      if (cleaned.length >= (maxAddrs * 2)) break;
     }
 
     // Keep name clean when LAN is disabled and no hints exist.
     if (!lanEnabled && cleaned.isEmpty) return base;
+
+    // Packing strategy:
+    // - Some clients (notably Android) may not have IPv6 routes even when the host
+    //   advertises Tailscale IPv6. If the suffix length budget forces dropping
+    //   addresses, prefer keeping at least one IPv4 (Tailscale/private) so users
+    //   can still connect.
+    int packScore(String ip) {
+      final isV6 = ip.contains(':');
+      final isV4 = ip.contains('.') && !isV6;
+      final isTailscaleV6 = isV6 && ip.startsWith('fd7a:115c:a1e0:');
+      final isTailscaleV4 = isV4 && ip.startsWith('100.');
+      final isPrivateV4 = isV4 &&
+          (ip.startsWith('192.168.') ||
+              ip.startsWith('10.') ||
+              ip.startsWith('172.'));
+
+      if (isTailscaleV4) return 0;
+      if (isPrivateV4) return 10;
+      if (isV4) return 20;
+      if (isTailscaleV6) return 30;
+      if (isV6) return 40;
+      return 50;
+    }
+
+    cleaned.sort((a, b) {
+      final sa = packScore(a);
+      final sb = packScore(b);
+      if (sa != sb) return sa.compareTo(sb);
+      return a.compareTo(b);
+    });
 
     // Use compact keys to reduce suffix length:
     // - e: enabled (0/1)
@@ -69,7 +99,7 @@ class LanDeviceNameCodec {
     }
 
     // Try to fit: progressively reduce addresses, then truncate base name.
-    var addrs = cleaned.toList(growable: false);
+    var addrs = cleaned.take(maxAddrs).toList(growable: false);
     var suffix = buildSuffix(addrs);
     while (addrs.isNotEmpty && (base.length + suffix.length) > maxTotalLength) {
       addrs = addrs.sublist(0, addrs.length - 1);

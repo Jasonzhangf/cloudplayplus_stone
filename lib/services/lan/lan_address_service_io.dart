@@ -49,15 +49,26 @@ class LanAddressService {
               ip.startsWith('172.2') ||
               ip.startsWith('172.3'));
 
-      // User preference: prefer IPv6 first, then Tailscale, then private IPv4.
-      // De-prioritize link-local last.
+      // Default: prefer IPv6 first, then Tailscale, then private IPv4.
+      // On mobile (Android/iOS), prefer reachable IPv4 (Tailscale/private) first
+      // because IPv6 routes are often missing and lead to "Network is unreachable".
       if (isLinkLocal) return 1000;
-      if (isV6 && !isTailscale) return 0;
-      if (isV6 && isTailscale) return 10;
-      if (isV4 && isTailscale) return 20;
-      if (isPrivateV4) return 30;
-      if (isV4) return 40;
-      return 50;
+      final preferV4 = Platform.isAndroid || Platform.isIOS;
+      if (preferV4) {
+        if (isV4 && isTailscale) return 0;
+        if (isPrivateV4) return 10;
+        if (isV4) return 20;
+        if (isV6 && isTailscale) return 30;
+        if (isV6) return 40;
+        return 50;
+      } else {
+        if (isV6 && !isTailscale) return 0;
+        if (isV6 && isTailscale) return 10;
+        if (isV4 && isTailscale) return 20;
+        if (isPrivateV4) return 30;
+        if (isV4) return 40;
+        return 50;
+      }
     }
 
     list.sort((a, b) {
