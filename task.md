@@ -643,6 +643,54 @@ WindowSource 结构（由 `getDesktopSources` 返回）：
 >
 > 执行原则：**先写清计划与验收（本章节）→ 再动代码 → 每一步必须有验证证据 → 不盲测。**
 
+## 6. 状态管理 + 连接管理整合（AppState/AppStore）（待审核）
+
+> 设计文档：`docs/state_connection_management_refactor.md`
+>
+> 目标：统一 cloud/LAN 连接编排、消除多真相源、让 UI 只订阅 AppState 并派发 intent。
+
+### 6.0 Phase 0：文档落盘（必须先完成）
+- [x] 落盘设计文档：`docs/state_connection_management_refactor.md`
+- [x] 在本章节补齐“验收标准/回滚策略/测试清单”（`docs/state_connection_management_refactor.md` 6.1–6.3）
+
+### 6.1 Phase A：引入 AppState/AppStore（不重写底层会话）
+- [x] 新增 `lib/app/state/**`：SessionState/DevicesState/QuickTargetState/UiOverlayState/DiagnosticsState
+  - 验收：`flutter test` 全绿；`flutter analyze` 无 error
+- [x] 新增 `lib/app/store/**`：reducer + effects + effect runner
+  - 验收：单测覆盖 connect/disconnect/switch intent（见 6.4）
+- [x] `main.dart` 注入 `AppStore`（Provider）
+  - 验收：App 正常启动；不影响现有连接流程
+
+### 6.2 Phase A：UI 入口改为派发 intent（逐步迁移）
+- [x] `lib/pages/devices_page.dart`：设备列表来源迁移到 `AppStore.devices`（DevicesPage 订阅 store；连接仍在详情页触发）
+- [x] `lib/utils/widgets/device_tile_page.dart`：LAN 直连/上传日志/刷新 -> intents
+- [x] `lib/utils/widgets/device_tile_page.dart`：连接按钮 -> `AppIntentConnectCloud`
+- [x] `lib/widgets/keyboard/floating_shortcut_button.dart`：IME/切换目标 -> intents（仅接线，逻辑仍可调用旧 service）
+- [x] `lib/widgets/keyboard/floating_shortcut_button.dart`：断开连接 -> `AppIntentDisconnect`
+- [x] `lib/utils/widgets/global_remote_screen_renderer.dart`：只上报 render perf -> intent
+
+### 6.3 Phase A：汇聚事件源到 AppState（兼容现有实现）
+- [x] 订阅 `WebSocketService.ready/connectionState`（`ready` + `connectionStateNotifier` 已接入）
+- [x] 订阅 `LanSignalingClient.ready/error`
+- [x] 订阅 `WebrtcService.hostEncodingStatus/controllerRenderPerf`
+- [x] 订阅 `CaptureTargetEventBus`（captureTargetChanged）
+  - 验收：UI 展示状态只依赖 AppState（允许过渡镜像，但不得作为真相）
+
+### 6.4 Phase A：测试与 rehearse（必须覆盖常规流程）
+- [x] 单元测试：App reducer 的 session lifecycle（connect -> streaming -> disconnect，`test/session_lifecycle_reducer_test.dart`）
+- [x] 单元测试：resumed 触发 `AppEffectResumeReconnect`（reducer 层）
+- [x] 单元测试：resume/backoff 5s/9s/26s 仅由 AppStore 调度（不重入）（runner 层，`test/effect_runner_backoff_test.dart`）
+- [x] 单元测试：LAN 上传 probe `/artifact/info` 选择正确 IP（避免 404，`test/diagnostics_upload_host_picker_test.dart`）
+- [x] Widget 测试：DevicesPage 点击连接触发正确 intent（`test/devices_page_connect_intent_widget_test.dart`）
+
+### 6.5 Phase B：收敛配置与状态源（后续）
+- [x] QuickTarget 从 `QuickTargetService` 迁移到 AppState + repo 持久化（`lib/core/quick_target/quick_target_repository.dart` + `AppEffectPersistQuickTargetState`；service 退化为 shim）
+- [x] `StreamingSettings` 会话输入封装为 SessionConfig，避免跨会话污染（`lib/core/session/session_config.dart` + `StreamingSession.config`）
+
+### 6.6 Phase C：抽象 transport/webrtc 并删除重复恢复逻辑（后续）
+- [x] `AppLifecycleReconnectService` 降级为仅 dispatch lifecycle intent
+- [x] 移除 UI 内部的 restore/重连逻辑（以 AppStore 为唯一编排）
+
 ## 一、强制架构原则（必须遵守）
 
 1. **唯一实现（Single Source of Truth）**
@@ -716,11 +764,12 @@ flutter test
 
 ### 4.2 串流/裁切/切换相关改动必跑（macOS 可用时）
 ```bash
-dart run scripts/verify/verify_webrtc_loopback_content_app.dart
-dart run scripts/verify/verify_iterm2_panels_loopback.dart
+flutter run -d macos -t scripts/verify/verify_webrtc_loopback_content_app.dart
+flutter run -d macos -t scripts/verify/verify_iterm2_panels_loopback.dart
 ```
 
 > 证据要求：verify 会生成 `build/verify/*` 截图/日志（本地留档即可，不入 git）。
+> 备注：为避免磁盘占用导致 build 失败，可在跑完后将 `build/verify` 迁移到 `local_artifacts/verify_runs/*` 留档（不提交）。
 
 ## 五、执行任务清单（先 P0，再 P1/P2）
 
@@ -744,7 +793,7 @@ dart run scripts/verify/verify_iterm2_panels_loopback.dart
 > 第一步用 `part` 拆文件，确保行为不变（不引入跨库 import 问题）。
 
 - [x] 将 `lib/entities/session.dart` 声明为 library：`library streaming_session;`
-- [~] 新建 `lib/entities/session/**` 并按职责拆成 part 文件（先拆文件，再逐步下沉 blocks）
+- [x] 新建 `lib/entities/session/**` 并按职责拆成 part 文件（先拆文件，再逐步下沉 blocks）
   - `signaling.dart`：offer/answer/candidate + 连接状态推进
   - `datachannel_router.dart`：datachannel message 分发（含 setCaptureTarget / desktopSourcesRequest / iterm2SourcesRequest / adaptiveEncoding 等）
   - `capture/capture_switcher.dart`：`_switchCaptureToSource` 与 capture start/stop
@@ -754,26 +803,32 @@ dart run scripts/verify/verify_iterm2_panels_loopback.dart
   - `input/input_routing.dart`：键盘/文本输入路由（含 TTY 偏好写入）
   - `adaptive/adaptive_encoding_feedback.dart`：自适应反馈处理与 FPS 重应用
   - `debug/input_trace_hooks.dart`：录制/回放 hook（调用 `lib/utils/input/input_trace.dart`）
-- [ ] 验收：`flutter test` 与 `flutter analyze` 全绿；verify 脚本仍可跑通（本地）
-- [ ] 验收：`flutter test` 全绿；`flutter analyze` 无 error 且不新增本轮相关问题；verify 脚本仍可跑通（本地）
+- [x] 验收：`flutter test` 与 `flutter analyze` 全绿；verify 脚本仍可跑通（本地）
+- [x] 验收：`flutter test` 全绿；`flutter analyze` 无 error 且不新增本轮相关问题；verify 脚本仍可跑通（本地）
 
 ### 5.2 拆分 `global_remote_screen_renderer`（P0）
-- [ ] 将 `lib/utils/widgets/global_remote_screen_renderer.dart` 拆为 `lib/widgets/remote_screen/**`
+- [x] 将 `lib/utils/widgets/global_remote_screen_renderer.dart` 拆为 `lib/widgets/remote_screen/**`
   - `global_remote_screen_renderer.dart`：Widget 壳（仅渲染/编排）
   - `remote_screen_gestures.dart`：手势采集与事件分发（不写算法）
   - `remote_screen_transform.dart`：变换状态存储（不写算法）
-- [ ] 将手势判定/去抖/策略迁移到 `lib/core/blocks/gestures/**`（唯一实现）
-- [ ] 验收：现有 gesture/scroll 相关测试全绿（`two_finger_*`、`scroll_anchor_packet_test.dart`）
+- [x] 将手势判定/去抖/策略迁移到 `lib/core/blocks/gestures/**`（唯一实现）
+- [x] 验收：现有 gesture/scroll 相关测试全绿（`two_finger_*`、`scroll_anchor_packet_test.dart`）
+
+本轮进度（可回滚、先结构不动行为）：
+- [x] 迁移 renderer 主文件到 `lib/widgets/remote_screen/global_remote_screen_renderer.dart`，保留旧路径 export shim（避免大范围改 import）
+- [x] 新增 `lib/widgets/remote_screen/remote_screen_gestures.dart` / `lib/widgets/remote_screen/remote_screen_transform.dart`（先建壳，后续逐步把方法/状态迁入）
+- [x] 将两指手势判定逻辑迁移到 `lib/core/blocks/gestures/two_finger_gesture.dart`，旧路径 `lib/utils/input/two_finger_gesture.dart` 变为 export shim
+- [x] 验收：`flutter test` 全绿；`flutter analyze` 无 error
 
 ### 5.3 拆分 `floating_shortcut_button.dart`（P0）
-- [ ] 拆为 `lib/widgets/keyboard/floating_shortcut_button/**` 小组件文件
-- [ ] 将 IME 手动唤起/保持策略迁移到 `lib/core/blocks/ime/**`
-- [ ] 将组合键发送策略迁移到 `lib/core/blocks/input/**`（唯一实现）
-- [ ] 验收：`system_ime_manual_toggle_test.dart`、`shortcut_panel_top_right_actions_position_test.dart` 全绿
+- [x] 拆为 `lib/widgets/keyboard/floating_shortcut_button/**` 小组件文件
+- [x] 将 IME 手动唤起/保持策略迁移到 `lib/core/blocks/ime/**`
+- [x] 将组合键发送策略迁移到 `lib/core/blocks/input/**`（唯一实现）
+- [x] 验收：`system_ime_manual_toggle_test.dart`、`shortcut_panel_top_right_actions_position_test.dart` 全绿
 
 ### 5.4 Settings 与 VirtualGamepad（P1/P2）
-- [ ] P1：拆分 `lib/settings_screen.dart` 至 `lib/pages/settings/**`
-- [ ] P2：拆分 `lib/utils/widgets/virtual_gamepad/control_management_screen.dart` 至 `lib/widgets/virtual_gamepad/editor/**` + `lib/core/blocks/virtual_gamepad/**`
+- [x] P1：拆分 `lib/settings_screen.dart` 至 `lib/pages/settings/**`
+- [x] P2：拆分 `lib/utils/widgets/virtual_gamepad/control_management_screen.dart` 至 `lib/widgets/virtual_gamepad/editor/**` + `lib/core/blocks/virtual_gamepad/**`
 
 - Grid/List 展示：thumbnail + title + app icon
 - 切换策略：Stop → Start（稳定优先）

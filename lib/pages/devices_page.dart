@@ -1,19 +1,21 @@
+import 'dart:async';
+
 import 'package:animated_text_kit/animated_text_kit.dart';
 import 'package:cloudplayplus/entities/device.dart';
-import 'package:cloudplayplus/entities/session.dart';
-import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/services/quick_target_service.dart';
 import 'package:cloudplayplus/services/shared_preferences_manager.dart';
 import 'package:cloudplayplus/services/streaming_manager.dart';
-import 'package:cloudplayplus/services/webrtc_service.dart';
-import 'package:cloudplayplus/services/websocket_service.dart';
 import 'package:cloudplayplus/services/lan/lan_address_service.dart';
 import 'package:cloudplayplus/services/lan/lan_connect_history_service.dart';
 import 'package:cloudplayplus/services/lan/lan_device_hint_codec.dart';
+import 'package:cloudplayplus/services/lan/lan_peer_hints_cache_service.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../plugins/flutter_master_detail/flutter_master_detail.dart';
+import '../app/intents/app_intent.dart';
+import '../app/store/app_store.dart';
 import '../services/app_info_service.dart';
 import '../theme/fixed_colors.dart';
 import '../utils/icon_builder.dart';
@@ -27,19 +29,24 @@ class DevicesPage extends StatefulWidget {
 
 class _DevicesPageState extends State<DevicesPage> {
   List<Device> _deviceList = defaultDeviceList;
-  bool _autoRestoreAttempted = false;
   final LanConnectHistoryService _lanHistory = LanConnectHistoryService.instance;
-  bool _autoRestoreNavigated = false;
+  final LanPeerHintsCacheService _lanPeerCache =
+      LanPeerHintsCacheService.instance;
+  AppStore? _store;
+
+  void _syncFromStore() {
+    final s = _store;
+    if (s == null) return;
+    final list = s.state.devices.devices;
+    if (!mounted) return;
+    setState(() {
+      _deviceList = list.isNotEmpty ? list : defaultDeviceList;
+    });
+  }
   void _openLanConnect() {
     Navigator.of(context).push(
       MaterialPageRoute(builder: (_) => const LanConnectPage()),
     );
-  }
-
-  Future<void> _waitForWebSocketConnected({
-    Duration timeout = const Duration(seconds: 6),
-  }) async {
-    await WebSocketService.waitUntilReady(timeout: timeout);
   }
 
   // 更新列表的方法
@@ -141,6 +148,40 @@ class _DevicesPageState extends State<DevicesPage> {
               : (decoded.hints?.lanEnabled ?? false);
         }
 
+        // Cache LAN hints so we can still connect even when the cloud server
+        // stops sending lanAddrs/lanPort fields for this device.
+        if (deviceInstance.uid > 0 &&
+            deviceInstance.devicetype.isNotEmpty &&
+            deviceInstance.devicename.isNotEmpty) {
+          final addrs = deviceInstance.lanAddrs;
+          if (addrs.isNotEmpty) {
+            unawaited(_lanPeerCache.record(
+              ownerId: deviceInstance.uid,
+              deviceType: deviceInstance.devicetype,
+              deviceName: deviceInstance.devicename,
+              enabled: deviceInstance.lanEnabled,
+              port: deviceInstance.lanPort,
+              addrs: addrs,
+            ));
+          } else {
+            // Fill from cache when server payload is missing.
+            final cached = _lanPeerCache.load(
+              ownerId: deviceInstance.uid,
+              deviceType: deviceInstance.devicetype,
+              deviceName: deviceInstance.devicename,
+            );
+            if (cached != null && cached.addrs.isNotEmpty) {
+              deviceInstance.lanAddrs = cached.addrs;
+              if (deviceInstance.lanPort == null && cached.port != null) {
+                deviceInstance.lanPort = cached.port;
+              }
+              if (!deviceInstance.lanEnabled && cached.enabled) {
+                deviceInstance.lanEnabled = true;
+              }
+            }
+          }
+        }
+
         nextList.add(deviceInstance);
       }
 
@@ -148,16 +189,20 @@ class _DevicesPageState extends State<DevicesPage> {
         ..clear()
         ..addAll(nextList);
     });
-    _maybeAutoRestoreLastConnection();
+    // Do not auto-connect on cold start. Users must manually initiate a session.
+    // Background/foreground restore while already in a streaming page is handled
+    // by AppLifecycleBridge + AppStore(EffectRunner).
   }
 
   _registerCallbacks() {
-    // It is nearly impossible WS receive response before we register here. So fell free.
-    WebSocketService.onDeviceListchanged = _updateList;
+    // Phase A: device list is owned by AppStore; keep local list in sync for now.
+    _store ??= context.read<AppStore>();
+    _store?.addListener(_syncFromStore);
+    _syncFromStore();
   }
 
   _unregisterCallbacks() {
-    WebSocketService.onDeviceListchanged = null;
+    _store?.removeListener(_syncFromStore);
   }
 
   @override
@@ -210,7 +255,11 @@ class _DevicesPageState extends State<DevicesPage> {
                       screencount: 0,
                     ));
                   });
-                  WebSocketService.reconnect();
+                  context.read<AppStore>().dispatch(
+                        const AppIntentReconnectCloudWebsocket(
+                          reason: 'devices-refresh',
+                        ),
+                      );
                 },
               ),
               tileColor: Theme.of(context).primaryColor, // 使用主题中定义的主要颜色作为背景
@@ -249,7 +298,11 @@ class _DevicesPageState extends State<DevicesPage> {
                       screencount: 0,
                     ));
                   });
-                  WebSocketService.reconnect();
+                  context.read<AppStore>().dispatch(
+                        const AppIntentReconnectCloudWebsocket(
+                          reason: 'devices-refresh',
+                        ),
+                      );
                 },
               ),
               tileColor: Theme.of(context).primaryColor, // 使用主题中定义的主要颜色作为背景
@@ -320,133 +373,14 @@ class _DevicesPageState extends State<DevicesPage> {
     );
   }
 
-  Device? _findLastConnectedDeviceCandidate() {
-    final quick = QuickTargetService.instance;
-    final hint = quick.lastDeviceHint.value;
-
-    // Prefer exact hint match (device name + type, optionally nickname) to handle
-    // reconnection where connection_id changes.
-    if (hint != null) {
-      final candidates = _deviceList.where((d) => d.uid > 0).toList();
-      Device? best;
-      for (final d in candidates) {
-        if (d.devicename == hint.devicename &&
-            d.devicetype == hint.devicetype) {
-          if (hint.nickname.isNotEmpty && d.nickname == hint.nickname) {
-            return d;
-          }
-          best ??= d;
-        }
-      }
-      if (best != null) return best;
-    }
-
-    final uid = quick.lastDeviceUid.value;
-    if (uid != null && uid > 0) {
-      // Fallback: if only one device is available for this uid, restore it.
-      final matches =
-          _deviceList.where((d) => d.uid == uid && d.uid > 0).toList();
-      if (matches.length == 1) return matches.first;
-      // If multiple, pick the first connective one.
-      for (final d in matches) {
-        if (d.connective) return d;
-      }
-    }
-    return null;
-  }
-
-  void _maybeAutoRestoreLastConnection() {
-    if (_autoRestoreAttempted) return;
-    if (!AppPlatform.isMobile) return;
-    if (_deviceList.isEmpty) return;
-    // Avoid restoring during initial placeholder state.
-    if (_deviceList.length == 1 && _deviceList.first.uid == 0) return;
-
-    final target = _findLastConnectedDeviceCandidate();
-    if (target == null) return;
-
-    _autoRestoreAttempted = true;
-    WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted) return;
-
-      // Ensure WS is up; otherwise requestRemoteControl will be dropped.
-      try {
-        WebSocketService.reconnect();
-      } catch (_) {}
-      await _waitForWebSocketConnected();
-
-      // Bring user back to the streaming page and reuse local saved password.
-      final savedPassword =
-          SharedPreferencesManager.getString('connectPassword_${target.uid}') ??
-              '';
-      if (savedPassword.isNotEmpty) {
-        StreamingSettings.connectPassword = savedPassword;
-      }
-
-      // Ensure detail page is visible so user returns to the last streaming page.
-      if (!_autoRestoreNavigated) {
-        _autoRestoreNavigated = true;
-        try {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
-          );
-        } catch (_) {}
-      }
-
-      try {
-        await _autoRestoreStartStreamingWithRetries(target);
-      } catch (_) {}
-    });
-  }
-
-  Future<void> _autoRestoreStartStreamingWithRetries(Device target) async {
-    // Cold-starts can be racy: websocket may still be negotiating and the first
-    // requestRemoteControl can be dropped. Retry a few times automatically so
-    // users don't have to kill/relaunch the app.
-    const maxAttempts = 3;
-    const perAttemptWait = Duration(seconds: 8);
-
-    bool isConnectedState(StreamingSessionConnectionState s) =>
-        s == StreamingSessionConnectionState.connected;
-
-    for (int attempt = 1; attempt <= maxAttempts; attempt++) {
-      if (!mounted) return;
-      final state = StreamingManager.getStreamingStateto(target);
-      if (isConnectedState(state)) return;
-
-      // If the previous attempt left a stale session behind, restart it.
-      if (state != StreamingSessionConnectionState.free) {
-        try {
-          StreamingManager.stopStreaming(target);
-        } catch (_) {}
-        await Future<void>.delayed(const Duration(milliseconds: 120));
-      }
-
-      try {
-        WebSocketService.reconnect();
-      } catch (_) {}
-      await _waitForWebSocketConnected(timeout: const Duration(seconds: 10));
-
-      try {
-        StreamingManager.startStreaming(target);
-      } catch (_) {}
-
-      final deadline = DateTime.now().add(perAttemptWait);
-      while (mounted && DateTime.now().isBefore(deadline)) {
-        final s = StreamingManager.getStreamingStateto(target);
-        if (isConnectedState(s)) return;
-        await Future<void>.delayed(const Duration(milliseconds: 250));
-      }
-    }
-  }
-
   Widget _buildListTile(
     BuildContext context,
     Device data,
     bool isSelected,
   ) {
+    // Show LAN entries whenever we have IP hints (even if lanEnabled flag is
+    // missing/false in server payload). Users can still try direct connect.
     final showLan = (AppPlatform.isMobile || AppPlatform.isAndroidTV) &&
-        data.lanEnabled == true &&
         data.lanAddrs.isNotEmpty;
     final port = data.lanPort ?? kDefaultLanPort;
     final rankedLanAddrs = showLan
@@ -546,7 +480,7 @@ class _DevicesPageState extends State<DevicesPage> {
 
   Future<String?> _promptLanPassword() async {
     final controller = TextEditingController(
-      text: StreamingSettings.connectPassword ?? '',
+      text: '',
     );
     return showDialog<String>(
       context: context,
@@ -583,7 +517,7 @@ class _DevicesPageState extends State<DevicesPage> {
       final saved =
           SharedPreferencesManager.getString('connectPassword_${device.uid}') ??
               '';
-      String password = saved.isNotEmpty ? saved : (StreamingSettings.connectPassword ?? '');
+      String password = saved;
       if (password.isEmpty) {
         final picked = await _promptLanPassword();
         if (picked == null) return;

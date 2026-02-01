@@ -17,8 +17,14 @@ class BandwidthTierConfig {
   /// Baseline bitrate (kbps) for the base resolution at 15fps.
   final int baseBitrate15FpsKbps;
 
-  /// Bandwidth thresholds in kbps: <t1 => 5fps, <t2 => 15fps, <t3 => 30fps, >=t3 => 60fps
+  /// Bandwidth thresholds in kbps:
+  /// - <t1 => 5fps
+  /// - <t20 => 15fps
+  /// - <t2 => 20fps
+  /// - <t3 => 30fps
+  /// - >=t3 => 60fps (plus quality boost)
   final int t1Kbps;
+  final int t20Kbps;
   final int t2Kbps;
   final int t3Kbps;
 
@@ -54,8 +60,11 @@ class BandwidthTierConfig {
   const BandwidthTierConfig({
     this.baseWidth = 576,
     this.baseHeight = 768,
-    this.baseBitrate15FpsKbps = 250,
-    this.t1Kbps = 250,
+    // Updated baseline: for a 576x768 window, 15fps should still be usable at ~100kbps.
+    this.baseBitrate15FpsKbps = 100,
+    // Updated tiers (kbps): 100->15fps, 200->20fps, 500->30fps, 1000->60fps.
+    this.t1Kbps = 100,
+    this.t20Kbps = 200,
     this.t2Kbps = 500,
     this.t3Kbps = 1000,
     this.headroom = 0.85,
@@ -150,7 +159,8 @@ class BandwidthTierDecision {
 
 int _tierFromBandwidthKbps(int b, BandwidthTierConfig cfg) {
   if (b < cfg.t1Kbps) return 5;
-  if (b < cfg.t2Kbps) return 15;
+  if (b < cfg.t20Kbps) return 15;
+  if (b < cfg.t2Kbps) return 20;
   if (b < cfg.t3Kbps) return 30;
   return 60;
 }
@@ -158,7 +168,8 @@ int _tierFromBandwidthKbps(int b, BandwidthTierConfig cfg) {
 int _upperThresholdForTier(int tier, BandwidthTierConfig cfg) {
   // Minimum BWE required to step up from this tier.
   if (tier <= 5) return cfg.t1Kbps; // 5 -> 15
-  if (tier <= 15) return cfg.t2Kbps; // 15 -> 30
+  if (tier <= 15) return cfg.t20Kbps; // 15 -> 20
+  if (tier <= 20) return cfg.t2Kbps; // 20 -> 30
   if (tier <= 30) return cfg.t3Kbps; // 30 -> 60
   return cfg.t3Kbps;
 }
@@ -167,12 +178,14 @@ int _lowerThresholdForTier(int tier, BandwidthTierConfig cfg) {
   // Minimum BWE required to *stay* in this tier.
   if (tier <= 5) return 0;
   if (tier <= 15) return cfg.t1Kbps;
+  if (tier <= 20) return cfg.t20Kbps;
   if (tier <= 30) return cfg.t2Kbps;
   return cfg.t3Kbps;
 }
 
 int _stepUpTier(int tier) {
   if (tier < 15) return 15;
+  if (tier < 20) return 20;
   if (tier < 30) return 30;
   if (tier < 60) return 60;
   return tier;
@@ -180,6 +193,7 @@ int _stepUpTier(int tier) {
 
 int _stepDownTier(int tier) {
   if (tier > 30) return 30;
+  if (tier > 20) return 20;
   if (tier > 15) return 15;
   if (tier > 5) return 5;
   return tier;

@@ -87,5 +87,29 @@ void main() {
       expect(res.cropRectNorm['w'], closeTo(1.0, 1e-9));
       expect(res.cropRectNorm['h'], closeTo(300 / 900, 1e-9));
     });
+
+    test('bestEffort maps content coords into raw window (header offset)', () {
+      // Simulate: session frames are returned in a content/tab coordinate space
+      // (0..contentH) that excludes a 20px title/tab bar area at the top.
+      // The raw window is taller, so a crop with y=0 would "bleed" the header.
+      final res = computeIterm2CropRectNormBestEffort(
+        fx: 0,
+        fy: 0,
+        fw: 100,
+        fh: 80,
+        wx: 0,
+        wy: 0,
+        ww: 100,
+        wh: 80,
+        rawWw: 100,
+        rawWh: 100,
+      );
+      expect(res, isNotNull);
+      expect(res!.tag.startsWith('map('), isTrue);
+      expect(res.cropRectNorm['x'], closeTo(0.0, 1e-9));
+      expect(res.cropRectNorm['y'], closeTo(0.2, 1e-6));
+      expect(res.cropRectNorm['w'], closeTo(1.0, 1e-9));
+      expect(res.cropRectNorm['h'], closeTo(0.8, 1e-6));
+    });
   });
 }

@@ -1,74 +1,29 @@
-import 'dart:convert';
-
+import 'package:cloudplayplus/app/intents/app_intent.dart';
+import 'package:cloudplayplus/app/state/quick_target_state.dart';
+import 'package:cloudplayplus/app/store/app_store_locator.dart';
+import 'package:cloudplayplus/core/quick_target/quick_stream_target_from_capture_target_changed.dart';
+import 'package:cloudplayplus/core/quick_target/quick_target_constants.dart';
+import 'package:cloudplayplus/core/quick_target/quick_target_repository.dart';
+import 'package:cloudplayplus/models/last_connected_device_hint.dart';
 import 'package:cloudplayplus/models/quick_stream_target.dart';
 import 'package:cloudplayplus/models/stream_mode.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
-import 'package:cloudplayplus/services/shared_preferences_manager.dart';
-import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
-@immutable
-class LastConnectedDeviceHint {
-  final int uid;
-  final String nickname;
-  final String devicename;
-  final String devicetype;
-
-  const LastConnectedDeviceHint({
-    required this.uid,
-    required this.nickname,
-    required this.devicename,
-    required this.devicetype,
-  });
-
-  Map<String, dynamic> toJson() => {
-        'uid': uid,
-        'nickname': nickname,
-        'devicename': devicename,
-        'devicetype': devicetype,
-      };
-
-  static LastConnectedDeviceHint? tryParse(String raw) {
-    if (raw.trim().isEmpty) return null;
-    try {
-      final decoded = jsonDecode(raw);
-      if (decoded is! Map) return null;
-      final uidAny = decoded['uid'];
-      final uid = uidAny is num ? uidAny.toInt() : int.tryParse('$uidAny');
-      if (uid == null || uid <= 0) return null;
-      final nickname = (decoded['nickname'] ?? '').toString();
-      final devicename = (decoded['devicename'] ?? '').toString();
-      final devicetype = (decoded['devicetype'] ?? '').toString();
-      if (devicename.isEmpty || devicetype.isEmpty) return null;
-      return LastConnectedDeviceHint(
-        uid: uid,
-        nickname: nickname,
-        devicename: devicename,
-        devicetype: devicetype,
-      );
-    } catch (_) {
-      return null;
-    }
-  }
-}
-
+/// Legacy compatibility facade.
+///
+/// Phase B: the single source of truth is [AppState.quick]. This service either:
+/// - dispatches intents to the global [AppStore] (when available), or
+/// - falls back to direct persistence via [QuickTargetRepository] (tests / tools).
 class QuickTargetService {
   QuickTargetService._();
 
   static final QuickTargetService instance = QuickTargetService._();
 
-  static const _kMode = 'controller.streamMode.v1';
-  static const _kLastTarget = 'controller.lastTarget.v1';
-  static const _kLastDeviceUid = 'controller.lastDeviceUid.v1';
-  static const _kLastDeviceHint = 'controller.lastDeviceHint.v1';
-  static const _kFavorites = 'controller.favorites.v1';
-  static const _kToolbarOpacity = 'controller.toolbarOpacity.v1';
-  static const _kRestoreOnConnect = 'controller.restoreLastTargetOnConnect.v1';
-  // Start small to keep the toolbar compact; user can add more via "+".
-  static const int defaultFavoriteSlots = 4;
-  static const int maxFavoriteSlots = 20;
+  static const int defaultFavoriteSlots = QuickTargetConstants.defaultFavoriteSlots;
+  static const int maxFavoriteSlots = QuickTargetConstants.maxFavoriteSlots;
 
   final ValueNotifier<StreamMode> mode = ValueNotifier(StreamMode.desktop);
   final ValueNotifier<int?> lastDeviceUid = ValueNotifier<int?>(null);
@@ -84,73 +39,86 @@ class QuickTargetService {
       ValueNotifier<bool>(true);
 
   Future<void> init() async {
-    final savedMode = SharedPreferencesManager.getInt(_kMode);
-    if (savedMode != null &&
-        savedMode >= 0 &&
-        savedMode < StreamMode.values.length) {
-      mode.value = StreamMode.values[savedMode];
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      _syncFromState(store.state.quick);
+      return;
     }
+    final quick = await QuickTargetRepository.instance.load();
+    _syncFromState(quick);
+  }
 
-    final lastUid = SharedPreferencesManager.getInt(_kLastDeviceUid);
-    if (lastUid != null && lastUid > 0) {
-      lastDeviceUid.value = lastUid;
-    }
+  void _syncFromState(QuickTargetState s) {
+    mode.value = s.mode;
+    lastDeviceUid.value = s.lastDeviceUid;
+    lastDeviceHint.value = s.lastDeviceHint;
+    lastTarget.value = s.lastTarget;
+    favorites.value = s.favorites.isNotEmpty
+        ? List<QuickStreamTarget?>.from(s.favorites)
+        : List<QuickStreamTarget?>.filled(defaultFavoriteSlots, null);
+    toolbarOpacity.value = s.toolbarOpacity;
+    restoreLastTargetOnConnect.value = s.restoreLastTargetOnConnect;
+  }
 
-    final hintRaw = SharedPreferencesManager.getString(_kLastDeviceHint);
-    if (hintRaw != null && hintRaw.isNotEmpty) {
-      lastDeviceHint.value = LastConnectedDeviceHint.tryParse(hintRaw);
-    }
+  QuickTargetState _snapshot() {
+    return QuickTargetState(
+      mode: mode.value,
+      lastTarget: lastTarget.value,
+      lastDeviceUid: lastDeviceUid.value,
+      lastDeviceHint: lastDeviceHint.value,
+      favorites: List<QuickStreamTarget?>.from(favorites.value),
+      restoreLastTargetOnConnect: restoreLastTargetOnConnect.value,
+      toolbarOpacity: toolbarOpacity.value,
+    );
+  }
 
-    final lastRaw = SharedPreferencesManager.getString(_kLastTarget);
-    if (lastRaw != null && lastRaw.isNotEmpty) {
-      lastTarget.value = QuickStreamTarget.tryParse(lastRaw);
-    }
-
-    final favRaw = SharedPreferencesManager.getStringList(_kFavorites);
-    if (favRaw != null && favRaw.isNotEmpty) {
-      final wantLen =
-          favRaw.length.clamp(defaultFavoriteSlots, maxFavoriteSlots).toInt();
-      final list = List<QuickStreamTarget?>.filled(wantLen, null);
-      for (int i = 0; i < favRaw.length && i < wantLen; i++) {
-        list[i] = QuickStreamTarget.tryParse(favRaw[i]);
-      }
-      favorites.value = list;
-    } else {
-      favorites.value =
-          List<QuickStreamTarget?>.filled(defaultFavoriteSlots, null);
-    }
-
-    final op = SharedPreferencesManager.getDouble(_kToolbarOpacity);
-    if (op != null) {
-      toolbarOpacity.value = op.clamp(0.2, 0.95);
-    }
-
-    final restore = SharedPreferencesManager.getBool(_kRestoreOnConnect);
-    if (restore != null) {
-      restoreLastTargetOnConnect.value = restore;
-    }
+  Future<void> _persistFallback() async {
+    await QuickTargetRepository.instance.save(_snapshot());
   }
 
   Future<void> setToolbarOpacity(double v) async {
-    final value = v.clamp(0.2, 0.95);
-    toolbarOpacity.value = value;
-    await SharedPreferencesManager.setDouble(_kToolbarOpacity, value);
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickSetToolbarOpacity(opacity: v));
+      _syncFromState(store.state.quick);
+      return;
+    }
+    toolbarOpacity.value = v.clamp(0.2, 0.95);
+    await _persistFallback();
   }
 
   Future<void> setRestoreLastTargetOnConnect(bool v) async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickSetRestoreOnConnect(enabled: v));
+      _syncFromState(store.state.quick);
+      return;
+    }
     restoreLastTargetOnConnect.value = v;
-    await SharedPreferencesManager.setBool(_kRestoreOnConnect, v);
+    await _persistFallback();
   }
 
   Future<void> setMode(StreamMode m) async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickSetMode(mode: m));
+      _syncFromState(store.state.quick);
+      return;
+    }
     mode.value = m;
-    await SharedPreferencesManager.setInt(_kMode, m.index);
+    await _persistFallback();
   }
 
   Future<void> setLastDeviceUid(int uid) async {
     if (uid <= 0) return;
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickSetLastDeviceUid(uid: uid));
+      _syncFromState(store.state.quick);
+      return;
+    }
     lastDeviceUid.value = uid;
-    await SharedPreferencesManager.setInt(_kLastDeviceUid, uid);
+    await _persistFallback();
   }
 
   Future<void> setLastDeviceHint({
@@ -166,141 +134,89 @@ class QuickTargetService {
       devicename: devicename,
       devicetype: devicetype,
     );
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickSetLastDeviceHint(uid: uid, hint: hint));
+      _syncFromState(store.state.quick);
+      return;
+    }
     lastDeviceHint.value = hint;
-    await setLastDeviceUid(uid);
-    await SharedPreferencesManager.setString(
-        _kLastDeviceHint, jsonEncode(hint.toJson()));
+    lastDeviceUid.value = uid;
+    await _persistFallback();
   }
 
-  Future<void> recordLastConnectedFromCaptureTargetChanged({
-    required int deviceUid,
-    required Map<String, dynamic> payload,
-  }) async {
-    // Persist last connected device for "resume reconnect" and UX restoration.
-    await setLastDeviceUid(deviceUid);
-
-    final captureType = (payload['captureTargetType'] ?? payload['sourceType'])
-        ?.toString()
-        .trim()
-        .toLowerCase();
-    final sourceType = (payload['sourceType'])?.toString().trim().toLowerCase();
-
-    StreamMode targetMode = StreamMode.desktop;
-    if (captureType == 'iterm2') {
-      targetMode = StreamMode.iterm2;
-    } else if (captureType == 'window' || sourceType == 'window') {
-      targetMode = StreamMode.window;
-    } else {
-      targetMode = StreamMode.desktop;
-    }
-
-    QuickStreamTarget? target;
-    if (targetMode == StreamMode.iterm2) {
-      final sessionId =
-          (payload['iterm2SessionId'] ?? payload['sessionId'])?.toString() ??
-              '';
-      final widAny = payload['windowId'];
-      final wid = (widAny is num) ? widAny.toInt() : int.tryParse('$widAny');
-      if (sessionId.isNotEmpty) {
-        target = QuickStreamTarget(
-          mode: StreamMode.iterm2,
-          id: sessionId,
-          label: 'iTerm2',
-          appName: 'iTerm2',
-          windowId: wid,
-        );
-      }
-    } else if (targetMode == StreamMode.window) {
-      final windowIdAny = payload['windowId'];
-      final title =
-          payload['title']?.toString() ?? payload['label']?.toString() ?? '';
-      final appId = payload['appId']?.toString();
-      final appName = payload['appName']?.toString();
-      final windowId = (windowIdAny is num) ? windowIdAny.toInt() : null;
-      final id = (windowId != null)
-          ? windowId.toString()
-          : (payload['desktopSourceId']?.toString() ?? '');
-      if (id.isNotEmpty) {
-        target = QuickStreamTarget(
-          mode: StreamMode.window,
-          id: id,
-          label: title.isNotEmpty ? title : '窗口',
-          windowId: windowId,
-          appId: appId,
-          appName: appName,
-        );
-      }
-    } else {
-      final sourceId = payload['desktopSourceId']?.toString() ?? 'screen';
-      target = QuickStreamTarget(
-        mode: StreamMode.desktop,
-        id: sourceId,
-        label: '桌面',
-      );
-    }
-
-    if (target == null) return;
-    lastTarget.value = target;
-    await SharedPreferencesManager.setString(_kLastTarget, target.encode());
-    await setMode(target.mode);
-  }
-
-  /// Remember target selection locally even when the DataChannel is not ready yet.
-  /// The session will apply it automatically once the channel opens.
   Future<void> rememberTarget(QuickStreamTarget target) async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickRememberTarget(target: target));
+      _syncFromState(store.state.quick);
+      return;
+    }
     lastTarget.value = target;
-    await SharedPreferencesManager.setString(_kLastTarget, target.encode());
-    await setMode(target.mode);
+    mode.value = target.mode;
+    await _persistFallback();
   }
 
   Future<void> setFavorite(int slot, QuickStreamTarget? target) async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickSetFavorite(slot: slot, target: target));
+      _syncFromState(store.state.quick);
+      return;
+    }
     final list = List<QuickStreamTarget?>.from(favorites.value);
     if (slot < 0 || slot >= list.length) return;
     list[slot] = target;
     favorites.value = list;
-
-    final encoded = list.map((e) => e?.encode() ?? '').toList();
-    await SharedPreferencesManager.setStringList(_kFavorites, encoded);
+    await _persistFallback();
   }
 
-  /// Add one empty favorite slot (up to [maxFavoriteSlots]).
-  /// Returns true if a slot was added.
   Future<bool> addFavoriteSlot() async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      final before = store.state.quick.favorites.length;
+      await store.dispatch(const AppIntentQuickAddFavoriteSlot());
+      _syncFromState(store.state.quick);
+      return store.state.quick.favorites.length > before;
+    }
     final list = List<QuickStreamTarget?>.from(favorites.value);
     if (list.length >= maxFavoriteSlots) return false;
     list.add(null);
     favorites.value = list;
-    final encoded = list.map((e) => e?.encode() ?? '').toList();
-    await SharedPreferencesManager.setStringList(_kFavorites, encoded);
+    await _persistFallback();
     return true;
   }
 
   Future<void> deleteFavorite(int slot) async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickDeleteFavorite(slot: slot));
+      _syncFromState(store.state.quick);
+      return;
+    }
     await setFavorite(slot, null);
   }
 
   Future<void> renameFavorite(int slot, String alias) async {
+    final store = AppStoreLocator.store;
+    if (store != null) {
+      await store.dispatch(AppIntentQuickRenameFavorite(slot: slot, alias: alias));
+      _syncFromState(store.state.quick);
+      return;
+    }
     final list = List<QuickStreamTarget?>.from(favorites.value);
     if (slot < 0 || slot >= list.length) return;
     final t = list[slot];
     if (t == null) return;
-    list[slot] = t.copyWith(alias: alias);
+    list[slot] = t.copyWith(alias: alias.trim().isEmpty ? null : alias.trim());
     favorites.value = list;
-    final encoded = list.map((e) => e?.encode() ?? '').toList();
-    await SharedPreferencesManager.setStringList(_kFavorites, encoded);
+    await _persistFallback();
   }
 
-  Future<void> applyTarget(
-      RTCDataChannel? channel, QuickStreamTarget target) async {
-    lastTarget.value = target;
-    await SharedPreferencesManager.setString(_kLastTarget, target.encode());
-    await setMode(target.mode);
-
+  Future<void> applyTarget(RTCDataChannel? channel, QuickStreamTarget target) async {
+    await rememberTarget(target);
     switch (target.mode) {
       case StreamMode.desktop:
-        // If we have a concrete screen source id (from last captureTargetChanged),
-        // pass it through; otherwise host-side "no sourceId" is idempotent and
-        // cannot switch when already in screen mode.
         final sid = target.id.trim();
         await RemoteWindowService.instance.selectScreen(
           channel,
@@ -309,28 +225,38 @@ class QuickTargetService {
         break;
       case StreamMode.window:
         if (target.windowId != null) {
-          await RemoteWindowService.instance.selectWindow(channel,
-              windowId: target.windowId!,
-              expectedTitle: target.label,
-              expectedAppId: target.appId,
-              expectedAppName: target.appName);
+          await RemoteWindowService.instance.selectWindow(
+            channel,
+            windowId: target.windowId!,
+            expectedTitle: target.label,
+            expectedAppId: target.appId,
+            expectedAppName: target.appName,
+          );
         }
         break;
       case StreamMode.iterm2:
-        await RemoteIterm2Service.instance
-            .selectPanel(channel, sessionId: target.id);
+        await RemoteIterm2Service.instance.selectPanel(channel, sessionId: target.id);
         break;
     }
   }
 
-  /// Open selection page should call this to decide default save slot.
   int firstEmptySlot() {
     final list = favorites.value;
     for (int i = 0; i < list.length; i++) {
       if (list[i] == null) return i;
     }
-    // No empty slots: suggest adding a new slot if possible.
     if (list.length < maxFavoriteSlots) return list.length;
     return 0;
   }
+
+  Future<void> recordLastConnectedFromCaptureTargetChanged({
+    required int deviceUid,
+    required Map<String, dynamic> payload,
+  }) async {
+    await setLastDeviceUid(deviceUid);
+    final t = quickStreamTargetFromCaptureTargetChanged(payload);
+    if (t == null) return;
+    await rememberTarget(t);
+  }
 }
+

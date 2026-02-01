@@ -6,6 +6,7 @@ import '../base/logging.dart';
 import '../entities/device.dart';
 import '../entities/session.dart';
 import '../global_settings/streaming_settings.dart';
+import '../core/session/session_config.dart';
 import 'app_info_service.dart';
 import 'webrtc_service.dart';
 import 'signaling/cloud_signaling_transport.dart';
@@ -19,6 +20,7 @@ class StreamingManager {
     Device? controllerDevice,
     SignalingTransport? signaling,
     String? connectPassword,
+    String? connectPasswordHash,
   }) {
     if (sessions.containsKey(target.websocketSessionid)) {
       VLOG0(
@@ -27,14 +29,19 @@ class StreamingManager {
     }
     final controller = controllerDevice ?? ApplicationInfo.thisDevice;
     final s = signaling ?? CloudSignalingTransport.instance;
-    final session = StreamingSession(controller, target, signaling: s);
+    final config = SessionConfig.fromConnectParams(
+      connectPassword: connectPassword,
+      connectPasswordHash: connectPasswordHash,
+    );
+    final session = StreamingSession(
+      controller,
+      target,
+      signaling: s,
+      config: config,
+    );
     if (rendererCallbacks.containsKey(target.websocketSessionid)) {
       session
           .updateRendererCallback(rendererCallbacks[target.websocketSessionid]);
-    }
-    if (connectPassword != null && connectPassword.isNotEmpty) {
-      // Let session embed this into request settings (LAN path needs plaintext).
-      StreamingSettings.connectPassword = connectPassword;
     }
     session.startRequest();
     sessions[target.websocketSessionid] = session;

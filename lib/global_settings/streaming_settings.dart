@@ -59,6 +59,10 @@ class StreamingSettings {
   //这两项会在连接的瞬间更新
   static int? targetScreenId;
   static String? connectPassword;
+  // Controller 侧：发送给远端的密码哈希（用于 LAN 自动重连/不落明文）。
+  // 注意：不要复用 `connectPasswordHash`，因为 controller 可能连接多个 host，
+  // 每个 host 的密码可能不同。
+  static String? connectPasswordHashForRemote;
 
   // Desktop source selection
   static String? desktopSourceId; // Source ID from getSources()
@@ -264,6 +268,7 @@ class StreamingSettings {
       'codec': codec,
       'hookCursorImage': hookCursorImage,
       'connectPassword': connectPassword,
+      'connectPasswordHash': connectPasswordHashForRemote,
       'useClipBoard': useClipBoard,
       'syncMousePosition': syncMousePosition,
       'streamMode': streamMode,
@@ -298,6 +303,8 @@ class StreamedSettings {
   bool? hookCursorImage;
   //设备的连接密码
   String? connectPassword = "";
+  // 连接密码哈希（允许 controller 不发送明文）
+  String? connectPasswordHash;
   bool? useClipBoard;
   bool? syncMousePosition;
   // 0 默认 1 独占 2 扩展屏
@@ -329,6 +336,7 @@ class StreamedSettings {
       ..codec = settings['codec'] as String?
       ..hookCursorImage = settings['hookCursorImage'] as bool?
       ..connectPassword = settings['connectPassword'] as String?
+      ..connectPasswordHash = settings['connectPasswordHash'] as String?
       ..useClipBoard = settings['useClipBoard'] as bool?
       ..syncMousePosition = settings['syncMousePosition'] as bool?
       ..streamMode = settings['streamMode'] as int?

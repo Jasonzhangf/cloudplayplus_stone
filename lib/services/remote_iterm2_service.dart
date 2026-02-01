@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:async';
 
 import 'package:cloudplayplus/models/iterm2_panel.dart';
+import 'package:cloudplayplus/utils/iterm2/iterm2_panel_sort.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -220,6 +221,7 @@ class RemoteIterm2Service {
             );
           }
         }
+        parsed.sort(compareIterm2Panels);
         panels.value = parsed;
       }
       loading.value = false;

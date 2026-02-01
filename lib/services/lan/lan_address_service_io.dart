@@ -9,7 +9,7 @@ class LanAddressService {
     try {
       final ifaces = await NetworkInterface.list(
         includeLoopback: false,
-        includeLinkLocal: true,
+        includeLinkLocal: false,
         type: InternetAddressType.any,
       );
       for (final iface in ifaces) {
@@ -17,6 +17,10 @@ class LanAddressService {
           final ip = addr.address;
           if (ip.isEmpty) continue;
           if (ip == '127.0.0.1' || ip == '::1') continue;
+          // Skip scoped/link-local IPv6 like "fe80::...%en0" which is not usable
+          // for LAN connect UX (requires interface scoping on the client).
+          if (ip.contains('%')) continue;
+          if (ip.startsWith('fe80:')) continue;
           out.add(ip);
         }
       }

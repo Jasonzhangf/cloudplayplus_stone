@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../../models/shortcut.dart';
 import '../../pages/custom_shortcut_page.dart';
+import '../../controller/screen_controller.dart';
 import '../../utils/shortcut/shortcut_order_utils.dart';
 
 /// 快捷键条组件
@@ -275,9 +276,12 @@ class _ShortcutBarState extends State<ShortcutBar> {
         repeatable: repeatable,
         sticky: sticky,
         onPressed: () {
-          // If this is currently sticky-repeating, tapping should not add extra
-          // trailing clicks; user long-presses again to stop.
-          if (sticky) return;
+          // If this is currently sticky-repeating, a short tap should ONLY
+          // cancel highlight/repeat (and should NOT send an extra key).
+          if (sticky) {
+            _stopSticky();
+            return;
+          }
           widget.onShortcutPressed(shortcut);
         },
         onLongPress: repeatable
@@ -405,34 +409,142 @@ class _ShortcutBarState extends State<ShortcutBar> {
     final controller = TextEditingController(text: initial);
     final res = await showDialog<String?>(
       context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('改名'),
-          content: TextField(
-            controller: controller,
-            maxLength: 5,
-            decoration: const InputDecoration(
-              hintText: '最多 5 个字',
-              border: OutlineInputBorder(),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('取消'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.pop(context, controller.text.trim()),
-              child: const Text('确定'),
-            ),
-          ],
-        );
-      },
+      builder: (context) => _ManualImeRenameDialog(
+        title: '改名',
+        controller: controller,
+        hintText: '点右上角键盘按钮开始输入（最多 5 个字）',
+      ),
     );
     if (res == null) return null;
     final trimmed = res.trim();
     if (trimmed.isEmpty) return null;
     return trimmed;
+  }
+}
+
+class _ManualImeRenameDialog extends StatefulWidget {
+  final String title;
+  final TextEditingController controller;
+  final String hintText;
+
+  const _ManualImeRenameDialog({
+    required this.title,
+    required this.controller,
+    required this.hintText,
+  });
+
+  @override
+  State<_ManualImeRenameDialog> createState() => _ManualImeRenameDialogState();
+}
+
+class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
+  final FocusNode _focusNode = FocusNode();
+  bool _imeEnabled = false;
+  bool _lastImeVisible = false;
+  bool _prevLocalTextEditing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prevLocalTextEditing = ScreenController.localTextEditing.value;
+    ScreenController.setLocalTextEditing(true);
+    ScreenController.setSystemImeActive(false);
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+  }
+
+  @override
+  void dispose() {
+    try {
+      FocusScope.of(context).unfocus();
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+    _focusNode.dispose();
+    ScreenController.setLocalTextEditing(_prevLocalTextEditing);
+    super.dispose();
+  }
+
+  void _toggleIme() {
+    final want = !_imeEnabled;
+    setState(() => _imeEnabled = want);
+    if (!want) {
+      try {
+        FocusScope.of(context).unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      } catch (_) {}
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        FocusScope.of(context).requestFocus(_focusNode);
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      } catch (_) {}
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final imeVisible = bottomInset > 0;
+      final prev = _lastImeVisible;
+      _lastImeVisible = imeVisible;
+
+      // Respect system keyboard hide button: if IME is hidden while enabled,
+      // stop wanting it, and never auto re-open.
+      if (_imeEnabled && prev && !imeVisible) {
+        setState(() => _imeEnabled = false);
+        try {
+          FocusScope.of(context).unfocus();
+        } catch (_) {}
+      }
+    });
+
+    return AlertDialog(
+      titlePadding: const EdgeInsets.fromLTRB(16, 12, 8, 0),
+      title: Row(
+        children: [
+          Expanded(child: Text(widget.title)),
+          IconButton(
+            tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
+            icon: Icon(
+              _imeEnabled
+                  ? Icons.keyboard_hide_outlined
+                  : Icons.keyboard_alt_outlined,
+            ),
+            onPressed: _toggleIme,
+          ),
+        ],
+      ),
+      content: TextField(
+        controller: widget.controller,
+        focusNode: _focusNode,
+        autofocus: false,
+        maxLength: 5,
+        readOnly: !_imeEnabled,
+        showCursor: _imeEnabled,
+        keyboardType: _imeEnabled ? TextInputType.text : TextInputType.none,
+        enableSuggestions: _imeEnabled,
+        autocorrect: _imeEnabled,
+        decoration: InputDecoration(
+          hintText: widget.hintText,
+          border: const OutlineInputBorder(),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.pop(context, widget.controller.text.trim()),
+          child: const Text('确定'),
+        ),
+      ],
+    );
   }
 }
 
@@ -585,7 +697,11 @@ class _ArrowClusterButton extends StatelessWidget {
             : null,
         onTap: () {
           if (shortcut == null) return;
-          if (sticky) return;
+          // Short tap cancels sticky repeat without sending.
+          if (sticky) {
+            onToggleSticky?.call(shortcut);
+            return;
+          }
           onShortcutPressed(shortcut);
         },
         child: AnimatedContainer(

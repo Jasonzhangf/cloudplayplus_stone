@@ -51,9 +51,7 @@ class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed && AppPlatform.isMobile) {
-      WebSocketService.reconnect();
-    }
+    // Mobile reconnect/restore is handled by AppLifecycleReconnectService.
   }
 
   void onTabTapped(int index) {

@@ -48,8 +48,19 @@ class WebSocketService {
   static const JsonEncoder _encoder = JsonEncoder();
   static const JsonDecoder _decoder = JsonDecoder();
 
-  static WebSocketConnectionState connectionState =
-      WebSocketConnectionState.none;
+  static WebSocketConnectionState connectionState = WebSocketConnectionState.none;
+  static final ValueNotifier<WebSocketConnectionState> connectionStateNotifier =
+      ValueNotifier<WebSocketConnectionState>(WebSocketConnectionState.none);
+
+  static void _setConnectionState(
+    WebSocketConnectionState next, {
+    String? reason,
+  }) {
+    if (connectionState == next) return;
+    connectionState = next;
+    connectionStateNotifier.value = next;
+    VLOG0('[WebSocketService] connectionState=$next${reason == null ? '' : ' (reason=$reason)'}');
+  }
   // "ready" means we have received `connection_info` from server and updated our
   // connection_id/user info. Some requests (e.g. requestRemoteControl) can be
   // dropped if sent before this handshake completes.
@@ -82,6 +93,32 @@ class WebSocketService {
     } catch (_) {
       // Best-effort: do not throw on timeout to avoid blocking user actions.
     }
+  }
+
+  /// Best-effort helper to ensure the cloud websocket is both connected and
+  /// has completed the initial `connection_info` handshake (`ready=true`).
+  ///
+  /// Returns `true` if ready, otherwise `false`.
+  static Future<bool> ensureReady({
+    Duration timeout = const Duration(seconds: 10),
+    bool reconnectIfNeeded = true,
+  }) async {
+    if (ready.value) return true;
+
+    if (reconnectIfNeeded) {
+      // If there's no active socket or we are clearly disconnected, trigger a
+      // reconnect once before waiting.
+      if (_socket == null ||
+          connectionState == WebSocketConnectionState.disconnected ||
+          connectionState == WebSocketConnectionState.none) {
+        try {
+          reconnect();
+        } catch (_) {}
+      }
+    }
+
+    await waitUntilReady(timeout: timeout);
+    return ready.value;
   }
 
   @visibleForTesting
@@ -183,7 +220,7 @@ class WebSocketService {
     var url = '$_baseUrl?token=$accessToken';
     VLOG0('[WebSocketService] init: connecting to $url');
     _socket = SimpleWebSocket(url);
-    connectionState = WebSocketConnectionState.connecting;
+    _setConnectionState(WebSocketConnectionState.connecting, reason: 'init');
     _socket?.onOpen = () {
       if (generation != _activeGeneration) return;
       VLOG0('[WebSocketService] onOpen: WebSocket connected.');
@@ -270,8 +307,22 @@ class WebSocketService {
     int lanPort = 0;
     try {
       // Only meaningful on desktop host; on controller/mobile this will be stubbed.
-      lanEnabled = LanSignalingHostServer.instance.enabled.value;
+      final host = LanSignalingHostServer.instance;
+      lanEnabled = host.enabled.value && host.isRunning;
       lanPort = LanSignalingHostServer.instance.port.value;
+
+      // Avoid advertising addresses that are not actually bound by the LAN server.
+      final listenV4 = host.isListeningV4;
+      final listenV6 = host.isListeningV6;
+      if (!listenV4 || !listenV6) {
+        lanAddrs = lanAddrs.where((ip) {
+          final isV6 = ip.contains(':');
+          final isV4 = ip.contains('.') && !isV6;
+          if (isV4 && !listenV4) return false;
+          if (isV6 && !listenV6) return false;
+          return true;
+        }).toList(growable: false);
+      }
     } catch (_) {}
 
     send('updateDeviceInfo', {
@@ -301,7 +352,7 @@ class WebSocketService {
     } catch (_) {}
     _socket = null;
     // Ensure `init()` isn't blocked by a stale "connecting" state.
-    connectionState = WebSocketConnectionState.disconnected;
+    _setConnectionState(WebSocketConnectionState.disconnected, reason: 'reconnect');
     _resetReady();
     _reconnectTimer?.cancel();
     _reconnectTimer = null;
@@ -404,7 +455,7 @@ class WebSocketService {
   }
 
   static void onConnected() {
-    connectionState = WebSocketConnectionState.connected;
+    _setConnectionState(WebSocketConnectionState.connected, reason: 'onConnected');
     // Not "ready" yet until we get `connection_info`.
     //connected and waiting for our connection uuid.
     /*send('newconnection', {
@@ -471,11 +522,17 @@ class WebSocketService {
     var request = {};
     request["type"] = event;
     request["data"] = data;
-    _socket?.send(_encoder.convert(request));
+    final ws = _socket;
+    if (ws == null) {
+      VLOG0(
+          '[WebSocketService] send dropped: no socket (state=$connectionState event=$event)');
+      return;
+    }
+    ws.send(_encoder.convert(request));
   }
 
   static void onDisConnected() {
-    connectionState = WebSocketConnectionState.disconnected;
+    _setConnectionState(WebSocketConnectionState.disconnected, reason: 'onDisConnected');
     _resetReady();
   }
 }

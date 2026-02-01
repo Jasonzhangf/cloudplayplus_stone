@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:vk/vk.dart';
 import '../../controller/screen_controller.dart';
+import '../../core/blocks/input/chord_key_sender.dart';
 import '../../models/shortcut.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
@@ -26,6 +27,17 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
   final ShortcutService _shortcutService = ShortcutService();
   late ShortcutSettings _settings;
 
+  static const _modifierKeyCodes = <int>{
+    0xA2, // ControlLeft
+    0xA3, // ControlRight
+    0xA0, // ShiftLeft
+    0xA1, // ShiftRight
+    0xA4, // AltLeft
+    0xA5, // AltRight
+    0x5B, // MetaLeft
+    0x5C, // MetaRight
+  };
+
   @override
   void initState() {
     super.initState();
@@ -48,23 +60,20 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
         WebrtcService.currentRenderingSession?.inputController;
     if (inputController == null) return;
 
-    // 按下所有按键
+    final codes = <int>[];
     for (final key in shortcut.keys) {
       final keyCode = _getKeyCodeFromString(key.keyCode);
       if (keyCode != null && keyCode != 0) {
-        inputController.requestKeyEvent(keyCode, true);
+        codes.add(keyCode);
       }
     }
-
-    // 延迟释放所有按键（模拟真实按键行为）
-    Future.delayed(const Duration(milliseconds: 50), () {
-      for (final key in shortcut.keys.reversed) {
-        final keyCode = _getKeyCodeFromString(key.keyCode);
-        if (keyCode != null && keyCode != 0) {
-          inputController.requestKeyEvent(keyCode, false);
-        }
-      }
-    });
+    sendChordKeyPress(
+      keyCodes: codes,
+      modifierKeyCodes: _modifierKeyCodes,
+      sendKeyEvent: inputController.requestKeyEvent,
+      defensiveReleaseModifiersBefore: true,
+      defensiveReleaseModifiersAfter: true,
+    );
   }
 
   /// 处理设置变化

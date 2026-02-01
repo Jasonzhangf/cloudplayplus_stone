@@ -13,8 +13,9 @@
 
 基准（以 576×768 为例）：
 
-- `B=250 kbps`：`15 fps`、`250 kbps`（可接受的基准体验）
-- `B<250 kbps`：允许降到 `5 fps`（保交互连续性）
+- `B=100 kbps`：`15 fps`、`100 kbps`（最低可接受基准）
+- `B=200 kbps`：`20 fps`（更顺滑的交互）
+- `B<100 kbps`：允许降到 `5 fps`（保交互连续性）
 - `B=500 kbps`：升到 `30 fps`
 - `B=1000 kbps`：升到 `60 fps`
 - `B>1000 kbps`：保持 `60 fps`，只提高码率以提升质量
@@ -53,12 +54,13 @@
 
 定义阈值：
 
-- `T1=250 kbps`, `T2=500 kbps`, `T3=1000 kbps`
+- `T1=100 kbps`, `T20=200 kbps`, `T2=500 kbps`, `T3=1000 kbps`
 
 对应 tier：
 
 - `B < T1` → `5 fps`
-- `T1 ≤ B < T2` → `15 fps`
+- `T1 ≤ B < T20` → `15 fps`
+- `T20 ≤ B < T2` → `20 fps`
 - `T2 ≤ B < T3` → `30 fps`
 - `B ≥ T3` → `60 fps`
 
@@ -85,7 +87,7 @@
 
 定义 15fps 的基准码率：
 
-- `R15 = 250 kbps`（576×768）
+- `R15 = 100 kbps`（576×768）
 
 对其他分辨率按面积缩放：
 
@@ -130,4 +132,3 @@
 
 - `video_buffer_policy.dart`：接收端 buffer（frames/seconds）目标的纯函数策略
 - `strategy_lab_policy.dart`：策略实验台的纯函数与触发器（用于 loopback verifier）
-

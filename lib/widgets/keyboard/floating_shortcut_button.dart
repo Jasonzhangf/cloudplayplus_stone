@@ -1,8 +1,14 @@
+library floating_shortcut_button;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:provider/provider.dart';
+import '../../app/intents/app_intent.dart';
+import '../../app/store/app_store.dart';
+import '../../core/session/capture_target_from_quick_stream_target.dart';
 import '../../models/shortcut.dart';
 import '../../models/quick_stream_target.dart';
 import '../../models/stream_mode.dart';
@@ -18,9 +24,20 @@ import '../../services/stream_monkey_service.dart';
 import '../../controller/screen_controller.dart';
 import '../../services/streaming_manager.dart';
 import 'shortcut_bar.dart';
+import '../../utils/input/ime_inset.dart';
 import '../../utils/input/system_keyboard_delta.dart';
 import '../../utils/input/input_debug.dart';
 import '../../global_settings/streaming_settings.dart';
+import '../../core/blocks/input/chord_key_sender.dart';
+import '../../core/blocks/ime/manual_ime_policy.dart';
+import '../../core/blocks/ime/manual_ime_toggle.dart';
+
+part 'floating_shortcut_button/manual_ime_sheet.dart';
+part 'floating_shortcut_button/top_right_actions.dart';
+part 'floating_shortcut_button/stream_control_row.dart';
+part 'floating_shortcut_button/pills.dart';
+part 'floating_shortcut_button/favorites.dart';
+part 'floating_shortcut_button/shortcut_settings_sheet.dart';
 
 /// 悬浮快捷键按钮 - 固定在右下角
 /// 点击打开快捷键面板和快捷键条
@@ -42,6 +59,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   bool _lastImeVisible = false;
   int _lastImeShowAtMs = 0;
   int _forceImeShowUntilMs = 0;
+  final GlobalKey _panelMeasureKey = GlobalKey();
+  double _panelMeasuredHeight = 78.0;
+  static const double _imeExtraLiftPx = 26.0;
   static const _arrowIds = {
     'arrow-left',
     'arrow-right',
@@ -62,7 +82,6 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
     Future<T?> Function() run,
   ) async {
     final prevLocal = ScreenController.localTextEditing.value;
-    final prevWanted = _systemKeyboardWanted;
     final prevUseSystem = _useSystemKeyboard;
 
     // Suspend remote-input IME management and virtual keyboard while editing local text.
@@ -88,13 +107,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       if (mounted) {
         setState(() {
           _useSystemKeyboard = prevUseSystem;
-          _systemKeyboardWanted = prevWanted;
-          if (prevWanted && _useSystemKeyboard) {
-            // Best effort: restore previously requested IME without oscillation.
-            _forceImeShowUntilMs = DateTime.now().millisecondsSinceEpoch + 900;
-          } else {
-            _forceImeShowUntilMs = 0;
-          }
+          // System IME is fully manual: do not auto-restore / auto-show after local UI editing.
+          _systemKeyboardWanted = false;
+          _forceImeShowUntilMs = 0;
         });
       }
     }
@@ -186,44 +201,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
         WebrtcService.currentRenderingSession?.inputController;
     if (inputController == null) return;
 
-    // Defensive: release any potentially "stuck" modifiers so special keys
-    // (Backspace/Arrows) don't turn into "delete all"/"jump" behaviors.
-    for (final code in _modifierKeyCodes) {
-      inputController.requestKeyEvent(code, false);
-    }
-
-    // Ensure combo shortcuts are sent in chord order:
-    // - modifiers down first (Shift/Ctrl/Alt/Meta)
-    // - then non-modifiers
-    // - release in reverse
-    final downCodes = <int>[];
-    final downModifiers = <int>[];
+    final codes = <int>[];
     for (final key in shortcut.keys) {
       final keyCode = _getKeyCodeFromString(key.keyCode);
       if (keyCode == null || keyCode == 0) continue;
-      if (_modifierKeyCodes.contains(keyCode)) {
-        downModifiers.add(keyCode);
-      } else {
-        downCodes.add(keyCode);
-      }
-    }
-    final orderedDown = <int>[...downModifiers, ...downCodes];
-    final orderedUp = <int>[...downCodes.reversed, ...downModifiers.reversed];
-
-    for (final keyCode in orderedDown) {
-      inputController.requestKeyEvent(keyCode, true);
+      codes.add(keyCode);
     }
 
-    // Release shortly after to emulate a normal chord keypress.
-    Future.delayed(const Duration(milliseconds: 55), () {
-      for (final keyCode in orderedUp) {
-        inputController.requestKeyEvent(keyCode, false);
-      }
-      // Extra safety: clear modifiers again.
-      for (final code in _modifierKeyCodes) {
-        inputController.requestKeyEvent(code, false);
-      }
-    });
+    sendChordKeyPress(
+      keyCodes: codes,
+      modifierKeyCodes: _modifierKeyCodes,
+      sendKeyEvent: inputController.requestKeyEvent,
+    );
   }
 
   Future<void> _quickNextScreen() async {
@@ -392,54 +381,97 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
 
   @override
   Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    // Reserve bottom space so the remote video can be lifted above our toolbar + system keyboard.
-    // Keep this in sync with the panel height/offset below.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      final route = ModalRoute.of(context);
-      _maybeSyncShortcutPlatformWithRemoteHost();
-      final prevImeVisible = _lastImeVisible;
-      final imeVisible = bottomInset > 0;
-      _lastImeVisible = imeVisible;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+        final effectiveBottomInset = computeEffectiveKeyboardInset(
+          mediaHeight: MediaQuery.of(context).size.height,
+          constraintsHeight: constraints.maxHeight,
+          keyboardInset: bottomInset,
+        );
+        // Reserve bottom space so the remote video can be lifted above our toolbar + system keyboard.
+        // Keep this in sync with the panel height/offset below.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted) return;
+          _maybeSyncShortcutPlatformWithRemoteHost();
+          final prevImeVisible = _lastImeVisible;
+          final imeVisible = bottomInset > 0;
+          _lastImeVisible = imeVisible;
 
-      // System IME must be fully manual:
-      // - only show/hide when user taps the keyboard button
-      // - do NOT auto-dismiss when user taps the remote screen
-      if (_useSystemKeyboard && _systemKeyboardWanted) {
-        // While user is editing local UI text, do not fight focus/IME.
-        if (ScreenController.localTextEditing.value) return;
+          // System IME must be fully manual:
+          // - only show/hide when user taps the keyboard button
+          // - do NOT auto-dismiss when user taps the remote screen
+          if (_useSystemKeyboard && _systemKeyboardWanted) {
+            // While user is editing local UI text, do not fight focus/IME.
+            if (ScreenController.localTextEditing.value) return;
 
-        ScreenController.setSystemImeActive(true);
-        if (!_systemKeyboardFocusNode.hasFocus) {
-          FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
-        }
+            final d = decideManualImePolicy(
+              useSystemKeyboard: _useSystemKeyboard,
+              wanted: _systemKeyboardWanted,
+              localTextEditing: false,
+              prevImeVisible: prevImeVisible,
+              imeVisible: imeVisible,
+              focusHasFocus: _systemKeyboardFocusNode.hasFocus,
+            );
 
-        // Keep IME stable: if it hides due to focus churn, re-show it, but never
-        // auto-toggle the "wanted" state off. The keyboard button is the only
-        // user-controlled toggle.
-        //
-        // IMPORTANT: throttle `TextInput.show` to avoid flicker.
-        if (prevImeVisible && !imeVisible) {
-          InputDebugService.instance.log('IME hidden by system -> keep wanted');
-        }
-        if (!imeVisible) {
-          final nowMs = DateTime.now().millisecondsSinceEpoch;
-          if (nowMs - _lastImeShowAtMs >= 800) {
-            _lastImeShowAtMs = nowMs;
-            SystemChannels.textInput.invokeMethod('TextInput.show');
+            // Respect the system IME's own hide/close behavior:
+            // if user hides the keyboard (or system hides it), we do NOT re-open it.
+            if (d.shouldStopWanted) {
+              InputDebugService.instance
+                  .log('IME hidden -> stop wanted (manual)');
+              if (mounted) {
+                setState(() {
+                  _systemKeyboardWanted = false;
+                  _forceImeShowUntilMs = 0;
+                });
+              }
+              ScreenController.setSystemImeActive(false);
+              try {
+                FocusScope.of(context).unfocus();
+              } catch (_) {}
+              return;
+            }
+
+            // Keep IME in "active" state while user wants it, so other widgets won't
+            // steal focus and cause flicker. This does NOT auto-show the IME.
+            if (d.keepImeActive) {
+              ScreenController.setSystemImeActive(true);
+            }
+            // Keep the focus connection while IME is visible, but never request focus
+            // when IME is hidden (that can auto-show on some OEM keyboards).
+            if (d.shouldRequestFocusToKeepIme) {
+              FocusScope.of(context).requestFocus(_systemKeyboardFocusNode);
+            }
           }
-        }
-      }
-      // Keep this roughly in sync with the toolbar height to lift the remote video.
-      final inset = _isPanelVisible ? 86.0 : 0.0;
-      ScreenController.setShortcutOverlayHeight(inset);
-    });
-    return ValueListenableBuilder<double>(
-      valueListenable: ScreenController.virtualKeyboardOverlayHeight,
-      builder: (context, vkHeight, child) {
-        final bottom = bottomInset + vkHeight + 8;
-        return Stack(
+          // Keep this in sync with the toolbar height to lift the remote video.
+          // Measure the actual height to avoid "two rows are still covered" issues.
+          double measured = _panelMeasuredHeight;
+          if (_isPanelVisible) {
+            final ctx = _panelMeasureKey.currentContext;
+            final box = ctx?.findRenderObject();
+            if (box is RenderBox) {
+              final h = box.size.height;
+              if (h.isFinite &&
+                  h > 0 &&
+                  (h - _panelMeasuredHeight).abs() > 0.5) {
+                measured = h;
+                if (mounted) {
+                  setState(() => _panelMeasuredHeight = h);
+                } else {
+                  _panelMeasuredHeight = h;
+                }
+              }
+            }
+          }
+          final extraLift = imeVisible ? _imeExtraLiftPx : 0.0;
+          final inset = _isPanelVisible ? (measured + extraLift) : 0.0;
+          ScreenController.setShortcutOverlayHeight(inset);
+        });
+        return ValueListenableBuilder<double>(
+          valueListenable: ScreenController.virtualKeyboardOverlayHeight,
+          builder: (context, vkHeight, child) {
+            final bottom = effectiveBottomInset + vkHeight + 8;
+            return Stack(
           children: [
             // 悬浮按钮：仅在面板隐藏时显示，避免遮挡视线（面板内自带关闭按钮）
             if (!_isPanelVisible)
@@ -489,12 +521,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 right: 4,
                 // Dock right above whichever keyboard is visible.
                 bottom: bottom > 0 ? bottom : 12,
-                child: _buildShortcutPanel(context),
+                child: KeyedSubtree(
+                  key: _panelMeasureKey,
+                  child: _buildShortcutPanel(context),
+                ),
               ),
             if (_isPanelVisible)
               Positioned(
                 right: 12,
-                bottom: (bottom > 0 ? bottom : 12) + 86 + 8,
+                bottom: (bottom > 0 ? bottom : 12) +
+                    _panelMeasuredHeight +
+                    (bottomInset > 0 ? _imeExtraLiftPx : 0.0) +
+                    8,
                 child: ValueListenableBuilder<bool>(
                   valueListenable: ScreenController.showVirtualMouse,
                   builder: (context, showMouse, _) {
@@ -502,49 +540,61 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                       useSystemKeyboard: _useSystemKeyboard,
                       showVirtualMouse: showMouse,
                       onToggleMouse: () {
-                        ScreenController.setShowVirtualMouse(!showMouse);
+                        context.read<AppStore>().dispatch(
+                              AppIntentSetShowVirtualMouse(show: !showMouse),
+                            );
                       },
                       onPrevIterm2Panel: () {
-                        RemoteIterm2Service.instance
-                            .selectPrevPanel(WebrtcService.activeDataChannel);
+                        final sid = context.read<AppStore>().state.activeSessionId ??
+                            'cloud:${WebrtcService.currentDeviceId}';
+                        context.read<AppStore>().dispatch(
+                              AppIntentSelectPrevIterm2Panel(sessionId: sid),
+                            );
                       },
                       onNextIterm2Panel: () {
-                        RemoteIterm2Service.instance
-                            .selectNextPanel(WebrtcService.activeDataChannel);
+                        final sid = context.read<AppStore>().state.activeSessionId ??
+                            'cloud:${WebrtcService.currentDeviceId}';
+                        context.read<AppStore>().dispatch(
+                              AppIntentSelectNextIterm2Panel(sessionId: sid),
+                            );
                       },
                       onToggleKeyboard: () {
-                        if (_useSystemKeyboard) {
-                          // Toggle IME visibility (manual only).
-                          final want = !_systemKeyboardWanted;
-                          final nowMs = DateTime.now().millisecondsSinceEpoch;
-                          setState(() => _systemKeyboardWanted = want);
-                          ScreenController.setSystemImeActive(want);
-                          if (want) {
-                            _forceImeShowUntilMs = 0;
-                            ScreenController.setShowVirtualKeyboard(false);
-                            FocusScope.of(context)
-                                .requestFocus(_systemKeyboardFocusNode);
-                            SystemChannels.textInput
-                                .invokeMethod('TextInput.show');
-                          } else {
-                            _forceImeShowUntilMs = 0;
-                            SystemChannels.textInput
-                                .invokeMethod('TextInput.hide');
-                            FocusScope.of(context).unfocus();
-                          }
-                          return;
-                        }
-                        // If currently in virtual keyboard mode, switch to system IME and show it.
+                        final plan = planManualImeToggle(
+                          useSystemKeyboard: _useSystemKeyboard,
+                          wanted: _systemKeyboardWanted,
+                        );
                         setState(() {
-                          _useSystemKeyboard = true;
-                          _systemKeyboardWanted = true;
+                          _useSystemKeyboard = plan.nextUseSystemKeyboard;
+                          _systemKeyboardWanted = plan.nextWanted;
                         });
+
+                        try {
+                          context.read<AppStore>().dispatch(
+                                AppIntentSetSystemImeWanted(
+                                  wanted: plan.nextWanted,
+                                ),
+                              );
+                        } catch (_) {}
+
                         _forceImeShowUntilMs = 0;
-                        ScreenController.setSystemImeActive(true);
-                        ScreenController.setShowVirtualKeyboard(false);
-                        FocusScope.of(context)
-                            .requestFocus(_systemKeyboardFocusNode);
-                        SystemChannels.textInput.invokeMethod('TextInput.show');
+                        ScreenController.setSystemImeActive(plan.nextWanted);
+                        if (plan.hideVirtualKeyboard) {
+                          ScreenController.setShowVirtualKeyboard(false);
+                        }
+
+                        if (plan.requestFocus) {
+                          FocusScope.of(context)
+                              .requestFocus(_systemKeyboardFocusNode);
+                        }
+                        if (plan.showIme) {
+                          SystemChannels.textInput.invokeMethod('TextInput.show');
+                        }
+                        if (plan.hideIme) {
+                          SystemChannels.textInput.invokeMethod('TextInput.hide');
+                        }
+                        if (plan.unfocus) {
+                          FocusScope.of(context).unfocus();
+                        }
                       },
                       onDisconnect: () async {
                         final session = WebrtcService.currentRenderingSession;
@@ -572,7 +622,12 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                             false;
                         if (!ok) return;
                         try {
-                          StreamingManager.stopStreaming(device);
+                          final store = context.read<AppStore>();
+                          final sid = store.state.activeSessionId ??
+                              'cloud:${device.websocketSessionid}';
+                          await store.dispatch(
+                            AppIntentDisconnect(sessionId: sid, reason: 'user'),
+                          );
                         } catch (_) {}
                         if (!mounted) return;
                         setState(() => _isPanelVisible = false);
@@ -683,6 +738,8 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                 ),
               ),
           ],
+            );
+          },
         );
       },
     );
@@ -905,14 +962,31 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       );
       if (channel != null &&
           channel.state == RTCDataChannelState.RTCDataChannelOpen) {
-        await _quick.applyTarget(
-          channel,
-          const QuickStreamTarget(
-            mode: StreamMode.desktop,
-            id: 'screen',
-            label: '整个桌面',
-          ),
-        );
+        final store = context.read<AppStore>();
+        final sid = store.state.activeSessionId;
+        if (sid != null && sid.isNotEmpty) {
+          await store.dispatch(
+            AppIntentSwitchCaptureTarget(
+              sessionId: sid,
+              target: captureTargetFromQuickStreamTarget(
+                const QuickStreamTarget(
+                  mode: StreamMode.desktop,
+                  id: 'screen',
+                  label: '整个桌面',
+                ),
+              ),
+            ),
+          );
+        } else {
+          await _quick.applyTarget(
+            channel,
+            const QuickStreamTarget(
+              mode: StreamMode.desktop,
+              id: 'screen',
+              label: '整个桌面',
+            ),
+          );
+        }
       } else {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -952,7 +1026,18 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
       );
       return;
     }
-    await _quick.applyTarget(channel, target);
+    final store = context.read<AppStore>();
+    final sid = store.state.activeSessionId;
+    if (sid == null || sid.isEmpty) {
+      await _quick.applyTarget(channel, target);
+      return;
+    }
+    await store.dispatch(
+      AppIntentSwitchCaptureTarget(
+        sessionId: sid,
+        target: captureTargetFromQuickStreamTarget(target),
+      ),
+    );
   }
 
   Future<void> _handleFavoriteAction(
@@ -991,1123 +1076,4 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 }
 
-class _ManualImeTextEditSheet extends StatefulWidget {
-  final String title;
-  final TextEditingController controller;
-  final String hintText;
-  final String okText;
-
-  const _ManualImeTextEditSheet({
-    required this.title,
-    required this.controller,
-    required this.hintText,
-    required this.okText,
-  });
-
-  @override
-  State<_ManualImeTextEditSheet> createState() =>
-      _ManualImeTextEditSheetState();
-}
-
-class _ManualImeTextEditSheetState extends State<_ManualImeTextEditSheet> {
-  final FocusNode _focusNode = FocusNode();
-  bool _imeEnabled = false;
-
-  @override
-  void dispose() {
-    try {
-      SystemChannels.textInput.invokeMethod('TextInput.hide');
-    } catch (_) {}
-    _focusNode.dispose();
-    super.dispose();
-  }
-
-  void _toggleIme() {
-    final want = !_imeEnabled;
-    setState(() => _imeEnabled = want);
-    if (!want) {
-      try {
-        FocusScope.of(context).unfocus();
-        SystemChannels.textInput.invokeMethod('TextInput.hide');
-      } catch (_) {}
-      return;
-    }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      try {
-        FocusScope.of(context).requestFocus(_focusNode);
-        SystemChannels.textInput.invokeMethod('TextInput.show');
-      } catch (_) {}
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        widget.title,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
-                    ),
-                  ),
-                  IconButton(
-                    tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
-                    icon: Icon(
-                      _imeEnabled
-                          ? Icons.keyboard_hide_outlined
-                          : Icons.keyboard_alt_outlined,
-                    ),
-                    onPressed: _toggleIme,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: widget.controller,
-                focusNode: _focusNode,
-                autofocus: false,
-                readOnly: !_imeEnabled,
-                showCursor: _imeEnabled,
-                keyboardType:
-                    _imeEnabled ? TextInputType.text : TextInputType.none,
-                enableSuggestions: _imeEnabled,
-                autocorrect: _imeEnabled,
-                decoration: InputDecoration(
-                  hintText: widget.hintText,
-                  border: const OutlineInputBorder(),
-                ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('取消'),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () =>
-                          Navigator.pop(context, widget.controller.text.trim()),
-                      child: Text(widget.okText),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
 enum _FavoriteAction { rename, delete }
-
-class _TopRightActions extends StatelessWidget {
-  final bool useSystemKeyboard;
-  final bool showVirtualMouse;
-  final VoidCallback onToggleMouse;
-  final VoidCallback onToggleKeyboard;
-  final VoidCallback? onPrevIterm2Panel;
-  final VoidCallback? onNextIterm2Panel;
-  final VoidCallback onDisconnect;
-  final VoidCallback onClose;
-
-  const _TopRightActions({
-    required this.useSystemKeyboard,
-    required this.showVirtualMouse,
-    required this.onToggleMouse,
-    required this.onToggleKeyboard,
-    this.onPrevIterm2Panel,
-    this.onNextIterm2Panel,
-    required this.onDisconnect,
-    required this.onClose,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final quick = QuickTargetService.instance;
-    return Container(
-      height: 30,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: Colors.white.withValues(alpha: 0.14),
-          width: 1,
-        ),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            key: const Key('shortcutPanelKeyboardToggle'),
-            icon: Icon(
-              useSystemKeyboard
-                  ? Icons.keyboard_alt_outlined
-                  : Icons.keyboard_outlined,
-            ),
-            tooltip: useSystemKeyboard ? '手机键盘' : '电脑键盘',
-            onPressed: onToggleKeyboard,
-            iconSize: 18,
-            padding: const EdgeInsets.all(0),
-            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-            color: Colors.white.withValues(alpha: 0.92),
-          ),
-          const SizedBox(width: 2),
-          IconButton(
-            key: const Key('shortcutPanelMouseToggle'),
-            icon: Icon(
-              showVirtualMouse ? Icons.mouse : Icons.mouse_outlined,
-            ),
-            tooltip: showVirtualMouse ? '隐藏鼠标' : '显示鼠标',
-            onPressed: onToggleMouse,
-            iconSize: 18,
-            padding: const EdgeInsets.all(0),
-            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-            color: Colors.white.withValues(alpha: 0.92),
-          ),
-          const SizedBox(width: 2),
-          ValueListenableBuilder<StreamMode>(
-            valueListenable: quick.mode,
-            builder: (context, mode, _) {
-              if (mode != StreamMode.iterm2) return const SizedBox.shrink();
-              final prev = onPrevIterm2Panel;
-              final next = onNextIterm2Panel;
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  IconButton(
-                    key: const Key('shortcutPanelPrevIterm2Panel'),
-                    icon: const Icon(Icons.chevron_left),
-                    tooltip: '上一个面板',
-                    onPressed: prev,
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(0),
-                    constraints:
-                        const BoxConstraints.tightFor(width: 26, height: 26),
-                    color: Colors.white.withValues(alpha: 0.92),
-                  ),
-                  const SizedBox(width: 2),
-                  IconButton(
-                    key: const Key('shortcutPanelNextIterm2Panel'),
-                    icon: const Icon(Icons.chevron_right),
-                    tooltip: '下一个面板',
-                    onPressed: next,
-                    iconSize: 18,
-                    padding: const EdgeInsets.all(0),
-                    constraints:
-                        const BoxConstraints.tightFor(width: 26, height: 26),
-                    color: Colors.white.withValues(alpha: 0.92),
-                  ),
-                  const SizedBox(width: 2),
-                ],
-              );
-            },
-          ),
-          IconButton(
-            key: const Key('shortcutPanelDisconnect'),
-            icon: const Icon(Icons.link_off),
-            tooltip: '断开连接',
-            onPressed: onDisconnect,
-            iconSize: 18,
-            padding: const EdgeInsets.all(0),
-            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-            color: Colors.redAccent.withValues(alpha: 0.95),
-          ),
-          const SizedBox(width: 2),
-          IconButton(
-            key: const Key('shortcutPanelClose'),
-            icon: const Icon(Icons.close),
-            tooltip: '关闭快捷栏',
-            onPressed: onClose,
-            iconSize: 18,
-            padding: const EdgeInsets.all(0),
-            constraints: const BoxConstraints.tightFor(width: 26, height: 26),
-            color: Colors.white.withValues(alpha: 0.92),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _StreamControlRow extends StatelessWidget {
-  final bool enabled;
-  final VoidCallback onPickMode;
-  final VoidCallback onPickModeAndTarget;
-  final VoidCallback onPickTarget;
-  final VoidCallback onQuickNextScreen;
-  final ValueChanged<QuickStreamTarget> onApplyFavorite;
-  final VoidCallback onAddFavorite;
-  final void Function(int slot, _FavoriteAction action) onFavoriteAction;
-
-  const _StreamControlRow({
-    required this.enabled,
-    required this.onPickMode,
-    required this.onPickModeAndTarget,
-    required this.onPickTarget,
-    required this.onQuickNextScreen,
-    required this.onApplyFavorite,
-    required this.onAddFavorite,
-    required this.onFavoriteAction,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final quick = QuickTargetService.instance;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      physics: const BouncingScrollPhysics(),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _PillButton(
-            icon: Icons.movie_filter,
-            label: '模式',
-            enabled: enabled,
-            onTap: onPickMode,
-          ),
-          const SizedBox(width: 4),
-          ValueListenableBuilder<StreamMode>(
-            valueListenable: quick.mode,
-            builder: (context, mode, _) {
-              final label = mode == StreamMode.desktop
-                  ? '桌面'
-                  : mode == StreamMode.window
-                      ? '窗口'
-                      : 'iTerm2';
-              return _PillButton(
-                icon: mode == StreamMode.desktop
-                    ? Icons.desktop_windows
-                    : mode == StreamMode.window
-                        ? Icons.window
-                        : Icons.terminal,
-                label: label,
-                enabled: enabled,
-                onTap: onPickModeAndTarget,
-              );
-            },
-          ),
-          const SizedBox(width: 4),
-          _PillButton(
-            icon: Icons.list_alt,
-            label: '选择',
-            enabled: enabled,
-            onTap: onPickTarget,
-          ),
-          const SizedBox(width: 4),
-          ValueListenableBuilder<StreamMode>(
-            valueListenable: quick.mode,
-            builder: (context, mode, _) {
-              if (mode != StreamMode.desktop) return const SizedBox.shrink();
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _PillButton(
-                    icon: Icons.monitor,
-                    label: '切屏',
-                    enabled: enabled,
-                    onTap: onQuickNextScreen,
-                  ),
-                  const SizedBox(width: 4),
-                ],
-              );
-            },
-          ),
-          ValueListenableBuilder<List<QuickStreamTarget?>>(
-            valueListenable: quick.favorites,
-            builder: (context, favorites, _) {
-              final entries = <(int slot, QuickStreamTarget target)>[];
-              for (int i = 0; i < favorites.length; i++) {
-                final t = favorites[i];
-                if (t == null) continue;
-                entries.add((i, t));
-              }
-              return Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  ValueListenableBuilder<QuickStreamTarget?>(
-                    valueListenable: quick.lastTarget,
-                    builder: (context, current, __) {
-                      bool isSame(QuickStreamTarget a, QuickStreamTarget b) {
-                        if (a.mode != b.mode) return false;
-                        if (a.windowId != null || b.windowId != null) {
-                          return a.windowId != null &&
-                              b.windowId != null &&
-                              a.windowId == b.windowId;
-                        }
-                        return a.id == b.id;
-                      }
-
-                      return Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (final e in entries) ...[
-                            _FavoriteButton(
-                              slot: e.$1,
-                              target: e.$2,
-                              enabled: enabled,
-                              selected:
-                                  current != null && isSame(current, e.$2),
-                              onTap: () => onApplyFavorite(e.$2),
-                              onLongPress: () => _showFavoriteMenu(
-                                context,
-                                slot: e.$1,
-                                onAction: onFavoriteAction,
-                              ),
-                            ),
-                            const SizedBox(width: 4),
-                          ],
-                        ],
-                      );
-                    },
-                  ),
-                  _IconPillButton(
-                    icon: Icons.add,
-                    enabled: enabled,
-                    tooltip: '添加快捷切换（在列表里长按保存）',
-                    onTap: onAddFavorite,
-                  ),
-                ],
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-
-  static void _showFavoriteMenu(
-    BuildContext context, {
-    required int slot,
-    required void Function(int slot, _FavoriteAction action) onAction,
-  }) {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (context) {
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.edit),
-                title: const Text('编辑名称'),
-                onTap: () {
-                  Navigator.pop(context);
-                  onAction(slot, _FavoriteAction.rename);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.delete_outline),
-                title: const Text('删除快捷'),
-                onTap: () {
-                  Navigator.pop(context);
-                  onAction(slot, _FavoriteAction.delete);
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
-class _PillButton extends StatelessWidget {
-  final IconData icon;
-  final String label;
-  final bool enabled;
-  final VoidCallback? onTap;
-
-  const _PillButton({
-    required this.icon,
-    required this.label,
-    required this.enabled,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        height: 26,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(
-          color: Colors.white.withValues(alpha: enabled ? 0.10 : 0.06),
-          borderRadius: BorderRadius.circular(10),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 16, color: Colors.white.withValues(alpha: 0.92)),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _IconPillButton extends StatelessWidget {
-  final IconData icon;
-  final bool enabled;
-  final String tooltip;
-  final VoidCallback? onTap;
-
-  const _IconPillButton({
-    required this.icon,
-    required this.enabled,
-    required this.tooltip,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Tooltip(
-      message: tooltip,
-      child: InkWell(
-        onTap: enabled ? onTap : null,
-        borderRadius: BorderRadius.circular(10),
-        child: Container(
-          height: 26,
-          width: 26,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: enabled ? 0.10 : 0.06),
-            borderRadius: BorderRadius.circular(10),
-          ),
-          child: Icon(
-            icon,
-            size: 16,
-            color: Colors.white.withValues(alpha: enabled ? 0.92 : 0.45),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _FavoriteButton extends StatelessWidget {
-  final int slot;
-  final QuickStreamTarget? target;
-  final bool enabled;
-  final bool selected;
-  final VoidCallback? onTap;
-  final VoidCallback? onLongPress;
-
-  const _FavoriteButton({
-    required this.slot,
-    required this.target,
-    required this.enabled,
-    required this.selected,
-    required this.onTap,
-    required this.onLongPress,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final label = target?.shortDisplayLabel() ?? '快捷';
-    return InkWell(
-      onTap: enabled ? onTap : null,
-      onLongPress: enabled ? onLongPress : null,
-      borderRadius: BorderRadius.circular(10),
-      child: Container(
-        height: 26,
-        padding: const EdgeInsets.symmetric(horizontal: 6),
-        decoration: BoxDecoration(
-          color: selected
-              ? Colors.blueAccent.withValues(alpha: enabled ? 0.35 : 0.18)
-              : Colors.black.withValues(alpha: 0.25),
-          borderRadius: BorderRadius.circular(10),
-          border: selected
-              ? Border.all(
-                  color: Colors.white.withValues(alpha: 0.40),
-                  width: 1,
-                )
-              : null,
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              Icons.star,
-              size: 12,
-              color: selected
-                  ? Colors.amber.withValues(alpha: enabled ? 1.0 : 0.55)
-                  : Colors.amber.withValues(alpha: enabled ? 0.95 : 0.45),
-            ),
-            const SizedBox(width: 5),
-            ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 64),
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w600,
-                  color: Colors.white.withValues(
-                      alpha: enabled ? (selected ? 1.0 : 0.92) : 0.45),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ArrowRow extends StatelessWidget {
-  final ShortcutItem? left;
-  final ShortcutItem? up;
-  final ShortcutItem? down;
-  final ShortcutItem? right;
-  final ValueChanged<ShortcutItem> onShortcutPressed;
-
-  const _ArrowRow({
-    required this.left,
-    required this.up,
-    required this.down,
-    required this.right,
-    required this.onShortcutPressed,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    Widget buildKey(String label, ShortcutItem? shortcut) {
-      return InkWell(
-        onTap: shortcut == null ? null : () => onShortcutPressed(shortcut),
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          width: 28,
-          height: 28,
-          alignment: Alignment.center,
-          decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: 0.65),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-              color: Colors.white.withValues(alpha: 0.18),
-              width: 1,
-            ),
-          ),
-          child: Text(
-            label,
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w700,
-              color: Colors.white.withValues(
-                alpha: shortcut == null ? 0.25 : 0.92,
-              ),
-            ),
-          ),
-        ),
-      );
-    }
-
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        buildKey('←', left),
-        const SizedBox(width: 4),
-        buildKey('↑', up),
-        const SizedBox(width: 4),
-        buildKey('↓', down),
-        const SizedBox(width: 4),
-        buildKey('→', right),
-      ],
-    );
-  }
-}
-
-/// 设置面板（复用 shortcut_bar.dart 中的逻辑）
-class _ShortcutSettingsSheet extends StatefulWidget {
-  final ShortcutSettings settings;
-  final ValueChanged<ShortcutSettings> onSettingsChanged;
-  final bool sendComposingText;
-  final ValueChanged<bool> onSendComposingTextChanged;
-  final QuickTargetService quickTargetService;
-
-  const _ShortcutSettingsSheet({
-    super.key,
-    required this.settings,
-    required this.onSettingsChanged,
-    required this.sendComposingText,
-    required this.onSendComposingTextChanged,
-    required this.quickTargetService,
-  });
-
-  @override
-  State<_ShortcutSettingsSheet> createState() => _ShortcutSettingsSheetState();
-}
-
-class _ShortcutSettingsSheetState extends State<_ShortcutSettingsSheet> {
-  late ShortcutSettings _settings;
-  int _monkeyIterations = 60;
-  double _monkeyDelayMs = 600;
-  bool _monkeyIncludeScreen = true;
-  bool _monkeyIncludeWindows = true;
-  bool _monkeyIncludeIterm2 = true;
-  late EncodingMode _encodingMode;
-
-  @override
-  void initState() {
-    super.initState();
-    _settings = widget.settings;
-    _encodingMode = StreamingSettings.encodingMode;
-  }
-
-  void _updateSettings(ShortcutSettings s) {
-    setState(() => _settings = s);
-    widget.onSettingsChanged(s);
-  }
-
-  void _toggleEnabled(String id, bool enabled) {
-    final newShortcuts = _settings.shortcuts.map((s) {
-      if (s.id == id) return s.copyWith(enabled: enabled);
-      return s;
-    }).toList();
-    _updateSettings(_settings.copyWith(shortcuts: newShortcuts));
-  }
-
-  void _reorder(int oldIndex, int newIndex) {
-    setState(() {
-      if (newIndex > oldIndex) newIndex -= 1;
-      final items = List<ShortcutItem>.from(_settings.shortcuts);
-      final moved = items.removeAt(oldIndex);
-      items.insert(newIndex, moved);
-      final updated = <ShortcutItem>[];
-      for (int i = 0; i < items.length; i++) {
-        updated.add(items[i].copyWith(order: i + 1));
-      }
-      _settings = _settings.copyWith(shortcuts: updated);
-    });
-    widget.onSettingsChanged(_settings);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final debug = InputDebugService.instance;
-    final channel = WebrtcService.activeDataChannel;
-    final channelOpen = channel != null &&
-        channel.state == RTCDataChannelState.RTCDataChannelOpen;
-    return Container(
-      height: MediaQuery.of(context).size.height * 0.7,
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      child: Column(
-        children: [
-          // 输入相关开关/调试
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 16),
-            child: Column(
-              children: [
-                ValueListenableBuilder<double>(
-                  valueListenable: widget.quickTargetService.toolbarOpacity,
-                  builder: (context, v, _) {
-                    return Column(
-                      children: [
-                        Row(
-                          children: [
-                            const Expanded(child: Text('快捷栏透明度')),
-                            Text('${(v * 100).round()}%'),
-                          ],
-                        ),
-                        Slider(
-                          value: v,
-                          min: 0.2,
-                          max: 0.95,
-                          divisions: 15,
-                          onChanged: (nv) =>
-                              widget.quickTargetService.setToolbarOpacity(nv),
-                        ),
-                      ],
-                    );
-                  },
-                ),
-                ValueListenableBuilder<bool>(
-                  valueListenable:
-                      widget.quickTargetService.restoreLastTargetOnConnect,
-                  builder: (context, v, _) {
-                    return SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('重连后恢复上次目标'),
-                      subtitle: const Text('安卓端可选择是否自动切回上次窗口/Panel'),
-                      value: v,
-                      onChanged: (nv) => widget.quickTargetService
-                          .setRestoreLastTargetOnConnect(nv),
-                    );
-                  },
-                ),
-                SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('发送预编辑文本（中文输入时可能发送拼音）'),
-                  value: widget.sendComposingText,
-                  onChanged: widget.onSendComposingTextChanged,
-                ),
-                ValueListenableBuilder<bool>(
-                  valueListenable: debug.enabled,
-                  builder: (context, enabled, child) {
-                    return SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('开启输入调试日志（本机）'),
-                      value: enabled,
-                      onChanged: (v) => debug.enabled.value = v,
-                    );
-                  },
-                ),
-                ValueListenableBuilder<bool>(
-                  valueListenable: ScreenController.showVideoInfo,
-                  builder: (context, enabled, _) {
-                    return SwitchListTile(
-                      contentPadding: EdgeInsets.zero,
-                      title: const Text('显示视频信息（分辨率/编码/解码器）'),
-                      subtitle: const Text('显示在画面顶部，用于排查绿屏/花屏/分辨率切换'),
-                      value: enabled,
-                      onChanged: (v) => ScreenController.setShowVideoInfo(v),
-                    );
-                  },
-                ),
-                ListTile(
-                  contentPadding: EdgeInsets.zero,
-                  title: const Text('编码模式'),
-                  subtitle:
-                      const Text('高质量：按分辨率固定码率；动态：根据帧率/RTT自适应；关闭：不发送自适应反馈'),
-                  trailing: DropdownButtonHideUnderline(
-                    child: DropdownButton<EncodingMode>(
-                      value: _encodingMode,
-                      items: const [
-                        DropdownMenuItem(
-                          value: EncodingMode.highQuality,
-                          child: Text('高质量'),
-                        ),
-                        DropdownMenuItem(
-                          value: EncodingMode.dynamic,
-                          child: Text('动态'),
-                        ),
-                        DropdownMenuItem(
-                          value: EncodingMode.off,
-                          child: Text('关闭'),
-                        ),
-                      ],
-                      onChanged: (v) async {
-                        if (v == null) return;
-                        setState(() => _encodingMode = v);
-                        StreamingSettings.encodingMode = v;
-                        await SharedPreferencesManager.setInt(
-                          'encodingMode',
-                          v.index,
-                        );
-                      },
-                    ),
-                  ),
-                ),
-                Row(
-                  children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          final text = debug.dump();
-                          Clipboard.setData(ClipboardData(text: text));
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('已复制调试日志到剪贴板')),
-                          );
-                        },
-                        child: const Text('复制调试日志'),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () {
-                          debug.clear();
-                          ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(content: Text('已清空调试日志')),
-                          );
-                        },
-                        child: const Text('清空调试日志'),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                OutlinedButton.icon(
-                  onPressed: channelOpen
-                      ? () {
-                          Navigator.of(context).push(
-                            MaterialPageRoute(
-                              builder: (_) => RemoteWindowSelectPage(
-                                channel: channel!,
-                              ),
-                            ),
-                          );
-                        }
-                      : null,
-                  icon: const Icon(Icons.window),
-                  label: const Text('选择远端窗口'),
-                ),
-                const SizedBox(height: 8),
-                ValueListenableBuilder<bool>(
-                  valueListenable: StreamMonkeyService.instance.running,
-                  builder: (context, running, _) {
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        const Text(
-                          'Monkey 串流测试',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: channelOpen && !running
-                                    ? () async {
-                                        await StreamMonkeyService.instance
-                                            .start(
-                                          channel: channel!,
-                                          iterations: _monkeyIterations,
-                                          delay: Duration(
-                                            milliseconds:
-                                                _monkeyDelayMs.round(),
-                                          ),
-                                          includeScreen: _monkeyIncludeScreen,
-                                          includeWindows: _monkeyIncludeWindows,
-                                          includeIterm2: _monkeyIncludeIterm2,
-                                        );
-                                      }
-                                    : null,
-                                icon: const Icon(Icons.play_arrow),
-                                label: const Text('开始'),
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: OutlinedButton.icon(
-                                onPressed: running
-                                    ? () => StreamMonkeyService.instance.stop()
-                                    : null,
-                                icon: const Icon(Icons.stop),
-                                label: const Text('停止'),
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('迭代次数: $_monkeyIterations'),
-                                  Slider(
-                                    value: _monkeyIterations.toDouble(),
-                                    min: 10,
-                                    max: 200,
-                                    divisions: 19,
-                                    label: '$_monkeyIterations',
-                                    onChanged: running
-                                        ? null
-                                        : (v) => setState(() =>
-                                            _monkeyIterations = v.round()),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text('间隔: ${_monkeyDelayMs.round()}ms'),
-                                  Slider(
-                                    value: _monkeyDelayMs,
-                                    min: 200,
-                                    max: 1500,
-                                    divisions: 13,
-                                    label: '${_monkeyDelayMs.round()}ms',
-                                    onChanged: running
-                                        ? null
-                                        : (v) => setState(() =>
-                                            _monkeyDelayMs = v.roundToDouble()),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        Wrap(
-                          spacing: 8,
-                          children: [
-                            FilterChip(
-                              label: const Text('屏幕'),
-                              selected: _monkeyIncludeScreen,
-                              onSelected: running
-                                  ? null
-                                  : (v) =>
-                                      setState(() => _monkeyIncludeScreen = v),
-                            ),
-                            FilterChip(
-                              label: const Text('窗口'),
-                              selected: _monkeyIncludeWindows,
-                              onSelected: running
-                                  ? null
-                                  : (v) =>
-                                      setState(() => _monkeyIncludeWindows = v),
-                            ),
-                            FilterChip(
-                              label: const Text('iTerm2'),
-                              selected: _monkeyIncludeIterm2,
-                              onSelected: running
-                                  ? null
-                                  : (v) =>
-                                      setState(() => _monkeyIncludeIterm2 = v),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 6),
-                        ValueListenableBuilder<String>(
-                          valueListenable: StreamMonkeyService.instance.status,
-                          builder: (context, s, _) {
-                            return Text(
-                              '状态: $s',
-                              style: const TextStyle(fontSize: 12),
-                            );
-                          },
-                        ),
-                        ValueListenableBuilder<int>(
-                          valueListenable:
-                              StreamMonkeyService.instance.currentIteration,
-                          builder: (context, i, _) {
-                            return Text(
-                              '进度: $i',
-                              style: const TextStyle(fontSize: 12),
-                            );
-                          },
-                        ),
-                        ValueListenableBuilder<String?>(
-                          valueListenable:
-                              StreamMonkeyService.instance.lastError,
-                          builder: (context, e, _) {
-                            if (e == null || e.isEmpty) {
-                              return const SizedBox.shrink();
-                            }
-                            return Text(
-                              '最近错误: $e',
-                              style: const TextStyle(
-                                fontSize: 12,
-                                color: Colors.red,
-                              ),
-                            );
-                          },
-                        ),
-                      ],
-                    );
-                  },
-                ),
-              ],
-            ),
-          ),
-          // 拖动指示器
-          Container(
-            margin: const EdgeInsets.only(top: 8),
-            width: 40,
-            height: 4,
-            decoration: BoxDecoration(
-              color: Colors.grey[300],
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          // 标题
-          Padding(
-            padding: const EdgeInsets.all(16),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                const Text(
-                  '快捷键设置',
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                IconButton(
-                  icon: const Icon(Icons.close),
-                  onPressed: () => Navigator.pop(context),
-                ),
-              ],
-            ),
-          ),
-          // 设置列表
-          Expanded(
-            child: ReorderableListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              buildDefaultDragHandles: false,
-              onReorder: _reorder,
-              itemCount: _settings.shortcuts.length,
-              itemBuilder: (context, index) {
-                final shortcut = _settings.shortcuts[index];
-                return ListTile(
-                  key: ValueKey(shortcut.id),
-                  dense: true,
-                  leading: Checkbox(
-                    value: shortcut.enabled,
-                    onChanged: (v) => _toggleEnabled(shortcut.id, v ?? true),
-                  ),
-                  title: Text(shortcut.label),
-                  subtitle: Text(formatShortcutKeys(shortcut.keys)),
-                  trailing: ReorderableDragStartListener(
-                    index: index,
-                    child: const Icon(Icons.drag_handle),
-                  ),
-                  onTap: () => _toggleEnabled(shortcut.id, !shortcut.enabled),
-                );
-              },
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}

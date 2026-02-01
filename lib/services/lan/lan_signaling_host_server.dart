@@ -10,6 +10,7 @@ import '../../global_settings/streaming_settings.dart';
 import '../../services/app_info_service.dart';
 import '../../services/shared_preferences_manager.dart';
 import '../../services/streamed_manager.dart';
+import '../diagnostics/diagnostics_inbox_service.dart';
 import '../signaling/signaling_transport.dart';
 import '../signaling/cloud_signaling_transport.dart';
 import 'lan_address_service.dart';
@@ -29,10 +30,16 @@ class LanSignalingHostServer {
   final ValueNotifier<String> hostId = ValueNotifier<String>('');
 
   final List<HttpServer> _servers = <HttpServer>[];
+  bool _listeningV6 = false;
+  bool _listeningV4 = false;
   final Map<String, WebSocket> _clientsById = <String, WebSocket>{};
   final Map<WebSocket, String> _idsByClient = <WebSocket, String>{};
 
   SignalingTransport get transport => LanSignalingHostTransport(this);
+
+  bool get isRunning => _servers.isNotEmpty;
+  bool get isListeningV4 => _listeningV4;
+  bool get isListeningV6 => _listeningV6;
 
   Future<void> init() async {
     final en = SharedPreferencesManager.getBool(_kEnabled);
@@ -86,6 +93,8 @@ class LanSignalingHostServer {
 
   Future<void> stop() async {
     try {
+      _listeningV4 = false;
+      _listeningV6 = false;
       for (final ws in _clientsById.values) {
         try {
           ws.close();
@@ -105,11 +114,20 @@ class LanSignalingHostServer {
   Future<void> _start() async {
     final listenPort = port.value;
     try {
+      _listeningV4 = false;
+      _listeningV6 = false;
       HttpServer? serverV6;
       HttpServer? serverV4;
       try {
-        serverV6 = await HttpServer.bind(InternetAddress.anyIPv6, listenPort);
+        // Use a v6-only socket so IPv4 binding is unambiguous: if IPv4 bind
+        // fails later, it is truly occupied by another process (not v4-mapped).
+        serverV6 = await HttpServer.bind(
+          InternetAddress.anyIPv6,
+          listenPort,
+          v6Only: true,
+        );
         _servers.add(serverV6);
+        _listeningV6 = true;
         VLOG0(
             '[lan] host server listening on [::]:$listenPort hostId=${hostId.value}');
         unawaited(_serveLoop(serverV6));
@@ -120,6 +138,7 @@ class LanSignalingHostServer {
       try {
         serverV4 = await HttpServer.bind(InternetAddress.anyIPv4, listenPort);
         _servers.add(serverV4);
+        _listeningV4 = true;
         VLOG0(
             '[lan] host server listening on 0.0.0.0:$listenPort hostId=${hostId.value}');
         unawaited(_serveLoop(serverV4));
@@ -141,7 +160,19 @@ class LanSignalingHostServer {
   Future<void> _serveLoop(HttpServer server) async {
     await for (final HttpRequest request in server) {
       try {
+        // Diagnostics upload endpoint:
+        // POST /artifact (octet-stream) with headers:
+        // - x-cpp-kind: app_log | screenshot | ...
+        // - x-cpp-filename: suggested file name
         if (!WebSocketTransformer.isUpgradeRequest(request)) {
+          if (request.uri.path == '/artifact') {
+            await _handleArtifactUpload(request);
+            continue;
+          }
+          if (request.uri.path == '/artifact/info') {
+            await _handleArtifactInfo(request);
+            continue;
+          }
           request.response.statusCode = HttpStatus.notFound;
           await request.response.close();
           continue;
@@ -149,6 +180,69 @@ class LanSignalingHostServer {
         final ws = await WebSocketTransformer.upgrade(request);
         _handleClient(ws);
       } catch (_) {}
+    }
+  }
+
+  Future<void> _handleArtifactInfo(HttpRequest req) async {
+    try {
+      final inbox = DiagnosticsInboxService.instance.getInboxDir();
+      final obj = {'ok': true, 'inboxDir': inbox, 'port': port.value};
+      req.response.statusCode = HttpStatus.ok;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode(obj));
+      await req.response.close();
+    } catch (e) {
+      req.response.statusCode = HttpStatus.internalServerError;
+      await req.response.close();
+    }
+  }
+
+  Future<void> _handleArtifactUpload(HttpRequest req) async {
+    if (req.method.toUpperCase() != 'POST') {
+      req.response.statusCode = HttpStatus.methodNotAllowed;
+      await req.response.close();
+      return;
+    }
+    try {
+      final kind = (req.headers.value('x-cpp-kind') ?? 'artifact').trim();
+      final rawName = (req.headers.value('x-cpp-filename') ?? 'artifact.bin').trim();
+      final safeName = rawName.replaceAll(RegExp(r'[\\\\/]+'), '_');
+
+      // Guard: avoid unbounded memory usage.
+      const maxBytes = 40 * 1024 * 1024; // 40MB
+      final chunks = <List<int>>[];
+      int total = 0;
+      await for (final chunk in req) {
+        total += chunk.length;
+        if (total > maxBytes) {
+          req.response.statusCode = HttpStatus.requestEntityTooLarge;
+          await req.response.close();
+          return;
+        }
+        chunks.add(chunk);
+      }
+      final bytes = chunks.expand((e) => e).toList(growable: false);
+
+      final inbox = await DiagnosticsInboxService.instance.ensureInboxDir();
+      final day = DateTime.now().toIso8601String().substring(0, 10);
+      final sub = Directory('${inbox.path}${Platform.pathSeparator}$day');
+      await sub.create(recursive: true);
+      final ts = DateTime.now().toIso8601String().replaceAll(':', '-');
+      final outPath =
+          '${sub.path}${Platform.pathSeparator}${ts}_$kind\_$safeName';
+      final outFile = File(outPath);
+      await outFile.writeAsBytes(bytes, flush: true);
+
+      VLOG0('[diag] received artifact kind=$kind size=${bytes.length} -> $outPath');
+      req.response.statusCode = HttpStatus.ok;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode({'ok': true, 'path': outPath}));
+      await req.response.close();
+    } catch (e) {
+      req.response.statusCode = HttpStatus.internalServerError;
+      req.response.headers.contentType = ContentType.json;
+      req.response.write(jsonEncode({'ok': false, 'error': '$e'}));
+      await req.response.close();
     }
   }
 

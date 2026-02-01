@@ -1,4 +1,4 @@
-import 'package:cloudplayplus/utils/input/two_finger_gesture.dart';
+import 'package:cloudplayplus/core/blocks/gestures/two_finger_gesture.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {

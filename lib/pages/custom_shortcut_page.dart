@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../models/shortcut.dart';
+import '../controller/screen_controller.dart';
 
 class CustomShortcutPage extends StatefulWidget {
   final ShortcutPlatform platform;
@@ -16,6 +18,10 @@ class CustomShortcutPage extends StatefulWidget {
 
 class _CustomShortcutPageState extends State<CustomShortcutPage> {
   final TextEditingController _labelController = TextEditingController();
+  final FocusNode _labelFocusNode = FocusNode();
+  bool _imeEnabled = false;
+  bool _lastImeVisible = false;
+  bool _prevLocalTextEditing = false;
 
   bool _ctrl = false;
   bool _shift = false;
@@ -25,9 +31,45 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
   _KeyOption? _mainKey;
 
   @override
+  void initState() {
+    super.initState();
+    _prevLocalTextEditing = ScreenController.localTextEditing.value;
+    ScreenController.setLocalTextEditing(true);
+    ScreenController.setSystemImeActive(false);
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+  }
+
+  @override
   void dispose() {
+    try {
+      FocusScope.of(context).unfocus();
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
     _labelController.dispose();
+    _labelFocusNode.dispose();
+    ScreenController.setLocalTextEditing(_prevLocalTextEditing);
     super.dispose();
+  }
+
+  void _toggleIme() {
+    final want = !_imeEnabled;
+    setState(() => _imeEnabled = want);
+    if (!want) {
+      try {
+        FocusScope.of(context).unfocus();
+        SystemChannels.textInput.invokeMethod('TextInput.hide');
+      } catch (_) {}
+      return;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      try {
+        FocusScope.of(context).requestFocus(_labelFocusNode);
+        SystemChannels.textInput.invokeMethod('TextInput.show');
+      } catch (_) {}
+    });
   }
 
   List<ShortcutKey> _buildKeys() {
@@ -72,11 +114,33 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
   @override
   Widget build(BuildContext context) {
     final preview = formatShortcutKeys(_buildKeys());
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final imeVisible = bottomInset > 0;
+      final prev = _lastImeVisible;
+      _lastImeVisible = imeVisible;
+      if (_imeEnabled && prev && !imeVisible) {
+        setState(() => _imeEnabled = false);
+        try {
+          FocusScope.of(context).unfocus();
+        } catch (_) {}
+      }
+    });
 
     return Scaffold(
       appBar: AppBar(
         title: const Text('自定义快捷键'),
         actions: [
+          IconButton(
+            tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
+            icon: Icon(
+              _imeEnabled
+                  ? Icons.keyboard_hide_outlined
+                  : Icons.keyboard_alt_outlined,
+            ),
+            onPressed: _toggleIme,
+          ),
           TextButton(
             onPressed: _save,
             child: const Text('保存'),
@@ -89,9 +153,14 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
           children: [
             TextField(
               controller: _labelController,
+              focusNode: _labelFocusNode,
+              readOnly: !_imeEnabled,
+              showCursor: _imeEnabled,
+              keyboardType: _imeEnabled ? TextInputType.text : TextInputType.none,
               maxLength: 5,
               decoration: const InputDecoration(
                 labelText: '名称（最多 5 个字）',
+                hintText: '点右上角键盘按钮开始输入',
                 border: OutlineInputBorder(),
               ),
             ),

@@ -1,32 +1,42 @@
+import 'package:cloudplayplus/app/intents/app_intent.dart';
+import 'package:cloudplayplus/app/store/app_store.dart';
+import 'package:cloudplayplus/app/store/app_store_locator.dart';
 import 'package:cloudplayplus/services/app_lifecycle_reconnect_service.dart';
-import 'package:cloudplayplus/services/websocket_service.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter/widgets.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+class _RecordingAppStore extends AppStore {
+  final List<AppIntent> intents = <AppIntent>[];
+  _RecordingAppStore() : super(enableEffects: false);
+
+  @override
+  Future<void> dispatch(AppIntent intent) async {
+    intents.add(intent);
+    return super.dispatch(intent);
+  }
+}
 
 void main() {
-  test('AppLifecycleReconnectService triggers websocket reconnect on resume',
+  test('AppLifecycleReconnectService dispatches lifecycle intent to AppStore',
       () async {
-    int reconnectCalls = 0;
-    WebSocketService.reconnectHookForTest = () async {
-      reconnectCalls++;
-      WebSocketService.debugMarkReadyForTest();
-    };
-    WebSocketService.debugResetReadyForTest();
+    final store = _RecordingAppStore();
+    AppStoreLocator.store = store;
 
     final svc = AppLifecycleReconnectService.instance;
     svc.debugEnableForAllPlatforms = true;
-    svc.minBackgroundForReconnectMs = 0;
-    svc.minReconnectIntervalMs = 0;
 
-    // Simulate background long enough.
     svc.didChangeAppLifecycleState(AppLifecycleState.paused);
     svc.didChangeAppLifecycleState(AppLifecycleState.resumed);
 
-    await pumpEventQueue(times: 20);
-    expect(reconnectCalls, 1);
+    await pumpEventQueue(times: 10);
 
-    // Clean up hook.
-    WebSocketService.reconnectHookForTest = null;
+    expect(
+      store.intents.whereType<AppIntentAppLifecycleChanged>().length,
+      2,
+    );
+
     svc.debugEnableForAllPlatforms = false;
+    AppStoreLocator.store = null;
   });
 }
+

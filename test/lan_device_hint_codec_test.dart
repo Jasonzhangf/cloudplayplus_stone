@@ -21,8 +21,8 @@ void main() {
       lanPort: 17999,
       lanAddrs: const ['fd00::1', '100.64.0.2', '192.168.1.3'],
     );
-    expect(s.contains('[['), true);
-    expect(s.contains(']]'), true);
+    expect(s.contains('__lan1_'), true);
+    expect(s.contains('_lan1__'), true);
 
     final d = LanDeviceNameCodec.decode(s);
     expect(d.name, 'Mac');
@@ -30,6 +30,23 @@ void main() {
     expect(d.hints!.lanEnabled, true);
     expect(d.hints!.lanPort, 17999);
     expect(d.hints!.lanAddrs, isNotEmpty);
+  });
+
+  test('decode: legacy ascii wrapper works', () {
+    final raw = jsonEncode({
+      'lanEnabled': true,
+      'lanPort': 17999,
+      'lanAddrs': ['fd00::1']
+    });
+    final b64 = base64UrlEncode(utf8.encode(raw));
+    final legacy = 'HostName[[$b64]]';
+
+    final d = LanDeviceNameCodec.decode(legacy);
+    expect(d.name, 'HostName');
+    expect(d.hints, isNotNull);
+    expect(d.hints!.lanEnabled, true);
+    expect(d.hints!.lanPort, 17999);
+    expect(d.hints!.lanAddrs, ['fd00::1']);
   });
 
   test('decode: legacy unicode wrapper works', () {

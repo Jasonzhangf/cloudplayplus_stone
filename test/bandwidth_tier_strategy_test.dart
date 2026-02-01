@@ -5,8 +5,9 @@ void main() {
   const cfg = BandwidthTierConfig(
     baseWidth: 576,
     baseHeight: 768,
-    baseBitrate15FpsKbps: 250,
-    t1Kbps: 250,
+    baseBitrate15FpsKbps: 100,
+    t1Kbps: 100,
+    t20Kbps: 200,
     t2Kbps: 500,
     t3Kbps: 1000,
     headroom: 1.0, // simplify math
@@ -33,24 +34,24 @@ void main() {
     );
   }
 
-  test('holds at 15fps around 250kbps', () {
+  test('holds at 15fps around 100kbps', () {
     final now = 10000;
     final d = decideBandwidthTier(
       previous: const BandwidthTierState.initial(),
-      input: input(bwe: 250),
+      input: input(bwe: 100),
       cfg: cfg,
       nowMs: now,
     );
     expect(d.fpsTier, 15);
-    expect(d.targetBitrateKbps, 250);
+    expect(d.targetBitrateKbps, 100);
   });
 
-  test('steps up 15->30 only after 5s stable above 500kbps', () {
+  test('steps up 15->20 only after 5s stable above 200kbps', () {
     var st = const BandwidthTierState.initial();
-    // Start at 15fps and provide high bandwidth, but not long enough.
+    // Start at 15fps and provide enough bandwidth, but not long enough.
     var d = decideBandwidthTier(
       previous: st,
-      input: input(bwe: 700),
+      input: input(bwe: 260),
       cfg: cfg,
       nowMs: 0,
     );
@@ -59,7 +60,7 @@ void main() {
 
     d = decideBandwidthTier(
       previous: st,
-      input: input(bwe: 700),
+      input: input(bwe: 260),
       cfg: cfg,
       nowMs: 4900,
     );
@@ -68,18 +69,39 @@ void main() {
 
     d = decideBandwidthTier(
       previous: st,
-      input: input(bwe: 700),
+      input: input(bwe: 260),
       cfg: cfg,
       nowMs: 5100,
     );
-    expect(d.fpsTier, 30);
+    expect(d.fpsTier, 20);
   });
 
-  test('steps down 15->5 when bandwidth stays below 250*0.85 for 1.5s', () {
+  test('holds 20fps at 200kbps (base), not stuck at 15fps', () {
+    // With the new tiers, 200kbps should land in the 20fps bucket.
+    final d = decideBandwidthTier(
+      previous: const BandwidthTierState.initial(),
+      input: input(bwe: 220),
+      cfg: cfg,
+      nowMs: 100,
+    );
+    expect(d.fpsTier, 15); // step-up still needs stability gate
+
+    // After stable duration, it should upgrade to 20fps.
+    var st = d.state;
+    final d2 = decideBandwidthTier(
+      previous: st,
+      input: input(bwe: 220),
+      cfg: cfg,
+      nowMs: 5200,
+    );
+    expect(d2.fpsTier, 20);
+  });
+
+  test('steps down 15->5 when bandwidth stays below 100*0.85 for 1.5s', () {
     var st = const BandwidthTierState.initial();
     var d = decideBandwidthTier(
       previous: st,
-      input: input(bwe: 200),
+      input: input(bwe: 70),
       cfg: cfg,
       nowMs: 0,
     );
@@ -88,7 +110,7 @@ void main() {
 
     d = decideBandwidthTier(
       previous: st,
-      input: input(bwe: 200),
+      input: input(bwe: 70),
       cfg: cfg,
       nowMs: 1400,
     );
@@ -97,7 +119,7 @@ void main() {
 
     d = decideBandwidthTier(
       previous: st,
-      input: input(bwe: 200),
+      input: input(bwe: 70),
       cfg: cfg,
       nowMs: 1600,
     );

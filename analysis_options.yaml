@@ -9,6 +9,14 @@
 # packages, and plugins designed to encourage good coding practices.
 include: package:flutter_lints/flutter.yaml
 
+analyzer:
+  # This repo vendors several third-party Flutter plugins under `plugins/`.
+  # Their `example/` and platform/web-only sources are not part of the app’s
+  # runtime surface, and some are not analyzable under non-web platforms.
+  # Excluding them keeps `flutter analyze` focused on the app code we ship.
+  exclude:
+    - plugins/**
+
 linter:
   # The lint rules applied to this project can be customized in the
   # section below to disable rules from the `package:flutter_lints/flutter.yaml`

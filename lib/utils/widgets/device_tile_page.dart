@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:cloudplayplus/app/intents/app_intent.dart';
+import 'package:cloudplayplus/app/state/session_state.dart';
+import 'package:cloudplayplus/app/store/app_store.dart';
 import 'package:cloudplayplus/base/constants.dart';
 import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
@@ -12,6 +15,10 @@ import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_protocol.dart';
 import 'package:cloudplayplus/services/lan/lan_address_service.dart';
 import 'package:cloudplayplus/services/lan/lan_reachability_service.dart';
+import 'package:cloudplayplus/services/lan/lan_last_session_service.dart';
+import 'package:cloudplayplus/services/lan/lan_peer_hints_cache_service.dart';
+import 'package:cloudplayplus/core/diagnostics/pick_lan_host_for_artifacts.dart';
+import 'package:cloudplayplus/services/diagnostics/diagnostics_uploader.dart';
 import 'package:cloudplayplus/utils/system_tray_manager.dart';
 import 'package:cloudplayplus/utils/widgets/global_remote_screen_renderer.dart';
 import 'package:cloudplayplus/utils/widgets/message_box.dart';
@@ -20,6 +27,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hardware_simulator/hardware_simulator.dart';
 import 'package:native_textfield_tv/native_textfield_tv.dart';
+import 'package:provider/provider.dart';
+import 'package:cloudplayplus/app/intents/app_intent.dart';
+import 'package:cloudplayplus/app/store/app_store.dart';
+import 'package:cloudplayplus/app/state/diagnostics_state.dart';
 import '../../base/logging.dart';
 import '../../controller/platform_key_map.dart';
 import '../../entities/device.dart';
@@ -42,8 +53,7 @@ class DeviceDetailPage extends StatefulWidget {
   State<DeviceDetailPage> createState() => _DeviceDetailPageState();
 }
 
-class _DeviceDetailPageState extends State<DeviceDetailPage>
-    with WidgetsBindingObserver {
+class _DeviceDetailPageState extends State<DeviceDetailPage> {
   late TextEditingController _shareController;
   late TextEditingController _deviceNameController;
   final FocusNode _connectPasswordFocusNode = FocusNode();
@@ -72,7 +82,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     if (!AppPlatform.isAndroidTV) {
       _passwordController = TextEditingController();
       _deviceNameController = TextEditingController();
@@ -129,7 +138,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
 
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
     _passwordController.dispose();
     _deviceNameController.dispose();
     _shareController.dispose();
@@ -152,63 +160,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
 
   // 屏幕尺寸缓存，用于检测屏幕尺寸变化
   Size? _lastScreenSize;
-  bool _wasEverConnected = false;
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (!AppPlatform.isMobile && !AppPlatform.isAndroidTV) return;
-    if (state != AppLifecycleState.resumed) return;
-
-    // When returning to foreground while staying on streaming page,
-    // try to restore the link automatically.
-    _tryRestoreStreamingOnResume();
-  }
-
-  Future<void> _tryRestoreStreamingOnResume() async {
-    // Only auto-restore when user is already in a streaming session page.
-    if (!_wasEverConnected) return;
-    final activeDevice = _resolveActiveDeviceForStreaming();
-    try {
-      WebSocketService.reconnect();
-    } catch (_) {}
-
-    // Wait for WS ready; otherwise requestRemoteControl is dropped.
-    await WebSocketService.waitUntilReady(timeout: const Duration(seconds: 6));
-
-    // Give device list a moment to refresh (connection id may change).
-    await Future<void>.delayed(const Duration(milliseconds: 600));
-    if (!mounted) return;
-
-    final state = StreamingManager.getStreamingStateto(activeDevice);
-    if (state == StreamingSessionConnectionState.connected ||
-        state == StreamingSessionConnectionState.connceting ||
-        state == StreamingSessionConnectionState.requestSent ||
-        state == StreamingSessionConnectionState.offerSent ||
-        state == StreamingSessionConnectionState.answerSent ||
-        state == StreamingSessionConnectionState.answerReceived) {
-      return;
-    }
-
-    // Reuse saved password so reconnect doesn't require user actions.
-    final savedPasswordKey = 'connectPassword_${widget.device.uid}';
-    final savedPassword =
-        SharedPreferencesManager.getString(savedPasswordKey) ?? '';
-    if (savedPassword.isNotEmpty) {
-      StreamingSettings.connectPassword = savedPassword;
-    }
-
-    // If there is an existing stale session, stop it before restarting.
-    try {
-      StreamingManager.stopStreaming(activeDevice);
-    } catch (_) {}
-
-    try {
-      StreamingManager.startStreaming(activeDevice);
-      VLOG0('[resume] try restore streaming: ${activeDevice.devicename}');
-    } catch (e) {
-      VLOG0('[resume] restore streaming failed: $e');
-    }
-  }
 
   Future<void> _connectViaLan(Device device) async {
     // Only show when we actually have LAN hints.
@@ -255,7 +206,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     final savedPasswordKey = 'connectPassword_${device.uid}';
     final savedPassword =
         SharedPreferencesManager.getString(savedPasswordKey) ?? '';
-    final password = _passwordController.text.isNotEmpty
+    String password = _passwordController.text.isNotEmpty
         ? _passwordController.text
         : savedPassword;
 
@@ -263,12 +214,57 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
       // Remember last used LAN host for manual LAN connect page, too.
       await SharedPreferencesManager.setString('lan.lastHost.v1', host);
       await SharedPreferencesManager.setInt('lan.lastPort.v1', port);
-      final target = await LanSignalingClient.instance.connectAndStartStreaming(
-        host: host,
-        port: port,
-        connectPassword: password,
+
+      final store = context.read<AppStore>();
+      final sid = 'lan:$host:$port';
+      await store.dispatch(
+        AppIntentConnectLan(
+          host: host,
+          port: port,
+          connectPassword: password,
+        ),
       );
-      if (target == null) return;
+
+      final session = store.state.sessions[sid];
+      if (session == null) return;
+      if (session.phase == SessionPhase.failed) {
+        if (!mounted) return;
+        final err = session.lastError?.message ?? 'LAN 连接失败';
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(err)));
+        if (password.trim().isEmpty) {
+          final picked = await _promptConnectPassword();
+          if (picked != null) {
+            password = picked;
+            _passwordController.text = picked;
+            await SharedPreferencesManager.setString(
+                'connectPassword_${device.uid}', picked);
+            await store.dispatch(
+              AppIntentConnectLan(
+                host: host,
+                port: port,
+                connectPassword: picked,
+              ),
+            );
+          }
+        }
+        return;
+      }
+
+      final hostId = session.key.remoteId;
+      if (hostId.isEmpty) return;
+      final target = Device(
+        uid: 0,
+        nickname: 'LAN',
+        devicename: session.deviceName.isNotEmpty ? session.deviceName : 'LAN Host',
+        devicetype: session.deviceType.isNotEmpty ? session.deviceType : 'Desktop',
+        websocketSessionid: hostId,
+        connective: true,
+        screencount: 1,
+        lanAddrs: <String>[host],
+        lanPort: port,
+        lanEnabled: true,
+      );
       if (!mounted) return;
       Navigator.of(context).pushReplacement(
         MaterialPageRoute(builder: (_) => DeviceDetailPage(device: target)),
@@ -289,8 +285,25 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
   }
 
   Future<void> _showLanInfoSheet(Device device) async {
-    final addrs = device.lanAddrs;
-    final ranked = addrs.isEmpty
+    // Do not rely solely on the latest cloud payload: on disconnect / cold
+    // navigation, the list can lag. Use cached hints as a fallback and allow
+    // refresh to re-load them without leaving the page.
+    final peerCache = LanPeerHintsCacheService.instance;
+    List<String> addrs = device.lanAddrs;
+    if (addrs.isEmpty &&
+        device.uid > 0 &&
+        device.devicetype.isNotEmpty &&
+        device.devicename.isNotEmpty) {
+      final cached = peerCache.load(
+        ownerId: device.uid,
+        deviceType: device.devicetype,
+        deviceName: device.devicename,
+      );
+      if (cached != null && cached.addrs.isNotEmpty) {
+        addrs = cached.addrs;
+      }
+    }
+    List<String> ranked = addrs.isEmpty
         ? const <String>[]
         : LanAddressService.instance.rankHostsForConnect(addrs);
     final port = device.lanPort ?? kDefaultLanPort;
@@ -322,12 +335,37 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
             }
           }
 
-          if (!started && ranked.isNotEmpty) {
-            started = true;
-            Future.microtask(() => runProbe());
+          Future<void> reloadAddrsFromCacheAndProbe() async {
+            if (device.uid <= 0 ||
+                device.devicetype.isEmpty ||
+                device.devicename.isEmpty) {
+              return;
+            }
+            final cached = peerCache.load(
+              ownerId: device.uid,
+              deviceType: device.devicetype,
+              deviceName: device.devicename,
+            );
+            if (cached == null || cached.addrs.isEmpty) return;
+            setState(() {
+              addrs = cached.addrs;
+              ranked = LanAddressService.instance.rankHostsForConnect(addrs);
+            });
+            await runProbe(cacheTtl: Duration.zero);
           }
 
-          final canConnect = device.lanEnabled && addrs.isNotEmpty;
+          if (!started) {
+            started = true;
+            Future.microtask(() async {
+              if (ranked.isNotEmpty) {
+                await runProbe();
+                return;
+              }
+              await reloadAddrsFromCacheAndProbe();
+            });
+          }
+
+          final canConnect = addrs.isNotEmpty;
           final statusText = device.lanEnabled
               ? 'Host 已开启，端口 $port（自动探测可达 IP）'
               : (addrs.isNotEmpty
@@ -367,11 +405,27 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                       const SizedBox(width: 12),
                       Expanded(
                         child: OutlinedButton.icon(
-                          onPressed: ranked.isEmpty
-                              ? null
-                              : () async {
-                                  await runProbe(cacheTtl: Duration.zero);
-                                },
+                          onPressed: () async {
+                            try {
+                              final store = context.read<AppStore>();
+                              await store.dispatch(
+                                AppIntentRefreshLanHints(
+                                  deviceConnectionId: device.websocketSessionid,
+                                ),
+                              );
+                            } catch (_) {}
+                            setState(() {
+                              addrs = device.lanAddrs;
+                              ranked = addrs.isEmpty
+                                  ? const <String>[]
+                                  : LanAddressService.instance.rankHostsForConnect(addrs);
+                            });
+                            if (ranked.isNotEmpty) {
+                              await runProbe(cacheTtl: Duration.zero);
+                              return;
+                            }
+                            await reloadAddrsFromCacheAndProbe();
+                          },
                           icon: const Icon(Icons.refresh),
                           label: const Text('刷新'),
                         ),
@@ -387,6 +441,48 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                               : null,
                           icon: const Icon(Icons.wifi_tethering),
                           label: const Text('直连'),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: OutlinedButton.icon(
+                          onPressed: ranked.isEmpty
+                              ? null
+                              : () async {
+                                  Navigator.of(ctx).pop();
+                                  final reachable = <String, bool>{
+                                    for (final ip in ranked)
+                                      ip: reachability[ip]?.ok == true,
+                                  };
+                                  final host = await pickLanHostForArtifacts(
+                                    rankedHosts: ranked,
+                                    reachable: reachable,
+                                    probeArtifacts: (ip) =>
+                                        DiagnosticsUploader.instance.probeLanHostArtifacts(
+                                      host: ip,
+                                      port: port,
+                                    ),
+                                  );
+                                  if (host == null || host.isEmpty) return;
+
+                                  final store = context.read<AppStore>();
+                                  await store.dispatch(
+                                    AppIntentUploadDiagnosticsToLanHost(
+                                      host: host,
+                                      port: port,
+                                      deviceLabel: 'android',
+                                    ),
+                                  );
+                                  if (!mounted) return;
+                                  final diag = store.state.diagnostics;
+                                  final msg = diag.uploadPhase == DiagnosticsUploadPhase.done
+                                      ? '已上传：${diag.lastSavedPaths.length} 个文件'
+                                      : '上传失败：${diag.lastUploadError ?? 'unknown'}';
+                                  ScaffoldMessenger.of(context)
+                                      .showSnackBar(SnackBar(content: Text(msg)));
+                                },
+                          icon: const Icon(Icons.upload_file),
+                          label: const Text('上传日志'),
                         ),
                       ),
                     ],
@@ -506,7 +602,8 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     _iconColor = Theme.of(context).colorScheme.primary;
 
     final activeDevice = _resolveActiveDeviceForStreaming();
-    DeviceSelectManager.lastSelectedDevice = activeDevice;
+    final d = activeDevice;
+    DeviceSelectManager.lastSelectedDevice = d;
     // 检测屏幕尺寸变化，只在屏幕尺寸真正变化时才更新虚拟显示器尺寸
     final currentScreenSize = MediaQuery.of(context).size;
     if (_lastScreenSize == null || _lastScreenSize != currentScreenSize) {
@@ -570,7 +667,6 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
           }
           if (value == StreamingSessionConnectionState.connected) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              _wasEverConnected = true;
               if (ScreenController.showDetailUseScrollView.value == true) {
                 ScreenController.showDetailUseScrollView.value = false;
               }
@@ -801,7 +897,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                                 ),
                                 const SizedBox(height: 4),
                                 Text(
-                                  widget.device.devicetype,
+                                  d.devicetype,
                                   style: const TextStyle(
                                     fontSize: 16,
                                     fontWeight: FontWeight.w500,
@@ -830,7 +926,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _lanSummary(widget.device),
+                                    _lanSummary(d),
                                     style: const TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.w500,
@@ -840,7 +936,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                               ),
                             ),
                             TextButton(
-                              onPressed: () => _showLanInfoSheet(widget.device),
+                              onPressed: () => _showLanInfoSheet(d),
                               child: const Text('查看'),
                             ),
                           ],
@@ -852,9 +948,9 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                 const SizedBox(height: 16),
 
                 // 连接控制卡片
-                if (widget.device.websocketSessionid !=
+                if (d.websocketSessionid !=
                         ApplicationInfo.thisDevice.websocketSessionid &&
-                    widget.device.connective)
+                    d.connective)
                   Card(
                     elevation: 2,
                     shape: RoundedRectangleBorder(
@@ -922,7 +1018,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                           SizedBox(
                             width: double.infinity,
                             child: ElevatedButton(
-                              onPressed: () => _connectDevice(context),
+                                  onPressed: () => _connectDevice(context),
                               style: ElevatedButton.styleFrom(
                                 padding:
                                     const EdgeInsets.symmetric(vertical: 12),
@@ -938,8 +1034,8 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
                           SizedBox(
                             width: double.infinity,
                             child: OutlinedButton.icon(
-                              onPressed: widget.device.lanAddrs.isNotEmpty
-                                  ? () => _showLanInfoSheet(widget.device)
+                              onPressed: d.lanAddrs.isNotEmpty
+                                  ? () => _showLanInfoSheet(d)
                                   : null,
                               icon: const Icon(Icons.wifi_tethering),
                               label: const Text('局域网连接 (LAN/Tailscale)'),
@@ -1469,15 +1565,17 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
   */
 
   void _restartDevice(BuildContext context) async {
+    final device = _resolveActiveDeviceForStreaming();
     WebSocketService.send('requestRestart', {
-      'target_uid': widget.device.uid,
-      'target_connectionid': widget.device.websocketSessionid,
+      'target_uid': device.uid,
+      'target_connectionid': device.websocketSessionid,
       'password': _passwordController.text,
     });
-    VLOG0('重启服务: ${widget.device.devicename}');
+    VLOG0('重启服务: ${device.devicename}');
   }
 
   void _connectDevice(BuildContext context) async {
+    final device = _resolveActiveDeviceForStreaming();
     // 连接设备的逻辑
     // String? password = await _showPasswordDialog(context);
     // if (password == null) return;
@@ -1487,10 +1585,32 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
       StreamingSettings.hookCursorImage = AppStateService.isMouseConnected;
     }
     StreamingSettings.updateScreenId(_selectedMonitorId - 1);
-    StreamingSettings.connectPassword = _passwordController.text;
-    // Persist connect password locally for this device.
-    await SharedPreferencesManager.setString(
-        'connectPassword_${widget.device.uid}', _passwordController.text);
+    final connectPassword = _passwordController.text;
+    final savedPasswordKey = 'connectPassword_${widget.device.uid}';
+    final savedPwHashKey = 'connectPasswordHash_${widget.device.uid}';
+
+    // Persist connect password/hash locally for this device.
+    //
+    // IMPORTANT:
+    // - Do NOT overwrite saved password with empty text on connect; clearing has
+    //   its own explicit action. This prevents accidental "missing password hash"
+    //   failures on cold start / rebuild.
+    // - Always persist password hash when password is provided so later reconnect
+    //   can use hash-only mode (no plaintext needed).
+    String? connectPasswordHash;
+    final pwTrimmed = connectPassword.trim();
+    if (pwTrimmed.isNotEmpty) {
+      try {
+        connectPasswordHash = HashUtil.hash(pwTrimmed);
+        await SharedPreferencesManager.setString(savedPasswordKey, pwTrimmed);
+        await SharedPreferencesManager.setString(savedPwHashKey, connectPasswordHash);
+      } catch (_) {
+        connectPasswordHash = null;
+      }
+    } else {
+      final cachedHash = SharedPreferencesManager.getString(savedPwHashKey) ?? '';
+      connectPasswordHash = cachedHash.trim().isNotEmpty ? cachedHash.trim() : null;
+    }
     StreamingSettings.syncMousePosition = _syncRemoteMousePosition;
 
     // 设置流模式
@@ -1503,7 +1623,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     }
     if (_selectedMode == VDSIPLAY_EXTEND) {
       // 创建虚拟显示器 其id应当为对方的屏幕数量
-      StreamingSettings.updateScreenId(widget.device.screencount);
+      StreamingSettings.updateScreenId(device.screencount);
     }
     StreamingSettings.customScreenWidth = _virtualDisplayWidth;
     StreamingSettings.customScreenHeight = _virtualDisplayHeight;
@@ -1514,8 +1634,14 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     await SharedPreferencesManager.setInt(
         'virtualDisplayHeight', _virtualDisplayHeight);
 
-    StreamingManager.startStreaming(widget.device);
-    VLOG0('连接设备: ${widget.device.devicename}');
+    await context.read<AppStore>().dispatch(
+          AppIntentConnectCloud(
+            deviceConnectionId: device.websocketSessionid,
+            connectPassword: pwTrimmed.isNotEmpty ? pwTrimmed : null,
+            connectPasswordHash: connectPasswordHash,
+          ),
+        );
+    VLOG0('连接设备: ${device.devicename}');
   }
 
   late TextEditingController _passwordController;
@@ -1523,9 +1649,38 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
   Future<void> _clearSavedConnectPassword() async {
     await SharedPreferencesManager.setString(
         'connectPassword_${widget.device.uid}', '');
+    await SharedPreferencesManager.setString(
+        'connectPasswordHash_${widget.device.uid}', '');
     setState(() {
       _passwordController.text = '';
     });
+  }
+
+  Future<String?> _promptConnectPassword() async {
+    final controller = TextEditingController(text: _passwordController.text);
+    return showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('请输入连接密码'),
+        content: TextField(
+          controller: controller,
+          obscureText: true,
+          decoration: const InputDecoration(
+            hintText: '与 Host 端一致（无密码可留空）',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(controller.text),
+            child: const Text('连接'),
+          ),
+        ],
+      ),
+    );
   }
 
   void _unhostDevice(BuildContext context) {
@@ -1611,7 +1766,10 @@ class _DeviceDetailPageState extends State<DeviceDetailPage>
     );
     if (result != null) {
       SharedPreferencesManager.setBool('allowConnect', true);
-      String hash = HashUtil.hash(result);
+      // Allow empty password (passwordless host). Historically we stored
+      // hash(''), which then blocked all controllers that didn't explicitly
+      // send a hash for the empty string.
+      final String hash = result.isEmpty ? '' : HashUtil.hash(result);
       SharedPreferencesManager.setString("connectPasswordHash", hash);
       ApplicationInfo.connectable = true;
       StreamingSettings.connectPasswordHash = hash;

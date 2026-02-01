@@ -229,10 +229,28 @@ class StreamedManager {
     //var sources = await desktopCapturer.getSources(types: [SourceType.Screen]);
     //print("cppdebug x ${sources.length} ${settings.screenId}");
     bool allowConnect = ApplicationInfo.connectable;
-    if (!allowConnect ||
-        settings.connectPassword == null ||
-        StreamingSettings.connectPasswordHash !=
-            HashUtil.hash(settings.connectPassword!)) {
+    if (!allowConnect) return;
+    final localHash = StreamingSettings.connectPasswordHash;
+    final pw = settings.connectPassword;
+    final pwHash = settings.connectPasswordHash;
+    // "No password" mode: UI allows empty password ("不填则无密码").
+    // Historically we mistakenly stored hash('') which then blocked all clients.
+    final bool passwordless =
+        localHash.isEmpty || localHash == HashUtil.hash('');
+    final bool ok;
+    if (passwordless) {
+      ok = true;
+    } else if (pw != null && pw.isNotEmpty) {
+      ok = localHash == HashUtil.hash(pw);
+    } else {
+      ok = pwHash != null && pwHash.isNotEmpty && localHash == pwHash;
+    }
+    if (!ok) {
+      // Avoid logging sensitive data (password). Log only whether a password/hash
+      // was provided to help diagnose connection failures.
+      VLOG0(
+        '[connect] reject: invalid/missing password (pwProvided=${pw != null && pw.isNotEmpty} hashProvided=${pwHash != null && pwHash.isNotEmpty} localHashSet=${localHash.isNotEmpty} passwordless=$passwordless)',
+      );
       return;
     }
 

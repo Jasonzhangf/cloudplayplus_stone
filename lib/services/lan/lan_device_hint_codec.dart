@@ -16,9 +16,16 @@ class LanDeviceNameCodec {
   LanDeviceNameCodec._();
 
   // Keep suffix ASCII-safe to survive backend sanitization of device names.
-  // We still accept the legacy Unicode brackets for backward compatibility.
-  static const String _l = '[[';
-  static const String _r = ']]';
+  // We still accept legacy wrappers for backward compatibility.
+  //
+  // NOTE: Some backends sanitize bracket characters like '['/']'. To maximize
+  // survivability, we use an alnum/underscore-only wrapper by default.
+  static const String _l = '__lan1_';
+  static const String _r = '_lan1__';
+
+  // Legacy ASCII wrapper (older versions).
+  static const String _legacyAsciiL = '[[';
+  static const String _legacyAsciiR = ']]';
   static const String _legacyL = '⟦';
   static const String _legacyR = '⟧';
 
@@ -93,7 +100,9 @@ class LanDeviceNameCodec {
       return (li: li, ri: ri, l: l, r: r);
     }
 
-    final located = locate(_l, _r) ?? locate(_legacyL, _legacyR);
+    final located = locate(_l, _r) ??
+        locate(_legacyAsciiL, _legacyAsciiR) ??
+        locate(_legacyL, _legacyR);
     if (located == null) return (name: s, hints: null);
 
     final base = s.substring(0, located.li);

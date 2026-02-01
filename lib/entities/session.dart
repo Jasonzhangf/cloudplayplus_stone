@@ -8,6 +8,7 @@ import 'package:cloudplayplus/controller/hardware_input_controller.dart';
 import 'package:cloudplayplus/dev_settings.dart/develop_settings.dart';
 import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
+import 'package:cloudplayplus/core/session/session_config.dart';
 import 'package:cloudplayplus/services/capture_target_event_bus.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
@@ -43,6 +44,7 @@ import '../utils/input/input_debug.dart';
 import '../utils/iterm2/iterm2_crop.dart';
 import '../utils/iterm2/iterm2_activate_and_crop_python_script.dart';
 import '../utils/iterm2/iterm2_send_text_python_script.dart';
+import '../utils/iterm2/iterm2_panel_sort.dart';
 import '../utils/iterm2/iterm2_sources_python_script.dart';
 import '../utils/adaptive_encoding/adaptive_encoding.dart';
 import 'messages.dart';
@@ -165,6 +167,7 @@ class StreamingSession {
   SelfSessionType selfSessionType = SelfSessionType.none;
   Device controller, controlled;
   final SignalingTransport signaling;
+  final SessionConfig config;
   RTCPeerConnection? pc;
   //late RTCPeerConnection audio;
 
@@ -254,7 +257,9 @@ class StreamingSession {
     this.controller,
     this.controlled, {
     SignalingTransport? signaling,
-  }) : signaling = signaling ?? CloudSignalingTransport.instance {
+    SessionConfig? config,
+  })  : signaling = signaling ?? CloudSignalingTransport.instance,
+        config = config ?? const SessionConfig() {
     connectionState = StreamingSessionConnectionState.free;
     // 注册生命周期监听器
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
@@ -566,11 +571,36 @@ class StreamingSession {
           }
         } catch (_) {}
       }
+
+      // Per-session password/hash (do not rely on global StreamingSettings).
+      settings.remove('connectPassword');
+      settings.remove('connectPasswordHash');
+      config.applyToRequestSettings(settings);
+
       // Ensure signaling transport is ready before requesting a remote session;
       // otherwise the request may be ignored on cold start.
       await signaling.waitUntilReady(timeout: const Duration(seconds: 6));
 
       if (signaling.name == 'cloud') {
+        // On mobile, cold start / background resume can leave the websocket in a
+        // "connected but not ready" or "no socket" state. If we send
+        // requestRemoteControl too early it will be dropped and the user sees
+        // "cannot connect".
+        final ok = await WebSocketService.ensureReady(
+          timeout: const Duration(seconds: 10),
+          reconnectIfNeeded: true,
+        );
+        if (!ok) {
+          VLOG0('[connect] requestRemoteControl aborted: websocket not ready');
+          controlled.connectionState.value =
+              StreamingSessionConnectionState.disconnected;
+          MessageBoxManager().showMessage('连接失败：信令未就绪，请重试', '连接失败');
+          return;
+        }
+        // Debug: do not log sensitive values; only whether fields are present.
+        VLOG0(
+          '[connect] requestRemoteControl settings: pw=${settings.containsKey('connectPassword')} hash=${settings.containsKey('connectPasswordHash')}',
+        );
         signaling.send('requestRemoteControl', {
           'target_uid': ApplicationInfo.user.uid,
           'target_connectionid': controlled.websocketSessionid,
@@ -1299,8 +1329,8 @@ class StreamingSession {
     _autoIterm2DefaultPanelAttempted = true;
 
     Future<void> applyFirstPanel(List<ITerm2PanelInfo> panels) async {
-      if (panels.isEmpty) return;
-      final first = panels.first;
+      final first = pickDefaultIterm2Panel(panels);
+      if (first == null) return;
       if (first.id.isEmpty) return;
       try {
         InputDebugService.instance
@@ -2426,6 +2456,7 @@ class StreamingSession {
         if (metaAny != null) {
           final frameAny = metaAny!['frame'];
           final windowFrameAny = metaAny!['windowFrame'];
+          final rawWindowFrameAny = metaAny!['rawWindowFrame'];
           if (frameAny is Map && windowFrameAny is Map) {
             final fx = (frameAny['x'] is num)
                 ? (frameAny['x'] as num).toDouble()
@@ -2451,6 +2482,18 @@ class StreamingSession {
             final wh = (windowFrameAny['h'] is num)
                 ? (windowFrameAny['h'] as num).toDouble()
                 : null;
+            final rawWx = (rawWindowFrameAny is Map && rawWindowFrameAny['x'] is num)
+                ? (rawWindowFrameAny['x'] as num).toDouble()
+                : null;
+            final rawWy = (rawWindowFrameAny is Map && rawWindowFrameAny['y'] is num)
+                ? (rawWindowFrameAny['y'] as num).toDouble()
+                : null;
+            final rawWw = (rawWindowFrameAny is Map && rawWindowFrameAny['w'] is num)
+                ? (rawWindowFrameAny['w'] as num).toDouble()
+                : null;
+            final rawWh = (rawWindowFrameAny is Map && rawWindowFrameAny['h'] is num)
+                ? (rawWindowFrameAny['h'] as num).toDouble()
+                : null;
             if (fx != null &&
                 fy != null &&
                 fw != null &&
@@ -2459,7 +2502,7 @@ class StreamingSession {
                 wh != null &&
                 ww > 0 &&
                 wh > 0) {
-              final res = computeIterm2CropRectNorm(
+              final res = computeIterm2CropRectNormBestEffort(
                 fx: fx,
                 fy: fy,
                 fw: fw,
@@ -2468,6 +2511,10 @@ class StreamingSession {
                 wy: wy,
                 ww: ww,
                 wh: wh,
+                rawWx: rawWx,
+                rawWy: rawWy,
+                rawWw: rawWw,
+                rawWh: rawWh,
               );
               if (res != null) {
                 iterm2MinWidth = res.windowMinWidth;
@@ -2476,7 +2523,7 @@ class StreamingSession {
                 cropTag = res.tag;
                 cropPenalty = res.penalty;
                 VLOG0(
-                    '[iTerm2] cropRectNorm=$cropRectNorm tag=${res.tag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny');
+                    '[iTerm2] cropRectNorm=$cropRectNorm tag=${res.tag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny rawWindowFrame=$rawWindowFrameAny');
               }
             }
           }

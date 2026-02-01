@@ -12,6 +12,10 @@ class LanSignalingHostServer {
   final ValueNotifier<int> port = ValueNotifier<int>(kDefaultLanPort);
   final ValueNotifier<String> hostId = ValueNotifier<String>('');
 
+  bool get isRunning => false;
+  bool get isListeningV4 => false;
+  bool get isListeningV6 => false;
+
   SignalingTransport get transport =>
       throw UnimplementedError('LAN host server is not supported on web.');
 

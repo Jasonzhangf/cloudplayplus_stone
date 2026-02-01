@@ -152,3 +152,170 @@ Iterm2CropComputationResult? computeIterm2CropRectNorm({
     windowMinHeight: wh.round(),
   );
 }
+
+/// Best-effort crop computation that can additionally use iTerm2's reported
+/// raw window frame. This helps when `Session.frame` is reported in a
+/// content/tab coordinate space that does not include the title/tab bar height,
+/// causing "top bleed / bottom cut" when applied to a full window capture.
+///
+/// The function evaluates multiple coordinate hypotheses and returns the
+/// lowest-penalty candidate.
+Iterm2CropComputationResult? computeIterm2CropRectNormBestEffort({
+  required double fx,
+  required double fy,
+  required double fw,
+  required double fh,
+  required double wx,
+  required double wy,
+  required double ww,
+  required double wh,
+  double? rawWx,
+  double? rawWy,
+  double? rawWw,
+  double? rawWh,
+}) {
+  Iterm2CropComputationResult? best = computeIterm2CropRectNorm(
+    fx: fx,
+    fy: fy,
+    fw: fw,
+    fh: fh,
+    wx: wx,
+    wy: wy,
+    ww: ww,
+    wh: wh,
+  );
+
+  if (rawWw == null || rawWh == null || rawWw <= 0 || rawWh <= 0) return best;
+
+  int touchesBoundary(Map<String, double> r) {
+    final x = r['x'] ?? 0.0;
+    final y = r['y'] ?? 0.0;
+    final w = r['w'] ?? 0.0;
+    final h = r['h'] ?? 0.0;
+    int t = 0;
+    if (x <= 0.0005) t++;
+    if (y <= 0.0005) t++;
+    if ((x + w) >= 0.9995) t++;
+    if ((y + h) >= 0.9995) t++;
+    return t;
+  }
+
+  double endGapScore(Map<String, double> r) {
+    final x = r['x'] ?? 0.0;
+    final y = r['y'] ?? 0.0;
+    final w = r['w'] ?? 0.0;
+    final h = r['h'] ?? 0.0;
+    // Prefer crops that end near the window edge, because iTerm2 content is
+    // typically anchored to the bottom/right of the window (title/tab bar is
+    // at the top). This helps pick oy=dy (header offset) over oy=dy/2.
+    final rightGap = (1.0 - (x + w)).abs();
+    final bottomGap = (1.0 - (y + h)).abs();
+    return rightGap + bottomGap;
+  }
+
+  Iterm2CropComputationResult? pick(Iterm2CropComputationResult? a,
+      Iterm2CropComputationResult? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    const eps = 1e-3;
+    if (b.penalty < a.penalty - eps) return b;
+    if ((b.penalty - a.penalty).abs() <= eps) {
+      // Tie-break: prefer mapping that keeps content aligned to window ends,
+      // then prefer less clamping (fewer boundary touches).
+      final ga = endGapScore(a.cropRectNorm);
+      final gb = endGapScore(b.cropRectNorm);
+      if (gb < ga - 1e-6) return b;
+      if ((gb - ga).abs() <= 1e-6) {
+        final ta = touchesBoundary(a.cropRectNorm);
+        final tb = touchesBoundary(b.cropRectNorm);
+        if (tb < ta) return b;
+      }
+    }
+    return a;
+  }
+
+  // Hypothesis 1: iTerm2 already returns everything in raw-window coordinates.
+  best = pick(
+    best,
+    computeIterm2CropRectNorm(
+      fx: fx,
+      fy: fy,
+      fw: fw,
+      fh: fh,
+      wx: rawWx ?? 0.0,
+      wy: rawWy ?? 0.0,
+      ww: rawWw,
+      wh: rawWh,
+    )?.letTagPrefix('rawWin'),
+  );
+
+  // Hypothesis 2: Session.frame is in tab/content coordinates; map it into the
+  // raw window by adding estimated insets (title/tab bar, borders).
+  final relX = fx - wx;
+  final relY = fy - wy;
+  final inferredScales = <double>{1.0};
+  if (ww > 0 && wh > 0) {
+    final sx = rawWw / ww;
+    final sy = rawWh / wh;
+    if ((sx - 2.0).abs() < 0.35 || (sy - 2.0).abs() < 0.35) {
+      inferredScales.add(2.0);
+    }
+    if ((sx - 0.5).abs() < 0.18 || (sy - 0.5).abs() < 0.18) {
+      inferredScales.add(0.5);
+    }
+  }
+
+  for (final scale in inferredScales) {
+    final contentW = ww * scale;
+    final contentH = wh * scale;
+    final paneW = fw * scale;
+    final paneH = fh * scale;
+    final paneX = relX * scale;
+    final paneY = relY * scale;
+
+    final dx = (rawWw - contentW);
+    final dy = (rawWh - contentH);
+    final offsetXs = <double>[
+      0.0,
+      if (dx.isFinite) dx * 0.5,
+      if (dx.isFinite) dx,
+    ];
+    final offsetYs = <double>[
+      0.0,
+      if (dy.isFinite) dy,
+      if (dy.isFinite) dy * 0.5,
+    ];
+
+    for (final ox in offsetXs) {
+      for (final oy in offsetYs) {
+        best = pick(
+          best,
+          computeIterm2CropRectNorm(
+            fx: paneX + ox,
+            fy: paneY + oy,
+            fw: paneW,
+            fh: paneH,
+            wx: 0.0,
+            wy: 0.0,
+            ww: rawWw,
+            wh: rawWh,
+          )?.letTagPrefix('map(s=$scale,ox=${ox.toStringAsFixed(1)},oy=${oy.toStringAsFixed(1)})'),
+        );
+      }
+    }
+  }
+
+  return best;
+}
+
+extension on Iterm2CropComputationResult {
+  Iterm2CropComputationResult letTagPrefix(String prefix) {
+    return Iterm2CropComputationResult(
+      cropRectNorm: cropRectNorm,
+      tag: '$prefix:${tag}',
+      penalty: penalty,
+      windowMinWidth: windowMinWidth,
+      windowMinHeight: windowMinHeight,
+    );
+  }
+}

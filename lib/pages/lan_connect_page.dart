@@ -1,4 +1,3 @@
-import 'package:cloudplayplus/global_settings/streaming_settings.dart';
 import 'package:cloudplayplus/services/app_info_service.dart';
 import 'package:cloudplayplus/services/lan/lan_signaling_client.dart';
 import 'package:cloudplayplus/services/lan/lan_connect_history_service.dart';
@@ -36,12 +35,11 @@ class _LanConnectPageState extends State<LanConnectPage> {
     if (AppPlatform.isAndroidTV) {
       _hostController = NativeTextFieldController(text: lastHost);
       _portController = NativeTextFieldController(text: lastPort.toString());
-      _passwordController = NativeTextFieldController(text: StreamingSettings.connectPassword ?? '');
+      _passwordController = NativeTextFieldController(text: '');
     } else {
       _hostController = TextEditingController(text: lastHost);
       _portController = TextEditingController(text: lastPort.toString());
-      _passwordController =
-          TextEditingController(text: StreamingSettings.connectPassword ?? '');
+      _passwordController = TextEditingController(text: '');
     }
 
     _loadHistory();

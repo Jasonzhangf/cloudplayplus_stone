@@ -183,11 +183,23 @@ async def main(connection):
     }
 
     try:
-        f = layout_frames.get(target.session_id)
+        f = await get_frame(target)
+        root_bounds = None
+        try:
+            root_bounds = node_bounds(target_tab.root)
+        except Exception:
+            root_bounds = None
         wf = await get_frame(target_win)
-        if f and layout_w > 0 and layout_h > 0:
-            out["frame"] = f
-            out["windowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
+        if f and root_bounds:
+            minx, miny, maxx, maxy = root_bounds
+            ww = float(maxx - minx)
+            wh = float(maxy - miny)
+            if ww > 0 and wh > 0:
+                out["frame"] = {"x": float(f.origin.x), "y": float(f.origin.y), "w": float(f.size.width), "h": float(f.size.height)}
+                # Use the union-bounds of all session frames in this tab as the "windowFrame"
+                # coordinate space for crop computation. This avoids assumptions about splitter
+                # layout math that can cause a few-pixel drift (top bleed / bottom cut).
+                out["windowFrame"] = {"x": float(minx), "y": float(miny), "w": float(ww), "h": float(wh)}
         if wf:
             out["rawWindowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
     except Exception:
@@ -197,4 +209,3 @@ async def main(connection):
 
 iterm2.run_until_complete(main)
 ''';
-
