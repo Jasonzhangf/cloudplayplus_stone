@@ -310,19 +310,6 @@ class WebSocketService {
       final host = LanSignalingHostServer.instance;
       lanEnabled = host.enabled.value && host.isRunning;
       lanPort = LanSignalingHostServer.instance.port.value;
-
-      // Avoid advertising addresses that are not actually bound by the LAN server.
-      final listenV4 = host.isListeningV4;
-      final listenV6 = host.isListeningV6;
-      if (!listenV4 || !listenV6) {
-        lanAddrs = lanAddrs.where((ip) {
-          final isV6 = ip.contains(':');
-          final isV4 = ip.contains('.') && !isV6;
-          if (isV4 && !listenV4) return false;
-          if (isV6 && !listenV6) return false;
-          return true;
-        }).toList(growable: false);
-      }
     } catch (_) {}
 
     send('updateDeviceInfo', {
