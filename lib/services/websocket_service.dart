@@ -312,6 +312,14 @@ class WebSocketService {
       lanPort = LanSignalingHostServer.instance.port.value;
     } catch (_) {}
 
+    // Only hosts that can be controlled should advertise LAN addresses.
+    // Controllers (mobile) advertising their own IPs confuses the device list UI.
+    if (!ApplicationInfo.connectable) {
+      lanEnabled = false;
+      lanPort = 0;
+      lanAddrs = const <String>[];
+    }
+
     send('updateDeviceInfo', {
       'deviceName': LanDeviceNameCodec.encode(
         displayName: ApplicationInfo.deviceName,

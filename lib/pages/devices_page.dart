@@ -381,6 +381,7 @@ class _DevicesPageState extends State<DevicesPage> {
     // Show LAN entries whenever we have IP hints (even if lanEnabled flag is
     // missing/false in server payload). Users can still try direct connect.
     final showLan = (AppPlatform.isMobile || AppPlatform.isAndroidTV) &&
+        data.connective == true &&
         data.lanAddrs.isNotEmpty;
     final port = data.lanPort ?? kDefaultLanPort;
     final rankedLanAddrs = showLan
