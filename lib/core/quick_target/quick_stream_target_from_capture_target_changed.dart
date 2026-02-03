@@ -24,6 +24,8 @@ QuickStreamTarget? quickStreamTargetFromCaptureTargetChanged(
         (payload['iterm2SessionId'] ?? payload['sessionId'])?.toString() ?? '';
     final widAny = payload['windowId'];
     final wid = (widAny is num) ? widAny.toInt() : int.tryParse('$widAny');
+    final cgAny = payload['cgWindowId'];
+    final cg = (cgAny is num) ? cgAny.toInt() : int.tryParse('$cgAny');
     if (sid.trim().isEmpty) return null;
     return QuickStreamTarget(
       mode: StreamMode.iterm2,
@@ -31,6 +33,7 @@ QuickStreamTarget? quickStreamTargetFromCaptureTargetChanged(
       label: 'iTerm2',
       appName: 'iTerm2',
       windowId: wid,
+      cgWindowId: cg,
     );
   }
 
@@ -63,4 +66,3 @@ QuickStreamTarget? quickStreamTargetFromCaptureTargetChanged(
     label: '桌面',
   );
 }
-

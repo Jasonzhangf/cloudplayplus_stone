@@ -155,6 +155,10 @@ enum StreamingSessionConnectionState {
   disconnected,
 }
 
+// Allow transient network hiccups without tearing down the whole session.
+// We retry for a short window to avoid UX "disconnect" popups.
+const Duration _kTransientReconnectWindow = Duration(seconds: 15);
+
 enum SelfSessionType {
   none,
   controller,
@@ -252,6 +256,69 @@ class StreamingSession {
 
   // Tiered bandwidth strategy state (window/panel, EncodingMode.dynamic).
   BandwidthTierState _adaptiveTierState = const BandwidthTierState.initial();
+
+  // Transient reconnect handling.
+  Timer? _transientReconnectTimer;
+  int _transientReconnectDeadlineMs = 0;
+  int _transientReconnectAttempt = 0;
+
+  void _stopTransientReconnect() {
+    _transientReconnectTimer?.cancel();
+    _transientReconnectTimer = null;
+    _transientReconnectDeadlineMs = 0;
+    _transientReconnectAttempt = 0;
+  }
+
+  Future<void> _startTransientReconnect({
+    required String reason,
+  }) async {
+    // Only controller side initiates reconnection.
+    if (selfSessionType != SelfSessionType.controller) return;
+    if (isClosing_) return;
+
+    final nowMs = DateTime.now().millisecondsSinceEpoch;
+    if (_transientReconnectDeadlineMs <= 0) {
+      _transientReconnectDeadlineMs =
+          nowMs + _kTransientReconnectWindow.inMilliseconds;
+      _transientReconnectAttempt = 0;
+    }
+
+    if (nowMs >= _transientReconnectDeadlineMs) {
+      VLOG0('[reconnect] deadline reached, giving up (reason=$reason)');
+      _stopTransientReconnect();
+      return;
+    }
+
+    _transientReconnectTimer?.cancel();
+
+    // Small backoff; keep it fast (under 15s window) and avoid hammering.
+    final delayMs =
+        (300 * (1 << _transientReconnectAttempt)).clamp(300, 2500);
+    _transientReconnectAttempt = (_transientReconnectAttempt + 1).clamp(0, 10);
+
+    _transientReconnectTimer = Timer(Duration(milliseconds: delayMs), () async {
+      if (isClosing_) return;
+      final state = pc?.connectionState;
+      if (state == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+        _stopTransientReconnect();
+        return;
+      }
+
+      VLOG0(
+          '[reconnect] attempt=$_transientReconnectAttempt delayMs=$delayMs reason=$reason');
+
+      // Re-request streaming using the same session object. StreamingManager will
+      // reject if a session with same id already exists, so we do an in-place
+      // renegotiation path by restarting request/offer.
+      try {
+        startRequest();
+      } catch (e) {
+        VLOG0('[reconnect] startRequest failed: $e');
+      }
+
+      await _startTransientReconnect(reason: reason);
+    });
+  }
 
   // Lifecycle observer is per-session. Using a static observer can leak
   // callbacks/state across sessions and makes removeObserver() incorrect.
@@ -363,19 +430,21 @@ class StreamingSession {
           controlled.connectionState.value =
               StreamingSessionConnectionState.connected;
           restartPingTimeoutTimer(40);
+          // Cancel any pending reconnect attempts if we now have a successful connection.
+          _stopTransientReconnect();
         } else if (state ==
             RTCPeerConnectionState.RTCPeerConnectionStateFailed) {
           VLOG0('[WebRTC] connection FAILED: ${controlled.websocketSessionid}');
-          controlled.connectionState.value =
-              StreamingSessionConnectionState.disconnected;
-          MessageBoxManager()
-              .showMessage("已断开或未能建立连接。请切换网络重试或在设置中启动turn服务器。", "连接失败");
-          close();
+          // Instead of immediate close(), start a transient reconnect window.
+          _startTransientReconnect(reason: 'peer-failed');
         } else if (state ==
             RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
           VLOG0('[WebRTC] connection CLOSED: ${controlled.websocketSessionid}');
-          controlled.connectionState.value =
-              StreamingSessionConnectionState.disconnected;
+          // Do not immediately notify user; allow transient reconnect if within window.
+          if (_transientReconnectDeadlineMs <= 0) {
+            controlled.connectionState.value =
+                StreamingSessionConnectionState.disconnected;
+          }
         }
       };
 
@@ -1126,6 +1195,7 @@ class StreamingSession {
     }
     _resetPingState();
     _stopRestoreTargetRetry();
+    _stopTransientReconnect();
     _pendingCaptureTargetTimer?.cancel();
     _pendingCaptureTargetTimer = null;
     _pendingCaptureTargetPayload = null;
@@ -1349,13 +1419,6 @@ class StreamingSession {
     final quick = QuickTargetService.instance;
     if (quick.mode.value != StreamMode.iterm2) return;
     if (shouldRestore) return;
-
-    // If user explicitly selected a non-iterm2 target, do not override.
-    final last = quick.lastTarget.value;
-    if (last != null && last.mode == StreamMode.iterm2 && last.id.isNotEmpty) {
-      // We have a concrete panel id already; nothing to auto-pick.
-      return;
-    }
 
     _autoIterm2DefaultPanelAttempted = true;
 
@@ -2558,44 +2621,26 @@ class StreamingSession {
                 : null;
           }
 
-          Iterm2CropComputationResult? _computeFromLayoutNormalized(
-              Map f, Map w) {
-            final fx = (f['x'] is num) ? (f['x'] as num).toDouble() : null;
-            final fy = (f['y'] is num) ? (f['y'] as num).toDouble() : null;
-            final fw = (f['w'] is num) ? (f['w'] as num).toDouble() : null;
-            final fh = (f['h'] is num) ? (f['h'] as num).toDouble() : null;
-            final ww = (w['w'] is num) ? (w['w'] as num).toDouble() : null;
-            final wh = (w['h'] is num) ? (w['h'] as num).toDouble() : null;
-            if (fx == null || fy == null || fw == null || fh == null) return null;
-            if (ww == null || wh == null || ww <= 0 || wh <= 0) return null;
-
-            // Use a strict normalized mapping in the layout coordinate space.
-            // This avoids guessing origin direction/insets.
-            double clamp01(double v) => v.clamp(0.0, 1.0);
-            final x = clamp01(fx / ww);
-            final y = clamp01(fy / wh);
-            final wN = clamp01(fw / ww);
-            final hN = clamp01(fh / wh);
-            if (wN <= 0 || hN <= 0) return null;
-
-            return Iterm2CropComputationResult(
-              cropRectNorm: {'x': x, 'y': y, 'w': wN, 'h': hN},
-              tag: 'layoutNorm',
-              penalty: 0.0,
-              windowMinWidth: ww.round(),
-              windowMinHeight: wh.round(),
-            );
-          }
-
           // Prefer the lower-penalty candidate between Session.frame and layoutFrame.
           Iterm2CropComputationResult? resLayout;
           if (layoutFrameAny is Map && layoutWindowFrameAny is Map) {
-            resLayout = _computeFromLayoutNormalized(
-              layoutFrameAny.map((k, v) => MapEntry(k.toString(), v)),
-              layoutWindowFrameAny.map((k, v) => MapEntry(k.toString(), v)),
+            // Use computeIterm2CropRectNormFromLayoutFrame (handles Y-flip).
+            final layoutRes = computeIterm2CropRectNormFromLayoutFrame(
+              layoutFrame: (layoutFrameAny as Map).map(
+                (k, v) => MapEntry(k.toString(), v),
+              ),
+              layoutWindowFrame: (layoutWindowFrameAny as Map).map(
+                (k, v) => MapEntry(k.toString(), v),
+              ),
+              rawWindowFrame: (rawWindowFrameAny is Map)
+                  ? (rawWindowFrameAny as Map).map(
+                      (k, v) => MapEntry(k.toString(), v),
+                    )
+                  : null,
             );
-            if (resLayout != null) {
-              cropTag = 'layout:${resLayout.tag}';
+            if (layoutRes != null) {
+              resLayout = layoutRes;
+              cropTag = 'layout:${layoutRes.tag}';
             }
           }
 

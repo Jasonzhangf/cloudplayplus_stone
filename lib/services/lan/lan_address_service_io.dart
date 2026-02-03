@@ -4,30 +4,32 @@ class LanAddressService {
   LanAddressService._();
   static final LanAddressService instance = LanAddressService._();
 
-  Future<List<String>> listLocalAddresses() async {
-    final out = <String>{};
-    try {
-      final ifaces = await NetworkInterface.list(
-        includeLoopback: false,
-        includeLinkLocal: false,
-        type: InternetAddressType.any,
-      );
-      for (final iface in ifaces) {
-        for (final addr in iface.addresses) {
-          final ip = addr.address;
-          if (ip.isEmpty) continue;
-          if (ip == '127.0.0.1' || ip == '::1') continue;
-          // Skip scoped/link-local IPv6 like "fe80::...%en0" which is not usable
-          // for LAN connect UX (requires interface scoping on the client).
+ Future<List<String>> listLocalAddresses() async {
+   final out = <String>{};
+   try {
+     final ifaces = await NetworkInterface.list(
+       includeLoopback: false,
+        includeLinkLocal: true,
+       type: InternetAddressType.any,
+     );
+     for (final iface in ifaces) {
+       for (final addr in iface.addresses) {
+         final ip = addr.address;
+         if (ip.isEmpty) continue;
+         if (ip == '127.0.0.1' || ip == '::1') continue;
+          // Skip scoped/link-local IPv6 like "fe80::...%en0" for default LAN hints.
+          // It's not usable across devices unless the client can apply an
+          // interface scope (Android uses %wlan0), which we cannot infer.
+          // Users who need link-local IPv6 should paste a full URL manually.
           if (ip.contains('%')) continue;
           if (ip.startsWith('fe80:')) continue;
           out.add(ip);
-        }
-      }
-    } catch (_) {}
+       }
+     }
+   } catch (_) {}
 
-    return rankHostsForConnect(out.toList(growable: false));
-  }
+   return rankHostsForConnect(out.toList(growable: false));
+ }
 
   List<String> rankHostsForConnect(List<String> addrs) {
     final list = addrs.toList(growable: false);
@@ -50,25 +52,19 @@ class LanAddressService {
               ip.startsWith('172.3'));
 
       // Default: prefer IPv6 first, then Tailscale, then private IPv4.
-      // On mobile (Android/iOS), prefer reachable IPv4 (Tailscale/private) first
-      // because IPv6 routes are often missing and lead to "Network is unreachable".
+      // NOTE: We used to prefer IPv4 on mobile because some networks lack IPv6
+      // routes and lead to "Network is unreachable". However, when both peers
+      // have IPv6, IPv6 is often the most direct path. Users can still manually
+      // pick a different address.
+      // Link-local IPv6 is only usable with an interface scope (fe80::...%wlan0).
+      // Even then it is fragile across platforms, so never auto-prefer it.
       if (isLinkLocal) return 1000;
-      final preferV4 = Platform.isAndroid || Platform.isIOS;
-      if (preferV4) {
-        if (isV4 && isTailscale) return 0;
-        if (isPrivateV4) return 10;
-        if (isV4) return 20;
-        if (isV6 && isTailscale) return 30;
-        if (isV6) return 40;
-        return 50;
-      } else {
-        if (isV6 && !isTailscale) return 0;
-        if (isV6 && isTailscale) return 10;
-        if (isV4 && isTailscale) return 20;
-        if (isPrivateV4) return 30;
-        if (isV4) return 40;
-        return 50;
-      }
+      if (isV6 && !isTailscale) return 0;
+      if (isV6 && isTailscale) return 10;
+      if (isV4 && isTailscale) return 20;
+      if (isPrivateV4) return 30;
+      if (isV4) return 40;
+      return 50;
     }
 
     list.sort((a, b) {

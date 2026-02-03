@@ -209,6 +209,22 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
           order: 7,
         ),
         ShortcutItem(
+          id: 'iterm2-prev',
+          label: '上一屏',
+          icon: '',
+          keys: [ShortcutKey(key: 'PanelPrev', keyCode: 'PanelPrev')],
+          platform: platform,
+          order: 8,
+        ),
+        ShortcutItem(
+          id: 'iterm2-next',
+          label: '下一屏',
+          icon: '',
+          keys: [ShortcutKey(key: 'PanelNext', keyCode: 'PanelNext')],
+          platform: platform,
+          order: 9,
+        ),
+        ShortcutItem(
           id: 'shift-tab',
           label: 'Shift+Tab',
           icon: '',
@@ -217,7 +233,7 @@ List<ShortcutItem> getDefaultShortcuts(ShortcutPlatform platform) {
             ShortcutKey(key: 'Tab', keyCode: 'Tab')
           ],
           platform: platform,
-          order: 8,
+          order: 10,
         ),
         ShortcutItem(
           id: 'shift-enter',

@@ -23,12 +23,29 @@ class _ManualImeTextEditSheetState extends State<_ManualImeTextEditSheet> {
   bool _imeEnabled = false;
   bool _lastImeVisible = false;
 
+  final _kb = KeyboardStateManager.instance;
+  bool _prevLocalTextEditing = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _prevLocalTextEditing = ScreenController.localTextEditing.value;
+    ScreenController.setLocalTextEditing(true);
+    ScreenController.setSystemImeActive(false);
+    _kb.requestOwner();
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+  }
+
   @override
   void dispose() {
     try {
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
+    _kb.releaseOwner();
     _focusNode.dispose();
+    ScreenController.setLocalTextEditing(_prevLocalTextEditing);
     super.dispose();
   }
 
@@ -40,8 +57,10 @@ class _ManualImeTextEditSheetState extends State<_ManualImeTextEditSheet> {
         FocusScope.of(context).unfocus();
         SystemChannels.textInput.invokeMethod('TextInput.hide');
       } catch (_) {}
+      _kb.releaseOwner();
       return;
     }
+    _kb.requestOwner();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       try {
@@ -59,11 +78,15 @@ class _ManualImeTextEditSheetState extends State<_ManualImeTextEditSheet> {
       final imeVisible = bottomInset > 0;
       final prev = _lastImeVisible;
       _lastImeVisible = imeVisible;
+
+      _kb.onImeVisibleChanged(imeVisible);
+
       if (_imeEnabled && prev && !imeVisible) {
         setState(() => _imeEnabled = false);
         try {
           FocusScope.of(context).unfocus();
         } catch (_) {}
+        _kb.releaseOwner();
       }
     });
     return AnimatedPadding(

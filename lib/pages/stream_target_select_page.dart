@@ -107,9 +107,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
     _iterm2RefreshRetryTimer?.cancel();
     _iterm2RefreshRetryTimer = null;
 
-    // If we already have panels (or no error), no need to retry.
+    // If we already have panels, no need to retry.
     if (_iterm2.panels.value.isNotEmpty) return;
-    if (_iterm2.error.value == null) return;
     if (_iterm2RefreshRetryAttempt >= 6) return;
 
     _iterm2RefreshRetryAttempt++;
@@ -121,6 +120,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
       if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
         return;
       }
+      // Transparent retry: even if the error isn't set correctly, keep polling
+      // for a short window until panels arrive.
       unawaited(_iterm2.requestPanels(dc));
       _scheduleIterm2RefreshRetry();
     });

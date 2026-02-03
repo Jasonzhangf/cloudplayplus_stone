@@ -43,6 +43,22 @@ class LanSignalingClient implements SignalingTransport {
 
   bool get isConnected => _ws != null && ready.value;
 
+  // Testing hook: treat a session as "active" to enable auto-restore logic
+  // without needing a full WebRTC StreamingSession.
+  @visibleForTesting
+  static bool Function()? hasActiveLanControllerSessionForTest;
+
+  // Testing hook: avoid starting real WebRTC sessions (flutter_webrtc plugin)
+  // in unit/widget tests. If set, connectAndStartStreaming/restore will use
+  // this hook instead of StreamingManager.startStreaming.
+  @visibleForTesting
+  static Future<Device?> Function({
+    required String host,
+    required int port,
+    String? connectPassword,
+    String? connectPasswordHash,
+  })? startStreamingHookForTest;
+
   Future<void> connect({
     required String host,
     int port = kDefaultLanPort,
@@ -113,7 +129,8 @@ class LanSignalingClient implements SignalingTransport {
   }
 
   @override
-  Future<void> waitUntilReady({Duration timeout = const Duration(seconds: 6)}) async {
+  Future<void> waitUntilReady(
+      {Duration timeout = const Duration(seconds: 6)}) async {
     if (ready.value) return;
     final c = _readyCompleter;
     if (c == null) return;
@@ -208,10 +225,20 @@ class LanSignalingClient implements SignalingTransport {
     String? connectPassword,
     String? connectPasswordHash,
   }) async {
+    final testHook = startStreamingHookForTest;
+    if (testHook != null) {
+      return testHook(
+        host: host,
+        port: port,
+        connectPassword: connectPassword,
+        connectPasswordHash: connectPasswordHash,
+      );
+    }
     final pw = connectPassword ?? '';
-    final pwHash = (connectPasswordHash != null && connectPasswordHash.trim().isNotEmpty)
-        ? connectPasswordHash.trim()
-        : (pw.isNotEmpty ? HashUtil.hash(pw) : '');
+    final pwHash =
+        (connectPasswordHash != null && connectPasswordHash.trim().isNotEmpty)
+            ? connectPasswordHash.trim()
+            : (pw.isNotEmpty ? HashUtil.hash(pw) : '');
     // Allow passwordless LAN host (connectPasswordHash == '').
     // The host-side will accept only when its own connectPasswordHash is empty
     // (or legacy hash('') from earlier builds).
@@ -231,8 +258,10 @@ class LanSignalingClient implements SignalingTransport {
     final targetDevice = Device(
       uid: 0,
       nickname: 'LAN',
-      devicename: hostDeviceName?.isNotEmpty == true ? hostDeviceName! : 'LAN Host',
-      devicetype: hostDeviceType?.isNotEmpty == true ? hostDeviceType! : 'Desktop',
+      devicename:
+          hostDeviceName?.isNotEmpty == true ? hostDeviceName! : 'LAN Host',
+      devicetype:
+          hostDeviceType?.isNotEmpty == true ? hostDeviceType! : 'Desktop',
       websocketSessionid: hostId,
       connective: true,
       screencount: 1,
@@ -266,6 +295,14 @@ class LanSignalingClient implements SignalingTransport {
   }
 
   bool _hasActiveLanControllerSession() {
+    final hook = hasActiveLanControllerSessionForTest;
+    if (hook != null) {
+      try {
+        return hook();
+      } catch (_) {
+        return false;
+      }
+    }
     final s = WebrtcService.currentRenderingSession;
     if (s == null) return false;
     if (s.signaling != this) return false;
@@ -288,10 +325,12 @@ class LanSignalingClient implements SignalingTransport {
     _autoRestoreTimer?.cancel();
     _autoRestoreTimer = null;
     _autoRestoreAttempt++;
-    final idx = (_autoRestoreAttempt - 1).clamp(0, _restoreBackoffSeconds.length - 1);
+    final idx =
+        (_autoRestoreAttempt - 1).clamp(0, _restoreBackoffSeconds.length - 1);
     final delaySec = _restoreBackoffSeconds[idx];
     final token = ++_autoRestoreToken;
-    VLOG0('[lan] auto-restore backoff ${delaySec}s attempt=$_autoRestoreAttempt reason=$reason');
+    VLOG0(
+        '[lan] auto-restore backoff ${delaySec}s attempt=$_autoRestoreAttempt reason=$reason');
     _autoRestoreTimer = Timer(Duration(seconds: delaySec), () {
       _autoRestoreTimer = null;
       unawaited(_autoRestoreOnce(token: token));

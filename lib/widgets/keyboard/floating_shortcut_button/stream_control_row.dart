@@ -100,6 +100,9 @@ class _StreamControlRow extends StatelessWidget {
                     builder: (context, current, __) {
                       bool isSame(QuickStreamTarget a, QuickStreamTarget b) {
                         if (a.mode != b.mode) return false;
+                        if (a.mode == StreamMode.iterm2) {
+                          return a.id == b.id;
+                        }
                         if (a.windowId != null || b.windowId != null) {
                           return a.windowId != null &&
                               b.windowId != null &&

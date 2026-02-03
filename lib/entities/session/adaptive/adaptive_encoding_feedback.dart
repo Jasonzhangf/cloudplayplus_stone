@@ -244,11 +244,11 @@ extension _StreamingSessionAdaptiveEncoding on StreamingSession {
       _adaptiveTierState = decision.state;
 
       final wantFps = decision.fpsTier.clamp(5, 60);
-      final wantBitrate = decision.targetBitrateKbps.clamp(25, 20000);
+      final wantBitrate = decision.targetBitrateKbps.clamp(15, 20000);
 
       final curFpsRaw = streamSettings!.framerate ?? 30;
       final curFps = curFpsRaw <= 0 ? 30 : curFpsRaw;
-      final curBitrate = (streamSettings!.bitrate ?? 250).clamp(25, 20000);
+      final curBitrate = (streamSettings!.bitrate ?? 250).clamp(15, 20000);
 
       final willChangeFps = wantFps != curFps;
       final willChangeBitrate = wantBitrate != curBitrate;

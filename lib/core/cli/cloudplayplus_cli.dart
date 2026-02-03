@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:cloudplayplus/core/blocks/iterm2/iterm2_sources_block.dart';
+import 'package:cloudplayplus/core/loopback/loopback_test_runner.dart';
 import 'package:cloudplayplus/core/ports/process_runner.dart';
 import 'package:cloudplayplus/core/ports/process_runner_host_adapter.dart';
 
@@ -20,6 +21,8 @@ Future<int> runCloudPlayPlusCli(
   switch (cmd) {
     case 'iterm2':
       return _runIterm2(a, out: out, err: err);
+    case 'loopback-test':
+      return _runLoopbackTest(a, out: out, err: err);
     case 'verify':
       return _runVerify(a, out: out, err: err);
     default:
@@ -40,8 +43,32 @@ void _printHelp(IOSink out) {
   out.writeln('  help');
   out.writeln('  iterm2 list');
   out.writeln('  iterm2 crop --session <sessionId>');
+  out.writeln('  loopback-test <host|controller>');
   out.writeln('  verify loopback-crop');
   out.writeln('');
+}
+
+Future<int> _runLoopbackTest(
+  List<String> args, {
+  required IOSink out,
+  required IOSink err,
+}) async {
+  if (args.isEmpty || args.contains('--help') || args.contains('-h')) {
+    out.writeln('Usage: loopback-test <host|controller>');
+    out.writeln('  loopback-test host');
+    out.writeln('  loopback-test controller');
+    out.writeln('Env: LOOPBACK_HOST_ADDR=127.0.0.1');
+    return 0;
+  }
+
+  final mode = args.first;
+  try {
+    await LoopbackTestRunner.instance.start(mode);
+    return 0;
+  } catch (e) {
+    err.writeln('Loopback test failed: $e');
+    return 1;
+  }
 }
 
 Future<int> _runIterm2(
@@ -116,4 +143,3 @@ Future<int> _runVerify(
       return 2;
   }
 }
-

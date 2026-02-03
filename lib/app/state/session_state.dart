@@ -42,6 +42,7 @@ class CaptureTarget {
   /// screen|window|iterm2
   final String captureTargetType;
   final int? windowId;
+  final int? cgWindowId;
   final String? desktopSourceId;
   final String? iterm2SessionId;
   final Map<String, double>? cropRectNorm;
@@ -50,6 +51,7 @@ class CaptureTarget {
     required this.mode,
     required this.captureTargetType,
     this.windowId,
+    this.cgWindowId,
     this.desktopSourceId,
     this.iterm2SessionId,
     this.cropRectNorm,
@@ -59,6 +61,7 @@ class CaptureTarget {
     StreamMode? mode,
     String? captureTargetType,
     int? windowId,
+    int? cgWindowId,
     String? desktopSourceId,
     String? iterm2SessionId,
     Map<String, double>? cropRectNorm,
@@ -67,6 +70,7 @@ class CaptureTarget {
       mode: mode ?? this.mode,
       captureTargetType: captureTargetType ?? this.captureTargetType,
       windowId: windowId ?? this.windowId,
+      cgWindowId: cgWindowId ?? this.cgWindowId,
       desktopSourceId: desktopSourceId ?? this.desktopSourceId,
       iterm2SessionId: iterm2SessionId ?? this.iterm2SessionId,
       cropRectNorm: cropRectNorm ?? this.cropRectNorm,
@@ -79,12 +83,13 @@ class CaptureTarget {
       other.mode == mode &&
       other.captureTargetType == captureTargetType &&
       other.windowId == windowId &&
+      other.cgWindowId == cgWindowId &&
       other.desktopSourceId == desktopSourceId &&
       other.iterm2SessionId == iterm2SessionId;
 
   @override
   int get hashCode =>
-      Object.hash(mode, captureTargetType, windowId, desktopSourceId, iterm2SessionId);
+      Object.hash(mode, captureTargetType, windowId, cgWindowId, desktopSourceId, iterm2SessionId);
 }
 
 @immutable
@@ -221,4 +226,3 @@ class SessionState {
     );
   }
 }
-

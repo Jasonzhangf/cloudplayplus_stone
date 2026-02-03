@@ -103,7 +103,13 @@ class StreamMonkeyService {
         final take = min(iterm2SampleCount, panels.length);
         for (int i = 0; i < take; i++) {
           final p = panels[i];
-          targets.add(_MonkeyTarget.iterm2(sessionId: p.id, label: p.title));
+          targets.add(
+            _MonkeyTarget.iterm2(
+              sessionId: p.id,
+              cgWindowId: p.cgWindowId,
+              label: p.title,
+            ),
+          );
         }
         log('iterm2Panels=${panels.length} sampled=$take');
       }
@@ -216,6 +222,7 @@ class StreamMonkeyService {
 class _MonkeyTarget {
   final String type; // screen|window|iterm2
   final int? windowId;
+  final int? cgWindowId;
   final String? expectedTitle;
   final String? expectedAppId;
   final String? expectedAppName;
@@ -227,6 +234,7 @@ class _MonkeyTarget {
     required this.type,
     required String label,
     this.windowId,
+    this.cgWindowId,
     this.expectedTitle,
     this.expectedAppId,
     this.expectedAppName,
@@ -252,11 +260,16 @@ class _MonkeyTarget {
           frame: frame,
         );
 
-  _MonkeyTarget.iterm2({required String sessionId, required String label})
+  _MonkeyTarget.iterm2({
+    required String sessionId,
+    required String label,
+    int? cgWindowId,
+  })
       : this._(
           type: 'iterm2',
           label: 'iterm2 $label',
           iterm2SessionId: sessionId,
+          cgWindowId: cgWindowId,
         );
 
   String get label {
@@ -286,8 +299,11 @@ class _MonkeyTarget {
     }
     if (type == 'iterm2') {
       if (iterm2SessionId == null || iterm2SessionId!.isEmpty) return;
-      await RemoteIterm2Service.instance
-          .selectPanel(channel, sessionId: iterm2SessionId!);
+      await RemoteIterm2Service.instance.selectPanel(
+        channel,
+        sessionId: iterm2SessionId!,
+        cgWindowId: cgWindowId,
+      );
       return;
     }
   }

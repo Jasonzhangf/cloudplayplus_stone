@@ -165,6 +165,7 @@ Iterm2CropComputationResult? computeIterm2CropRectNorm({
 Iterm2CropComputationResult? computeIterm2CropRectNormFromLayoutFrame({
   required Map<String, dynamic> layoutFrame,
   required Map<String, dynamic> layoutWindowFrame,
+  Map<String, dynamic>? rawWindowFrame,
 }) {
   double? toDouble(dynamic v) => (v is num) ? v.toDouble() : null;
 
@@ -174,6 +175,8 @@ Iterm2CropComputationResult? computeIterm2CropRectNormFromLayoutFrame({
   final fh = toDouble(layoutFrame['h']);
   final ww = toDouble(layoutWindowFrame['w']);
   final wh = toDouble(layoutWindowFrame['h']);
+  final rww = toDouble(rawWindowFrame?['w']);
+  final rwh = toDouble(rawWindowFrame?['h']);
 
   if (fx == null || fy == null || fw == null || fh == null) return null;
   if (ww == null || wh == null) return null;
@@ -181,11 +184,29 @@ Iterm2CropComputationResult? computeIterm2CropRectNormFromLayoutFrame({
 
   double clamp01(double v) => v.clamp(0.0, 1.0);
 
+  // layoutFrame is in a bottom-left coordinate system (Cocoa style) relative
+  // to the *content* area. But our ScreenCaptureKit window capture includes
+  // the title/tab bar region above content.
+  //
+  // Convert to a top-left Y in the captured window coordinate space.
+  // iTerm2 content is flush to the window bottom, so:
+  //   topPx = rawWindowHeight - (contentY + contentH)
+  //
+  // If rawWindowFrame is not available, fall back to content height.
+  final useW = (rww != null && rww > 0) ? rww : ww;
+  final useH = (rwh != null && rwh > 0) ? rwh : wh;
+  final topPx = useH - (fy + fh);
+
+  // If raw window is wider than the content rect, the content is typically
+  // centered; account for that so leftPx maps into the captured window.
+  final leftOffset = ((useW - ww) / 2.0).clamp(0.0, 2000.0);
+  final leftPx = fx + leftOffset;
+
   final cropRectNorm = <String, double>{
-    'x': clamp01(fx / ww),
-    'y': clamp01(fy / wh),
-    'w': clamp01(fw / ww),
-    'h': clamp01(fh / wh),
+    'x': clamp01(leftPx / useW),
+    'y': clamp01(topPx / useH),
+    'w': clamp01(fw / useW),
+    'h': clamp01(fh / useH),
   };
 
   return Iterm2CropComputationResult(

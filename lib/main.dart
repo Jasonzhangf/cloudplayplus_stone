@@ -29,82 +29,133 @@ import 'package:flutter_web_plugins/url_strategy.dart';
 import 'dart:async';
 
 import 'utils/widgets/virtual_gamepad/control_manager.dart';
+import 'services/cli/cli_service.dart';
+
+// Local test mode: Controller connects to local Host
+const String _localTestModeCompile = String.fromEnvironment('LOCAL_TEST_MODE');
+const String _loopbackModeCompile = String.fromEnvironment('LOOPBACK_MODE');
+const bool _loopbackHideWindowCompile =
+    bool.fromEnvironment('LOOPBACK_HIDE_WINDOW', defaultValue: false);
+
+String _envOrCompile(String key, String compileValue) {
+  if (compileValue.isNotEmpty) return compileValue;
+  return Platform.environment[key] ?? '';
+}
+
+bool _envOrCompileBool(String key, bool compileValue) {
+  if (compileValue) return true;
+  final v = (Platform.environment[key] ?? '').trim().toLowerCase();
+  return v == '1' || v == 'true' || v == 'yes';
+}
+
+bool get _isLocalTestController =>
+    _envOrCompile('LOCAL_TEST_MODE', _localTestModeCompile) == 'controller';
+bool get _isLoopback {
+  final mode = _envOrCompile('LOOPBACK_MODE', _loopbackModeCompile);
+  return mode == 'host' || mode == 'controller';
+}
+
+bool get _shouldHideWindow =>
+    _envOrCompileBool('LOOPBACK_HIDE_WINDOW', _loopbackHideWindowCompile) ||
+    _isLoopback;
+
+String get _cliRoleEnv => _envOrCompile('CLI_ROLE', '');
 
 void main() async {
-  LoginService.init();
-  WidgetsFlutterBinding.ensureInitialized();
-  await AppPlatform.init();
-  if (AppPlatform.isMacos) {
-    DevelopSettings.useSecureStorage = false;
-  }
-  await ScreenController.initialize();
-  await SharedPreferencesManager.init();
-  SecureStorageManager.init();
-  //AppInitService depends on SharedPreferencesManager
-  await AppInitService.init();
-
-  // Desktop host: accept LAN connections by default (ws://0.0.0.0:17999).
-  // Mobile controllers can connect by entering the host IP (including Tailscale IPs).
-  if (AppPlatform.isDeskTop) {
-    LanSignalingHostServer.instance.startIfPossible();
-  }
-
-  if (AppPlatform.isWindows && !ApplicationInfo.isSystem) {
-    bool startAsSys = await HardwareSimulator.registerService();
-    if (startAsSys == true) {
-      exit(0);
+  // Ensure all initialization + runApp happen within the same zone.
+  await runZonedGuarded(() async {
+    LoginService.init();
+    WidgetsFlutterBinding.ensureInitialized();
+    await AppPlatform.init();
+    if (AppPlatform.isMacos) {
+      DevelopSettings.useSecureStorage = false;
     }
-  }
+    await ScreenController.initialize();
+    await SharedPreferencesManager.init();
+    SecureStorageManager.init();
+    //AppInitService depends on SharedPreferencesManager
+    await AppInitService.init();
 
-  // 使用新的 WebRTC 初始化器
-  await createWebRTCInitializer().initialize();
+    // Desktop host: accept LAN connections by default (ws://0.0.0.0:17999).
+    // Mobile controllers can connect by entering the host IP (including Tailscale IPs).
+    if (AppPlatform.isDeskTop && !_isLocalTestController) {
+      if (_isLoopback) {
+        // Loopback must force LAN on even if prefs disabled (host only).
+        if (_cliRoleEnv != 'controller') {
+          await LanSignalingHostServer.instance.setEnabled(true);
+        }
+      } else {
+        LanSignalingHostServer.instance.startIfPossible();
+      }
+    }
 
-  StreamingSettings.init();
-  InputController.init();
-  await ControlManager().loadControls();
-  if (AppPlatform.isWeb) {
-    setUrlStrategy(null);
-  }
+    if (AppPlatform.isWindows && !ApplicationInfo.isSystem) {
+      bool startAsSys = await HardwareSimulator.registerService();
+      if (startAsSys == true) {
+        exit(0);
+      }
+    }
 
-  final appStore = AppStore();
-  await appStore.init();
-  AppStoreLocator.store = appStore;
-  await QuickTargetService.instance.init();
+    // 使用新的 WebRTC 初始化器
+    await createWebRTCInitializer().initialize();
 
-  await DiagnosticsLogService.instance.init(
-    role: AppPlatform.isDeskTop ? 'host' : 'app',
-  );
+    StreamingSettings.init();
+    InputController.init();
+    await ControlManager().loadControls();
+    if (AppPlatform.isWeb) {
+      setUrlStrategy(null);
+    }
 
-  FlutterError.onError = (FlutterErrorDetails details) {
-    DiagnosticsLogService.instance.add(details.exceptionAsString(),
-        role: AppPlatform.isDeskTop ? 'host' : 'app');
-    FlutterError.presentError(details);
-  };
+    final diagRole = _isLocalTestController
+        ? 'controller'
+        : (AppPlatform.isDeskTop ? 'host' : 'app');
 
-  // Capture uncaught errors as best-effort diagnostics.
-  WidgetsBinding.instance.platformDispatcher.onError =
-      (Object error, StackTrace stack) {
-    DiagnosticsLogService.instance.add('$error\n$stack',
-        role: AppPlatform.isDeskTop ? 'host' : 'app');
-    return false;
-  };
+    await DiagnosticsLogService.instance.init(role: diagRole);
 
-  runZonedGuarded(
-    () {
-      runApp(MyApp(appStore: appStore));
+    final appStore = AppStore();
+    await appStore.init();
+    AppStoreLocator.store = appStore;
+    await QuickTargetService.instance.init();
+
+    // Start CLI WebSocket server for automation.
+    if (AppPlatform.isDeskTop) {
+      unawaited(() async {
+        try {
+          final role = _cliRoleEnv.isNotEmpty
+              ? _cliRoleEnv
+              : (_isLocalTestController ? 'controller' : 'host');
+          await CliWebSocketService.forRole(role).start();
+        } catch (e) {
+          VLOG0('[CLI] Failed to start CLI server: $e');
+        }
+      }());
+    }
+
+    // Capture role for error/print hooks registered outside this async block.
+    final zoneRole = diagRole;
+
+    FlutterError.onError = (FlutterErrorDetails details) {
+      DiagnosticsLogService.instance
+          .add(details.exceptionAsString(), role: zoneRole);
+      FlutterError.presentError(details);
+    };
+
+    // Capture uncaught errors as best-effort diagnostics.
+    WidgetsBinding.instance.platformDispatcher.onError =
+        (Object error, StackTrace stack) {
+      DiagnosticsLogService.instance.add('$error\n$stack', role: zoneRole);
+      return false;
+    };
+
+    runApp(MyApp(appStore: appStore));
+  }, (Object error, StackTrace stack) {
+    DiagnosticsLogService.instance.add('$error\n$stack', role: 'app');
+  }, zoneSpecification: ZoneSpecification(
+    print: (self, parent, zone, line) {
+      DiagnosticsLogService.instance.add(line, role: 'app');
+      parent.print(zone, line);
     },
-    (Object error, StackTrace stack) {
-      DiagnosticsLogService.instance.add('$error\n$stack',
-          role: AppPlatform.isDeskTop ? 'host' : 'app');
-    },
-    zoneSpecification: ZoneSpecification(
-      print: (self, parent, zone, line) {
-        DiagnosticsLogService.instance.add(line,
-            role: AppPlatform.isDeskTop ? 'host' : 'app');
-        parent.print(zone, line);
-      },
-    ),
-  );
+  ));
   if (AppPlatform.isWindows || AppPlatform.isMacos || AppPlatform.isLinux) {
     doWhenWindowReady(() {
       const initialSize = Size(400, 450);
@@ -128,7 +179,11 @@ void main() async {
           VLOG0('Error: failed appInitState 2');
         });
       } else {
-        appWindow.show();
+        if (_shouldHideWindow) {
+          appWindow.hide();
+        } else {
+          appWindow.show();
+        }
       }
     });
   }
@@ -154,7 +209,7 @@ class MyApp extends StatelessWidget {
               theme: themeProvider.lightTheme,
               darkTheme: themeProvider.darkTheme,
               themeMode: themeProvider.themeMode,
-              home: AppLifecycleBridge(child: const InitPage()),
+              home: const AppLifecycleBridge(child: InitPage()),
               debugShowCheckedModeBanner: false,
             ),
           );

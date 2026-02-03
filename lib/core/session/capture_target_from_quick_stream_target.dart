@@ -25,7 +25,7 @@ CaptureTarget captureTargetFromQuickStreamTarget(QuickStreamTarget t) {
         captureTargetType: 'iterm2',
         iterm2SessionId: t.id.trim(),
         windowId: t.windowId,
+        cgWindowId: t.cgWindowId,
       );
   }
 }
-

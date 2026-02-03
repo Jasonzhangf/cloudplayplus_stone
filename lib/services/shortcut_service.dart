@@ -41,8 +41,7 @@ class ShortcutService {
             newShortcuts.add(defaultShortcut);
           }
         }
-
-        // 按顺序排序
+        // Keep shortcut order stable if we inserted new items.
         newShortcuts.sort((a, b) => a.order.compareTo(b.order));
 
         _settings = loadedSettings.copyWith(shortcuts: newShortcuts);

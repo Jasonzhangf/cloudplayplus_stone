@@ -39,3 +39,58 @@ Device deviceFromWelcome({
   );
 }
 
+/// LAN signaling message types for WebRTC loopback
+const String kLanMsgTypeWebrtcOffer = 'webrtcOffer';
+const String kLanMsgTypeWebrtcAnswer = 'webrtcAnswer';
+const String kLanMsgTypeWebrtcIceCandidate = 'webrtcIceCandidate';
+const String kLanMsgTypeWebrtcReady = 'webrtcReady';
+const String kLanMsgTypeLoopbackTest = 'loopbackTest';
+
+/// Create a webrtcOffer message
+Map<String, dynamic> createWebrtcOfferMessage({
+  required String sdp,
+}) {
+  return {
+    'type': kLanMsgTypeWebrtcOffer,
+    'sdp': sdp,
+  };
+}
+
+/// Create a webrtcAnswer message
+Map<String, dynamic> createWebrtcAnswerMessage({
+  required String sdp,
+}) {
+  return {
+    'type': kLanMsgTypeWebrtcAnswer,
+    'sdp': sdp,
+  };
+}
+
+/// Create a webrtcIceCandidate message
+Map<String, dynamic> createWebrtcIceCandidateMessage({
+  required String candidate,
+  String? sdpMid,
+  int? sdpMLineIndex,
+}) {
+  final Map<String, dynamic> msg = {
+    'type': kLanMsgTypeWebrtcIceCandidate,
+    'candidate': candidate,
+  };
+  if (sdpMid != null) msg['sdpMid'] = sdpMid;
+  if (sdpMLineIndex != null) msg['sdpMLineIndex'] = sdpMLineIndex;
+  return msg;
+}
+
+/// Create a webrtcReady message (sent by host when DataChannel is open)
+Map<String, dynamic> createWebrtcReadyMessage() {
+  return {
+    'type': kLanMsgTypeWebrtcReady,
+  };
+}
+
+/// Create a loopbackTest message (sent by controller to start panel switch test)
+Map<String, dynamic> createLoopbackTestMessage() {
+  return {
+    'type': kLanMsgTypeLoopbackTest,
+  };
+}

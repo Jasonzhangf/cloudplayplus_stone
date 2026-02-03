@@ -412,7 +412,12 @@ class _DevicesPageState extends State<DevicesPage> {
 
   Widget _buildLanAddrRow(List<String> addrs, int port, Device device) {
     // Keep the list tile compact: show a few addresses, plus "更多".
-    final shown = addrs.take(3).toList(growable: false);
+    // Never auto-show link-local IPv6 (fe80::...) as the default choice because
+    // it requires an interface scope on mobile and often fails (host lookup).
+    final shown = addrs
+        .where((ip) => !ip.trim().toLowerCase().startsWith('fe80:'))
+        .take(3)
+        .toList(growable: false);
     final hasMore = addrs.length > shown.length;
 
     return SizedBox(

@@ -84,11 +84,10 @@ int computeAdaptiveMinBitrateKbps({
   required int targetFps,
   int minFps = 15,
 }) {
-  // Allow going below the legacy 250kbps floor so full/10 can actually take
-  // effect for 1080p-ish baselines (e.g. 2000kbps -> 200kbps).
-  const minAbsKbps = 80;
+  // Lower floor to survive even worse network conditions (e.g. 2000kbps -> 150kbps).
+  const minAbsKbps = 50;
   final full = fullBitrateKbps.clamp(minAbsKbps, 20000);
-  final scale = (targetFps <= minFps) ? 0.10 : 0.25;
+  final scale = (targetFps <= minFps) ? 0.075 : 0.20;
   final min = (full * scale).round().clamp(minAbsKbps, full);
   return min;
 }

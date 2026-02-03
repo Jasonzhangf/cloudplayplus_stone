@@ -54,10 +54,9 @@ class LanDeviceNameCodec {
     if (!lanEnabled && cleaned.isEmpty) return base;
 
     // Packing strategy:
-    // - Some clients (notably Android) may not have IPv6 routes even when the host
-    //   advertises Tailscale IPv6. If the suffix length budget forces dropping
-    //   addresses, prefer keeping at least one IPv4 (Tailscale/private) so users
-    //   can still connect.
+    // - When the suffix length budget forces dropping addresses, prefer keeping
+    //   IPv6 + Tailscale addresses so users can choose the best path.
+    // - We still keep private IPv4 as a good fallback.
     int packScore(String ip) {
       final isV6 = ip.contains(':');
       final isV4 = ip.contains('.') && !isV6;
@@ -68,11 +67,13 @@ class LanDeviceNameCodec {
               ip.startsWith('10.') ||
               ip.startsWith('172.'));
 
-      if (isTailscaleV4) return 0;
-      if (isPrivateV4) return 10;
-      if (isV4) return 20;
-      if (isTailscaleV6) return 30;
-      if (isV6) return 40;
+      // Prefer IPv6 first, then Tailscale (v6/v4), then private IPv4.
+      // Link-local IPv6 may exist, but is typically not useful without a scope.
+      if (isV6 && !isTailscaleV6) return 0;
+      if (isTailscaleV6) return 10;
+      if (isTailscaleV4) return 20;
+      if (isPrivateV4) return 30;
+      if (isV4) return 40;
       return 50;
     }
 

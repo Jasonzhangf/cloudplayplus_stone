@@ -16,6 +16,7 @@ class WindowSelectPage extends StatefulWidget {
 class _WindowSelectPageState extends State<WindowSelectPage> {
   final Map<String, DesktopCapturerSource> _sources = {};
   final List<StreamSubscription> _subscriptions = [];
+  Timer? _thumbnailRefreshTimer;
   String? _selectedSourceId;
   bool _isLoading = true;
   String? _errorMessage;
@@ -30,6 +31,8 @@ class _WindowSelectPageState extends State<WindowSelectPage> {
 
   @override
   void dispose() {
+    _thumbnailRefreshTimer?.cancel();
+    _thumbnailRefreshTimer = null;
     for (var sub in _subscriptions) {
       sub.cancel();
     }
@@ -95,12 +98,11 @@ class _WindowSelectPageState extends State<WindowSelectPage> {
       }
 
       // 定期更新缩略图
-      Timer.periodic(const Duration(seconds: 3), (timer) async {
-        if (mounted) {
-          await desktopCapturer.updateSources(types: [SourceType.Window]);
-        } else {
-          timer.cancel();
-        }
+      _thumbnailRefreshTimer?.cancel();
+      _thumbnailRefreshTimer =
+          Timer.periodic(const Duration(seconds: 3), (timer) async {
+        if (!mounted) return;
+        await desktopCapturer.updateSources(types: [SourceType.Window]);
       });
 
       setState(() {

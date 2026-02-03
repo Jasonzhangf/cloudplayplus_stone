@@ -8,6 +8,7 @@ class QuickStreamTarget {
   final String id;
   final String label;
   final int? windowId;
+  final int? cgWindowId;
   final String? appId;
   final String? appName;
 
@@ -19,6 +20,7 @@ class QuickStreamTarget {
     required this.id,
     required this.label,
     this.windowId,
+    this.cgWindowId,
     this.appId,
     this.appName,
     this.alias,
@@ -78,6 +80,7 @@ class QuickStreamTarget {
         'id': id,
         'label': label,
         if (windowId != null) 'windowId': windowId,
+        if (cgWindowId != null) 'cgWindowId': cgWindowId,
         if (appId != null) 'appId': appId,
         if (appName != null) 'appName': appName,
         if (alias != null) 'alias': alias,
@@ -90,6 +93,9 @@ class QuickStreamTarget {
       label: json['label']?.toString() ?? '',
       windowId:
           (json['windowId'] is num) ? (json['windowId'] as num).toInt() : null,
+      cgWindowId: (json['cgWindowId'] is num)
+          ? (json['cgWindowId'] as num).toInt()
+          : null,
       appId: json['appId']?.toString(),
       appName: json['appName']?.toString(),
       alias: json['alias']?.toString(),
@@ -118,6 +124,7 @@ class QuickStreamTarget {
       id: id,
       label: label,
       windowId: windowId,
+      cgWindowId: cgWindowId,
       appId: appId,
       appName: appName,
       alias: alias ?? this.alias,

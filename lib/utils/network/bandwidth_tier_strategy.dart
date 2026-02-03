@@ -60,13 +60,13 @@ class BandwidthTierConfig {
   const BandwidthTierConfig({
     this.baseWidth = 576,
     this.baseHeight = 768,
-    // Updated baseline: for a 576x768 window, 15fps should still be usable at ~100kbps.
-    this.baseBitrate15FpsKbps = 100,
-    // Updated tiers (kbps): 100->15fps, 200->20fps, 500->30fps, 1000->60fps.
-    this.t1Kbps = 100,
-    this.t20Kbps = 200,
-    this.t2Kbps = 500,
-    this.t3Kbps = 1000,
+    // Lower baseline: for a 576x768 window, 15fps should be usable at ~80kbps.
+    this.baseBitrate15FpsKbps = 80,
+    // Lower tiers (kbps): 80->15fps, 160->20fps, 400->30fps, 800->60fps.
+    this.t1Kbps = 80,
+    this.t20Kbps = 160,
+    this.t2Kbps = 400,
+    this.t3Kbps = 800,
     this.headroom = 0.85,
     this.congestedBandwidthFactor = 0.8,
     this.stepUpStableDuration = const Duration(seconds: 5),
@@ -76,7 +76,8 @@ class BandwidthTierConfig {
     this.stepUpMaxRttMs = 300,
     this.stepUpRequireFreezeDelta = 0,
     this.stepDownMinLossFraction = 0.03,
-    this.minVideoBitrateKbps = 25,
+    // Allow going lower under very bad networks; keep stream alive.
+    this.minVideoBitrateKbps = 15,
     this.maxQualityBoostKbps = 1500,
   });
 }

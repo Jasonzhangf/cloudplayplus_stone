@@ -489,7 +489,19 @@ class EffectRunner {
     if (effect is AppEffectSwitchCaptureTarget) {
       final session = WebrtcService.currentRenderingSession;
       final ch = session?.channel;
-      if (ch == null) return;
+      if (ch == null) {
+        VLOG0('[capture] switch ignored: no active session/channel');
+        return;
+      }
+
+      // Guard: ensure we're switching the intended session.
+      if (effect.sessionId.isNotEmpty &&
+          session != null &&
+          session.controlled.websocketSessionid != effect.sessionId) {
+        VLOG0(
+            '[capture] switch ignored: session mismatch want=${effect.sessionId} have=${session.controlled.websocketSessionid}');
+        return;
+      }
 
       final t = effect.target;
       final type = t.captureTargetType.trim();
@@ -497,7 +509,11 @@ class EffectRunner {
         if (type == 'iterm2') {
           final sid = (t.iterm2SessionId ?? '').trim();
           if (sid.isEmpty) return;
-          await RemoteIterm2Service.instance.selectPanel(ch, sessionId: sid);
+          await RemoteIterm2Service.instance.selectPanel(
+            ch,
+            sessionId: sid,
+            cgWindowId: t.cgWindowId,
+          );
         } else if (type == 'window') {
           final wid = t.windowId;
           if (wid == null) return;
@@ -515,12 +531,16 @@ class EffectRunner {
     }
 
     if (effect is AppEffectSelectPrevIterm2Panel) {
-      RemoteIterm2Service.instance.selectPrevPanel(WebrtcService.activeDataChannel);
+      VLOG0('[iterm2] prevPanel ${WebrtcService.describeActiveDataChannel()}');
+      RemoteIterm2Service.instance
+          .selectPrevPanel(WebrtcService.activeReliableDataChannel);
       return;
     }
 
     if (effect is AppEffectSelectNextIterm2Panel) {
-      RemoteIterm2Service.instance.selectNextPanel(WebrtcService.activeDataChannel);
+      VLOG0('[iterm2] nextPanel ${WebrtcService.describeActiveDataChannel()}');
+      RemoteIterm2Service.instance
+          .selectNextPanel(WebrtcService.activeReliableDataChannel);
       return;
     }
 
