@@ -35,6 +35,7 @@ class RemoteIterm2Service {
   Timer? _initPrefetchTimer;
   int? _pendingRelativeDelta;
   int _pendingRelativeRetries = 0;
+  bool _panelsEmptyBeforeLastRequest = false;
   int _requestToken = 0;
   String? _pendingSelectSessionId;
   String? _pendingSelectRequestId;
@@ -261,12 +262,15 @@ class RemoteIterm2Service {
     // Ensure we have at least some panels; best-effort request if empty.
     // We intentionally do NOT require selectedSessionId here. If the host hasn't
     // reported it yet, we still let the first tap perform a deterministic action.
+    _panelsEmptyBeforeLastRequest = panels.value.isEmpty;
     if (panels.value.isEmpty) {
       VLOG0('[iterm2] selectRelative(delta=$delta): panels empty -> requestPanels and retry');
       await requestPanels(channel);
       // Do not block UI here; but auto-retry a few times so first tap can work.
       _pendingRelativeDelta = delta;
       _pendingRelativeRetries = 0;
+      // Give the request a chance to complete; handleIterm2SourcesMessage will
+      // trigger retry when panels arrive, otherwise schedule backoff.
       _scheduleRelativeRetry();
       return;
     }
@@ -494,7 +498,8 @@ class RemoteIterm2Service {
 
       // If the user pressed next/prev before we had a selectedSessionId,
       // retry the pending relative action once we have a fresh snapshot.
-      if (_pendingRelativeDelta != null) {
+      if (_pendingRelativeDelta != null && _panelsEmptyBeforeLastRequest) {
+        _panelsEmptyBeforeLastRequest = false;
         _scheduleRelativeRetry();
       }
       loading.value = false;

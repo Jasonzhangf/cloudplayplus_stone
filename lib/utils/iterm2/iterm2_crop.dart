@@ -153,6 +153,50 @@ Iterm2CropComputationResult? computeIterm2CropRectNorm({
   );
 }
 
+/// Compute crop rect using iTerm2's `layoutFrame`.
+///
+/// `layoutFrame` values are derived from iTerm2 session frames but normalized
+/// into a stable split layout coordinate space (see scripts/verify/iterm2_dump_panels_map.py).
+/// In practice this is the most reliable source for panel positioning.
+///
+/// IMPORTANT: `layoutFrame` is relative to the window *content* origin (0,0)
+/// and uses the same pixel units as iTerm2 session frames (not normalized).
+/// We normalize by `layoutWindowFrame` (content size), not by `windowFrame`.
+Iterm2CropComputationResult? computeIterm2CropRectNormFromLayoutFrame({
+  required Map<String, dynamic> layoutFrame,
+  required Map<String, dynamic> layoutWindowFrame,
+}) {
+  double? toDouble(dynamic v) => (v is num) ? v.toDouble() : null;
+
+  final fx = toDouble(layoutFrame['x']);
+  final fy = toDouble(layoutFrame['y']);
+  final fw = toDouble(layoutFrame['w']);
+  final fh = toDouble(layoutFrame['h']);
+  final ww = toDouble(layoutWindowFrame['w']);
+  final wh = toDouble(layoutWindowFrame['h']);
+
+  if (fx == null || fy == null || fw == null || fh == null) return null;
+  if (ww == null || wh == null) return null;
+  if (ww <= 0 || wh <= 0 || fw <= 0 || fh <= 0) return null;
+
+  double clamp01(double v) => v.clamp(0.0, 1.0);
+
+  final cropRectNorm = <String, double>{
+    'x': clamp01(fx / ww),
+    'y': clamp01(fy / wh),
+    'w': clamp01(fw / ww),
+    'h': clamp01(fh / wh),
+  };
+
+  return Iterm2CropComputationResult(
+    cropRectNorm: cropRectNorm,
+    tag: 'layout:layoutFrame',
+    penalty: 0.0,
+    windowMinWidth: ww.round(),
+    windowMinHeight: wh.round(),
+  );
+}
+
 /// Best-effort crop computation that can additionally use iTerm2's reported
 /// raw window frame. This helps when `Session.frame` is reported in a
 /// content/tab coordinate space that does not include the title/tab bar height,

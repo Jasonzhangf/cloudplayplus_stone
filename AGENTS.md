@@ -85,3 +85,71 @@ sh -lc 'bd --no-db show <id>'
   - `bd --no-db blocked`
 - Show a task:
   - `bd --no-db show <id>`
+
+## Common Search Commands
+
+Prefer `bd search` for quick full-text lookup (title/description/notes/ID).
+Prefer `bd list` for exact field-level filtering.
+
+### `bd search` (Full-Text)
+
+```bash
+bd --no-db search "keyword"
+bd --no-db search "authentication bug"
+bd --no-db search "cloudplayplus_stone-2"   # partial IDs work
+bd --no-db search --query "performance"
+
+# Common filters
+bd --no-db search "bug" --status open
+bd --no-db search "database" --label backend --limit 10
+bd --no-db search "refactor" --assignee alice
+bd --no-db search "security" --priority-min 0 --priority-max 2
+
+# Time range
+bd --no-db search "bug" --created-after 2025-01-01
+bd --no-db search "refactor" --updated-after 2025-01-01
+bd --no-db search "cleanup" --closed-before 2025-12-31
+
+# Sorting / display
+bd --no-db search "bug" --sort priority
+bd --no-db search "task" --sort created --reverse
+bd --no-db search "design" --long
+```
+
+Supported `--sort` fields:
+
+- priority, created, updated, closed, status, id, title, type, assignee
+
+### `bd list` (Field Filters)
+
+```bash
+# Status / priority / type
+bd --no-db list --status open --priority 1
+bd --no-db list --type bug
+
+# Labels
+bd --no-db list --label bug,critical
+bd --no-db list --label-any frontend,backend
+
+# Substring match
+bd --no-db list --title-contains "auth"
+bd --no-db list --desc-contains "implement"
+bd --no-db list --notes-contains "TODO"
+
+# Date ranges
+bd --no-db list --created-after 2024-01-01
+bd --no-db list --updated-before 2024-12-31
+bd --no-db list --closed-after 2024-01-01
+
+# Empty field filters
+bd --no-db list --empty-description
+bd --no-db list --no-assignee
+bd --no-db list --no-labels
+
+# Priority range
+bd --no-db list --priority-min 0 --priority-max 1
+bd --no-db list --priority-min 2
+
+# Combine filters
+bd --no-db list --status open --priority 1 --label-any urgent,critical --no-assignee
+```
