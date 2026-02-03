@@ -8,6 +8,7 @@ import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/utils/iterm2/iterm2_crop.dart';
 import 'package:cloudplayplus/widgets/keyboard/local_text_editing_scope.dart';
 import 'package:cloudplayplus/controller/screen_controller.dart';
+import 'package:cloudplayplus/services/keyboard_state_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'dart:typed_data';
@@ -618,6 +619,22 @@ class _ManualImeAliasSheet extends StatefulWidget {
 class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
   final FocusNode _focusNode = FocusNode();
   bool _imeEnabled = false;
+  bool _lastImeVisible = false;
+  bool _prevLocalTextEditing = false;
+
+  final _kb = KeyboardStateManager.instance;
+
+  @override
+  void initState() {
+    super.initState();
+    _prevLocalTextEditing = ScreenController.localTextEditing.value;
+    ScreenController.setLocalTextEditing(true);
+    ScreenController.setSystemImeActive(false);
+    _kb.requestOwner();
+    try {
+      SystemChannels.textInput.invokeMethod('TextInput.hide');
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -625,7 +642,9 @@ class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
       FocusScope.of(context).unfocus();
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
+    _kb.releaseOwner();
     _focusNode.dispose();
+    ScreenController.setLocalTextEditing(_prevLocalTextEditing);
     super.dispose();
   }
 
@@ -637,8 +656,10 @@ class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
         FocusScope.of(context).unfocus();
         SystemChannels.textInput.invokeMethod('TextInput.hide');
       } catch (_) {}
+      _kb.releaseOwner();
       return;
     }
+    _kb.requestOwner();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       try {
@@ -651,6 +672,22 @@ class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final imeVisible = bottomInset > 0;
+      final prev = _lastImeVisible;
+      _lastImeVisible = imeVisible;
+
+      _kb.onImeVisibleChanged(imeVisible);
+
+      if (_imeEnabled && prev && !imeVisible) {
+        setState(() => _imeEnabled = false);
+        try {
+          FocusScope.of(context).unfocus();
+        } catch (_) {}
+        _kb.releaseOwner();
+      }
+    });
     return LocalTextEditingScope(
       child: AnimatedPadding(
         duration: const Duration(milliseconds: 180),

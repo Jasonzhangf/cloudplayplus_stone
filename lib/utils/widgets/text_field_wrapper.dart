@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../controller/screen_controller.dart';
+import '../../services/keyboard_state_manager.dart';
+
 const String keyUp = 'Arrow Up';
 const String keyDown = 'Arrow Down';
 const String keyLeft = 'Arrow Left';
@@ -71,13 +74,19 @@ class _DpadTextFieldState extends State<DpadTextField> {
           } else if (event.logicalKey.keyLabel == keyUp && !_textFieldhasFocus) {
             _textFieldhasFocus = false;
           } else if (event.logicalKey.keyLabel == keyCenter && _textFieldhasFocus){
+            // Local UI text editing must not be interrupted by remote IME logic.
+            ScreenController.setLocalTextEditing(true);
+            ScreenController.setSystemImeActive(false);
+            KeyboardStateManager.instance.requestOwner();
             SystemChannels.textInput.invokeMethod('TextInput.show');
           } else if (event.logicalKey.keyLabel == keyUp && _textFieldhasFocus){
             _textFieldhasFocus = false;
             widget.focusNode.requestFocus();
+            KeyboardStateManager.instance.releaseOwner();
           } else if (event.logicalKey.keyLabel == keyDown && _textFieldhasFocus){
             _textFieldhasFocus = false;
             widget.focusNode.requestFocus();
+            KeyboardStateManager.instance.releaseOwner();
           }
         }
       },

@@ -502,7 +502,7 @@ class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
       final prev = _lastImeVisible;
       _lastImeVisible = imeVisible;
 
-       _kb.onImeVisibleChanged(imeVisible);
+      _kb.onImeVisibleChanged(imeVisible);
 
       // Respect system keyboard hide button: if IME is hidden while enabled,
       // stop wanting it, and never auto re-open.

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 
 import '../models/shortcut.dart';
 import '../controller/screen_controller.dart';
+import '../services/keyboard_state_manager.dart';
 
 class CustomShortcutPage extends StatefulWidget {
   final ShortcutPlatform platform;
@@ -23,6 +24,8 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
   bool _lastImeVisible = false;
   bool _prevLocalTextEditing = false;
 
+  final _kb = KeyboardStateManager.instance;
+
   bool _ctrl = false;
   bool _shift = false;
   bool _alt = false;
@@ -36,6 +39,7 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
     _prevLocalTextEditing = ScreenController.localTextEditing.value;
     ScreenController.setLocalTextEditing(true);
     ScreenController.setSystemImeActive(false);
+    _kb.requestOwner();
     try {
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
@@ -47,6 +51,7 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
       FocusScope.of(context).unfocus();
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
+    _kb.releaseOwner();
     _labelController.dispose();
     _labelFocusNode.dispose();
     ScreenController.setLocalTextEditing(_prevLocalTextEditing);
@@ -61,8 +66,12 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
         FocusScope.of(context).unfocus();
         SystemChannels.textInput.invokeMethod('TextInput.hide');
       } catch (_) {}
+      _kb.releaseOwner();
       return;
     }
+
+    // Claim ownership before attempting to show.
+    _kb.requestOwner();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       try {
@@ -120,11 +129,16 @@ class _CustomShortcutPageState extends State<CustomShortcutPage> {
       final imeVisible = bottomInset > 0;
       final prev = _lastImeVisible;
       _lastImeVisible = imeVisible;
+
+      _kb.onImeVisibleChanged(imeVisible);
       if (_imeEnabled && prev && !imeVisible) {
         setState(() => _imeEnabled = false);
         try {
           FocusScope.of(context).unfocus();
         } catch (_) {}
+
+        // System hid IME -> release ownership.
+        _kb.releaseOwner();
       }
     });
 

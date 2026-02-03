@@ -8,6 +8,8 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:provider/provider.dart';
 import '../../app/intents/app_intent.dart';
 import '../../app/store/app_store.dart';
+import '../../app/store/app_store_locator.dart';
+import 'dart:async';
 import '../../core/session/capture_target_from_quick_stream_target.dart';
 import '../../models/shortcut.dart';
 import '../../models/quick_stream_target.dart';
@@ -22,6 +24,7 @@ import '../../services/shared_preferences_manager.dart';
 import '../../services/webrtc_service.dart';
 import '../../services/stream_monkey_service.dart';
 import '../../controller/screen_controller.dart';
+import '../../services/keyboard_state_manager.dart';
 import '../../services/streaming_manager.dart';
 import 'shortcut_bar.dart';
 import '../../utils/input/ime_inset.dart';
@@ -194,6 +197,30 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
   }
 
   void _handleShortcutPressed(ShortcutItem shortcut) {
+    final sid = AppStoreLocator.store?.state.activeSessionId ??
+        (WebrtcService.currentDeviceId.isNotEmpty
+            ? 'cloud:${WebrtcService.currentDeviceId}'
+            : null);
+    if (sid != null) {
+      if (shortcut.id == 'iterm2-prev') {
+        final store = AppStoreLocator.store;
+        if (store != null) {
+          unawaited(
+            store.dispatch(AppIntentSelectPrevIterm2Panel(sessionId: sid)),
+          );
+        }
+        return;
+      }
+      if (shortcut.id == 'iterm2-next') {
+        final store = AppStoreLocator.store;
+        if (store != null) {
+          unawaited(
+            store.dispatch(AppIntentSelectNextIterm2Panel(sessionId: sid)),
+          );
+        }
+        return;
+      }
+    }
     final keys = shortcut.keys.map((k) => k.keyCode).join('+');
     InputDebugService.instance
         .log('UI shortcutPressed id=${shortcut.id} keys=$keys');
@@ -559,6 +586,9 @@ class _FloatingShortcutButtonState extends State<FloatingShortcutButton> {
                             );
                       },
                       onToggleKeyboard: () {
+                        // Local UI editing has higher priority than remote/system IME.
+                        if (ScreenController.localTextEditing.value) return;
+
                         final plan = planManualImeToggle(
                           useSystemKeyboard: _useSystemKeyboard,
                           wanted: _systemKeyboardWanted,
