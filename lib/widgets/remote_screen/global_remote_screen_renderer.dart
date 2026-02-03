@@ -996,7 +996,8 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer>
       }
       // On mobile, avoid stealing focus while user explicitly requests the system IME,
       // otherwise the IME may flicker / lose input connection.
-      if (AppPlatform.isMobile && ScreenController.systemImeActive.value) {
+      if ((AppPlatform.isMobile && ScreenController.systemImeActive.value) ||
+          ScreenController.localTextEditing.value) {
         return;
       }
       if (!focusNode.hasFocus) {
@@ -1082,9 +1083,11 @@ class _VideoScreenState extends State<GlobalRemoteScreenRenderer>
                                           // When the user explicitly keeps the system IME open,
                                           // do not steal focus to the remote screen; otherwise
                                           // Android/iOS will auto-hide the keyboard.
-                                          if (!(AppPlatform.isMobile &&
+                                          if (!((AppPlatform.isMobile &&
+                                                  ScreenController
+                                                      .systemImeActive.value) ||
                                               ScreenController
-                                                  .systemImeActive.value)) {
+                                                  .localTextEditing.value)) {
                                             focusNode.requestFocus();
                                           }
                                           if (WebrtcService
