@@ -84,8 +84,20 @@ class _HostEmulator {
     if (decoded.containsKey('iterm2SourcesRequest')) {
       RemoteIterm2Service.instance.handleIterm2SourcesMessage({
         'panels': [
-          {'id': 'sess-1', 'title': '1.1.1', 'detail': 'tab1', 'index': 0},
-          {'id': 'sess-2', 'title': '1.1.2', 'detail': 'tab2', 'index': 1},
+          {
+            'id': 'sess-1',
+            'title': '1.1.1',
+            'detail': 'tab1',
+            'index': 0,
+            'cgWindowId': 66,
+          },
+          {
+            'id': 'sess-2',
+            'title': '1.1.2',
+            'detail': 'tab2',
+            'index': 1,
+            'cgWindowId': 66,
+          },
         ],
         'selectedSessionId': 'sess-1',
       });

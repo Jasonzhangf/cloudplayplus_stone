@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
 class FakeRTCDataChannel extends RTCDataChannel {
@@ -26,8 +27,13 @@ class FakeRTCDataChannel extends RTCDataChannel {
   @override
   int? get id => 0;
 
+  String? _label = 'fake';
+
   @override
-  String? get label => 'fake';
+  String? get label => _label;
+
+  @visibleForTesting
+  set label(String? v) => _label = v;
 
   @override
   int? get bufferedAmount => 0;
