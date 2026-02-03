@@ -6,6 +6,7 @@ import '../../models/shortcut.dart';
 import '../../pages/custom_shortcut_page.dart';
 import '../../controller/screen_controller.dart';
 import '../../utils/shortcut/shortcut_order_utils.dart';
+import '../../services/keyboard_state_manager.dart';
 
 /// 快捷键条组件
 class ShortcutBar extends StatefulWidget {
@@ -443,12 +444,17 @@ class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
   bool _lastImeVisible = false;
   bool _prevLocalTextEditing = false;
 
+  // Prevent the "show then immediately hide" flicker by ensuring we don't
+  // fight other widgets for IME ownership.
+  final _kb = KeyboardStateManager.instance;
+
   @override
   void initState() {
     super.initState();
     _prevLocalTextEditing = ScreenController.localTextEditing.value;
     ScreenController.setLocalTextEditing(true);
     ScreenController.setSystemImeActive(false);
+    _kb.requestOwner();
     try {
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
@@ -460,6 +466,7 @@ class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
       FocusScope.of(context).unfocus();
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
+    _kb.releaseOwner();
     _focusNode.dispose();
     ScreenController.setLocalTextEditing(_prevLocalTextEditing);
     super.dispose();
@@ -475,6 +482,8 @@ class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
       } catch (_) {}
       return;
     }
+    // Mark ourselves as IME owner before requesting focus/show.
+    _kb.requestOwner();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       try {
@@ -493,6 +502,8 @@ class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
       final prev = _lastImeVisible;
       _lastImeVisible = imeVisible;
 
+       _kb.onImeVisibleChanged(imeVisible);
+
       // Respect system keyboard hide button: if IME is hidden while enabled,
       // stop wanting it, and never auto re-open.
       if (_imeEnabled && prev && !imeVisible) {
@@ -500,6 +511,8 @@ class _ManualImeRenameDialogState extends State<_ManualImeRenameDialog> {
         try {
           FocusScope.of(context).unfocus();
         } catch (_) {}
+        // System hid IME -> release ownership.
+        _kb.releaseOwner();
       }
     });
 

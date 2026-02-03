@@ -13,6 +13,54 @@ except Exception as e:
     print(json.dumps({"error": f"iterm2 module not available: {e}"}, ensure_ascii=False))
     raise SystemExit(0)
 
+# Best-effort CGWindowID mapping via CoreGraphics window list.
+# iTerm2's window_id is not CGWindowID, so we match by window frame.
+cg_windows = []
+try:
+    import Quartz
+    opts = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+    win_info = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID)
+    for w in win_info:
+        owner = w.get('kCGWindowOwnerName')
+        if owner in ('iTerm', 'iTerm2'):
+            bounds = w.get('kCGWindowBounds') or {}
+            cg_windows.append({
+                'id': w.get('kCGWindowNumber'),
+                'x': float(bounds.get('X', 0.0)),
+                'y': float(bounds.get('Y', 0.0)),
+                'w': float(bounds.get('Width', 0.0)),
+                'h': float(bounds.get('Height', 0.0)),
+            })
+except Exception:
+    cg_windows = []
+
+def find_cg_window_id(win_frame):
+    if not win_frame or not cg_windows:
+        return None
+    try:
+        wx = float(win_frame.origin.x)
+        wy = float(win_frame.origin.y)
+        ww = float(win_frame.size.width)
+        wh = float(win_frame.size.height)
+    except Exception:
+        return None
+    best = None
+    best_score = None
+    for c in cg_windows:
+        score = abs(c['w'] - ww) * 2.0 + abs(c['h'] - wh) * 2.0 + abs(c['x'] - wx) + abs(c['y'] - wy)
+        if best_score is None or score < best_score:
+            best_score = score
+            best = c
+    # Accept only if roughly matching in size/position to avoid wrong window.
+    if best is None:
+        return None
+    if abs(best['w'] - ww) > 20 or abs(best['h'] - wh) > 20:
+        return None
+    # Y can differ due to menu bar/title bar offsets; be lenient.
+    if abs(best['x'] - wx) > 30 or abs(best['y'] - wy) > 120:
+        return None
+    return best['id']
+
 SESSION_ID = sys.argv[1] if len(sys.argv) > 1 else ""
 
 async def get_frame(obj):
@@ -184,24 +232,47 @@ async def main(connection):
 
     try:
         f = await get_frame(target)
-        root_bounds = None
-        try:
-            root_bounds = node_bounds(target_tab.root)
-        except Exception:
-            root_bounds = None
         wf = await get_frame(target_win)
-        if f and root_bounds:
-            minx, miny, maxx, maxy = root_bounds
-            ww = float(maxx - minx)
-            wh = float(maxy - miny)
-            if ww > 0 and wh > 0:
-                out["frame"] = {"x": float(f.origin.x), "y": float(f.origin.y), "w": float(f.size.width), "h": float(f.size.height)}
-                # Use the union-bounds of all session frames in this tab as the "windowFrame"
-                # coordinate space for crop computation. This avoids assumptions about splitter
-                # layout math that can cause a few-pixel drift (top bleed / bottom cut).
-                out["windowFrame"] = {"x": float(minx), "y": float(miny), "w": float(ww), "h": float(wh)}
+
+        # Primary: use iTerm2's real window frame as the coordinate base.
+        # This supports non-uniform splits (2x5 with arbitrary widths/heights).
+        if f:
+            out["frame"] = {"x": float(f.origin.x), "y": float(f.origin.y), "w": float(f.size.width), "h": float(f.size.height)}
         if wf:
+            out["windowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
             out["rawWindowFrame"] = {"x": float(wf.origin.x), "y": float(wf.origin.y), "w": float(wf.size.width), "h": float(wf.size.height)}
+            cg_id = find_cg_window_id(wf)
+            if cg_id is not None:
+                out["cgWindowId"] = cg_id
+
+        # Fallback: also return layout-derived coordinate space for debugging.
+        lf = layout_frames.get(target.session_id)
+        if lf and layout_w > 0 and layout_h > 0:
+            out["layoutFrame"] = lf
+            out["layoutWindowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
+
+            # Derive a stable spatial index (1..N) for the target pane.
+            # Useful to correlate "win.tab.panel" labels with the actual split layout.
+            try:
+                frames = []
+                for sid, rf in layout_frames.items():
+                    if not rf:
+                        continue
+                    frames.append((sid, float(rf.get('x', 0.0)), float(rf.get('y', 0.0)), float(rf.get('w', 0.0)), float(rf.get('h', 0.0))))
+
+                def row_key(y, h):
+                    return y + h * 0.5
+
+                frames.sort(key=lambda it: (row_key(it[2], it[4]), it[1] + it[3] * 0.5))
+                spatial_idx = None
+                for i, it in enumerate(frames):
+                    if it[0] == target.session_id:
+                        spatial_idx = i + 1
+                        break
+                if spatial_idx is not None:
+                    out["spatialIndex"] = spatial_idx
+            except Exception:
+                pass
     except Exception:
         pass
 

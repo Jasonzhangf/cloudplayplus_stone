@@ -42,6 +42,40 @@ class WebrtcService {
     return null;
   }
 
+  /// Prefer a reliable DataChannel (label: userInput) for JSON control messages.
+  /// Fallback to any open channel if only one exists.
+  static RTCDataChannel? get activeReliableDataChannel {
+    final s = currentRenderingSession;
+    final ch = s?.channel;
+    if (ch != null &&
+        ch.state == RTCDataChannelState.RTCDataChannelOpen &&
+        (ch.label == 'userInput' || ch.label == 'data')) {
+      return ch;
+    }
+    // In current implementation, `channel` field is the reliable one when unsafe is enabled.
+    // So fallback to activeDataChannel.
+    final any = activeDataChannel;
+    if (any != null && any.state == RTCDataChannelState.RTCDataChannelOpen) {
+      return any;
+    }
+    return null;
+  }
+
+  /// Debug helper: describe the current active DataChannel selection.
+  static String describeActiveDataChannel() {
+    final s = currentRenderingSession;
+    final ch = s?.channel;
+    final any = activeDataChannel;
+    final rel = activeReliableDataChannel;
+    String fmt(RTCDataChannel? c) {
+      if (c == null) return 'null';
+      return '${c.label}@${c.state}';
+    }
+
+    return 'renderSession=${s?.controlled.websocketSessionid ?? '(null)'} '
+        'sessionCh=${fmt(ch)} any=${fmt(any)} reliable=${fmt(rel)}';
+  }
+
   static void notifyDataChannelChanged() {
     dataChannelRevision.value++;
   }

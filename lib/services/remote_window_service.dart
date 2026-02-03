@@ -1,6 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'package:cloudplayplus/core/blocks/control/control_channel.dart';
+import 'package:cloudplayplus/services/control_request_manager.dart';
+import 'package:cloudplayplus/services/diagnostics/diagnostics_snapshot_service.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
 
@@ -88,28 +91,46 @@ class RemoteWindowService {
     int thumbnailWidth = 240,
     int thumbnailHeight = 135,
   }) async {
-    if (channel == null ||
-        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      error.value = 'DataChannel 未连接';
-      return;
-    }
     loading.value = true;
     error.value = null;
-    channel.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'desktopSourcesRequest': {
-            'types': ['window'],
-            'thumbnail': thumbnail,
-            if (thumbnail)
-              'thumbnailSize': {
-                'width': thumbnailWidth,
-                'height': thumbnailHeight,
-              },
-          }
-        }),
-      ),
+    DiagnosticsSnapshotService.instance.capture(
+      'window.requestSources.start',
+      extra: {'thumbnail': thumbnail},
     );
+    try {
+      await ControlRequestManager.instance.runWithRetry<bool>(
+        tag: 'window.requestSources',
+        preferredChannel: channel,
+        tryOnce: (ch, attempt) async {
+          DiagnosticsSnapshotService.instance.capture(
+            'window.requestSources.attempt',
+            extra: {'attempt': attempt, 'thumbnail': thumbnail},
+          );
+          return await ControlChannel(reliable: ch, unsafe: null).sendJson(
+            {
+              'desktopSourcesRequest': {
+                'types': ['window'],
+                'thumbnail': thumbnail,
+                if (thumbnail)
+                  'thumbnailSize': {
+                    'width': thumbnailWidth,
+                    'height': thumbnailHeight,
+                  },
+              }
+            },
+            tag: 'window',
+          );
+        },
+        isSuccess: (v) => v == true,
+      );
+    } catch (e) {
+      loading.value = false;
+      error.value = '窗口列表请求失败：$e';
+      DiagnosticsSnapshotService.instance.capture(
+        'window.requestSources.error',
+        extra: {'error': e.toString()},
+      );
+    }
   }
 
   Future<void> selectWindow(RTCDataChannel? channel,
@@ -117,68 +138,123 @@ class RemoteWindowService {
       String? expectedTitle,
       String? expectedAppId,
       String? expectedAppName}) async {
-    if (channel == null ||
-        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      error.value = 'DataChannel 未连接';
-      return;
-    }
-    channel.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'setCaptureTarget': {
-            'type': 'window',
-            'windowId': windowId,
-            if (expectedTitle != null && expectedTitle.isNotEmpty)
-              'expectedTitle': expectedTitle,
-            if (expectedAppId != null && expectedAppId.isNotEmpty)
-              'expectedAppId': expectedAppId,
-            if (expectedAppName != null && expectedAppName.isNotEmpty)
-              'expectedAppName': expectedAppName,
-          }
-        }),
-      ),
+    DiagnosticsSnapshotService.instance.capture(
+      'window.select.start',
+      extra: {
+        'windowId': windowId,
+        'expectedTitle': expectedTitle,
+        'expectedAppId': expectedAppId,
+        'expectedAppName': expectedAppName,
+      },
     );
+    try {
+      await ControlRequestManager.instance.runWithRetry<bool>(
+        tag: 'window.select',
+        preferredChannel: channel,
+        tryOnce: (ch, attempt) async {
+          DiagnosticsSnapshotService.instance.capture(
+            'window.select.attempt',
+            extra: {'attempt': attempt, 'windowId': windowId},
+          );
+          return await ControlChannel(reliable: ch, unsafe: null).sendJson(
+            {
+              'setCaptureTarget': {
+                'type': 'window',
+                'windowId': windowId,
+                if (expectedTitle != null && expectedTitle.isNotEmpty)
+                  'expectedTitle': expectedTitle,
+                if (expectedAppId != null && expectedAppId.isNotEmpty)
+                  'expectedAppId': expectedAppId,
+                if (expectedAppName != null && expectedAppName.isNotEmpty)
+                  'expectedAppName': expectedAppName,
+              }
+            },
+            tag: 'window',
+          );
+        },
+        isSuccess: (v) => v == true,
+      );
+    } catch (e) {
+      error.value = '切换窗口失败：$e';
+      DiagnosticsSnapshotService.instance.capture(
+        'window.select.error',
+        extra: {'windowId': windowId, 'error': e.toString()},
+      );
+    }
   }
 
   Future<void> requestScreenSources(RTCDataChannel? channel) async {
-    if (channel == null ||
-        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      error.value = 'DataChannel 未连接';
-      return;
-    }
     loading.value = true;
     error.value = null;
-    channel.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'desktopSourcesRequest': {
-            'types': ['screen'],
-            'thumbnail': false,
-          }
-        }),
-      ),
-    );
+    DiagnosticsSnapshotService.instance.capture('screen.requestSources.start');
+    try {
+      await ControlRequestManager.instance.runWithRetry<bool>(
+        tag: 'screen.requestSources',
+        preferredChannel: channel,
+        tryOnce: (ch, attempt) async {
+          DiagnosticsSnapshotService.instance.capture(
+            'screen.requestSources.attempt',
+            extra: {'attempt': attempt},
+          );
+          return await ControlChannel(reliable: ch, unsafe: null).sendJson(
+            {
+              'desktopSourcesRequest': {
+                'types': ['screen'],
+                'thumbnail': false,
+              }
+            },
+            tag: 'window',
+          );
+        },
+        isSuccess: (v) => v == true,
+      );
+    } catch (e) {
+      loading.value = false;
+      error.value = '屏幕列表请求失败：$e';
+      DiagnosticsSnapshotService.instance.capture(
+        'screen.requestSources.error',
+        extra: {'error': e.toString()},
+      );
+    }
   }
 
   Future<void> selectScreen(
     RTCDataChannel? channel, {
     String? sourceId,
   }) async {
-    if (channel == null ||
-        channel.state != RTCDataChannelState.RTCDataChannelOpen) {
-      error.value = 'DataChannel 未连接';
-      return;
-    }
-    channel.send(
-      RTCDataChannelMessage(
-        jsonEncode({
-          'setCaptureTarget': {
-            'type': 'screen',
-            if (sourceId != null && sourceId.isNotEmpty) 'sourceId': sourceId,
-          }
-        }),
-      ),
+    DiagnosticsSnapshotService.instance.capture(
+      'screen.select.start',
+      extra: {'sourceId': sourceId},
     );
+    try {
+      await ControlRequestManager.instance.runWithRetry<bool>(
+        tag: 'screen.select',
+        preferredChannel: channel,
+        tryOnce: (ch, attempt) async {
+          DiagnosticsSnapshotService.instance.capture(
+            'screen.select.attempt',
+            extra: {'attempt': attempt, 'sourceId': sourceId},
+          );
+          return await ControlChannel(reliable: ch, unsafe: null).sendJson(
+            {
+              'setCaptureTarget': {
+                'type': 'screen',
+                if (sourceId != null && sourceId.isNotEmpty)
+                  'sourceId': sourceId,
+              }
+            },
+            tag: 'window',
+          );
+        },
+        isSuccess: (v) => v == true,
+      );
+    } catch (e) {
+      error.value = '切换屏幕失败：$e';
+      DiagnosticsSnapshotService.instance.capture(
+        'screen.select.error',
+        extra: {'sourceId': sourceId, 'error': e.toString()},
+      );
+    }
   }
 
   void handleDesktopSourcesMessage(dynamic payload) {

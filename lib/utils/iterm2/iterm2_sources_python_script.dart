@@ -17,6 +17,54 @@ async def main(connection):
     panels = []
     selected = None
 
+    # Best-effort CGWindowID mapping via CoreGraphics window list.
+    # iTerm2's window_id is not CGWindowID, so we match by window frame.
+    cg_windows = []
+    try:
+        import Quartz
+        opts = Quartz.kCGWindowListOptionOnScreenOnly | Quartz.kCGWindowListExcludeDesktopElements
+        win_info = Quartz.CGWindowListCopyWindowInfo(opts, Quartz.kCGNullWindowID)
+        for w in win_info:
+            owner = w.get('kCGWindowOwnerName')
+            if owner in ('iTerm', 'iTerm2'):
+                bounds = w.get('kCGWindowBounds') or {}
+                cg_windows.append({
+                    'id': w.get('kCGWindowNumber'),
+                    'x': float(bounds.get('X', 0.0)),
+                    'y': float(bounds.get('Y', 0.0)),
+                    'w': float(bounds.get('Width', 0.0)),
+                    'h': float(bounds.get('Height', 0.0)),
+                })
+    except Exception:
+        cg_windows = []
+
+    def find_cg_window_id(win_frame):
+        if not win_frame or not cg_windows:
+            return None
+        try:
+            wx = float(win_frame.origin.x)
+            wy = float(win_frame.origin.y)
+            ww = float(win_frame.size.width)
+            wh = float(win_frame.size.height)
+        except Exception:
+            return None
+        best = None
+        best_score = None
+        for c in cg_windows:
+            score = abs(c['w'] - ww) * 2.0 + abs(c['h'] - wh) * 2.0 + abs(c['x'] - wx) + abs(c['y'] - wy)
+            if best_score is None or score < best_score:
+                best_score = score
+                best = c
+        # Accept only if roughly matching in size/position to avoid wrong window.
+        if best is None:
+            return None
+        if abs(best['w'] - ww) > 20 or abs(best['h'] - wh) > 20:
+            return None
+        # Y can differ due to menu bar/title bar offsets; be lenient.
+        if abs(best['x'] - wx) > 30 or abs(best['y'] - wy) > 120:
+            return None
+        return best['id']
+
     # Reconstruct pane layout frames from the Splitter tree so sessions in
     # different rows get distinct y offsets (Session.frame y can be 0 per-row).
     def subtree_size(node):
@@ -134,6 +182,18 @@ async def main(connection):
         selected = None
 
     win_idx = 0
+    def get_window_id(win_obj):
+        try:
+            return win_obj.window_id
+        except Exception:
+            return None
+
+    def get_window_title(win_obj):
+        try:
+            return win_obj.name
+        except Exception:
+            return None
+
     for win in app.terminal_windows:
         win_idx += 1
         tab_idx = 0
@@ -158,21 +218,69 @@ async def main(connection):
                 except Exception:
                     tab_title = ''
                 name = getattr(sess, 'name', '') or ''
+                # Important: tab.sessions order is not stable relative to the
+                # on-screen split layout when panes are moved/split.
+                # Use the computed layout frame (x/y ordering) to derive a
+                # stable, spatial index for labels (win.tab.panel).
                 title = f"{win_idx}.{tab_idx}.{sess_idx}"
                 detail = ' · '.join([p for p in [tab_title, name] if p])
+                # NOTE: iTerm2's `window_id` is NOT the same as macOS CGWindowID.
+                # Use CoreGraphics window list matching by frame to find CGWindowID.
+                cg_window_id = None
+
                 item = {
                     "id": sess.session_id,
                     "title": title,
                     "detail": detail,
                     "index": len(panels),
-                    "windowId": getattr(win, 'window_id', None),
+                    "windowId": get_window_id(win),
+                    "cgWindowId": cg_window_id,
                 }
                 try:
                     f = layout_frames.get(sess.session_id)
+                    sf = await get_frame(sess)
                     wf = await get_frame(win)
+                    if cg_window_id is None and wf is not None:
+                        cg_window_id = find_cg_window_id(wf)
+                        item["cgWindowId"] = cg_window_id
+                    if sf:
+                        item["frame"] = {
+                            "x": float(sf.origin.x),
+                            "y": float(sf.origin.y),
+                            "w": float(sf.size.width),
+                            "h": float(sf.size.height),
+                        }
                     if f and layout_w > 0 and layout_h > 0:
-                        item["frame"] = f
-                        item["windowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
+                        item["layoutFrame"] = f
+                        item["layoutWindowFrame"] = {"x": 0.0, "y": 0.0, "w": float(layout_w), "h": float(layout_h)}
+
+                        # Re-label by spatial ordering within this tab.
+                        try:
+                            # Collect sortable frames (x,y,w,h,sessionId).
+                            frames = []
+                            for sid, rf in layout_frames.items():
+                                if not rf:
+                                    continue
+                                frames.append((sid, float(rf.get('x', 0.0)), float(rf.get('y', 0.0)), float(rf.get('w', 0.0)), float(rf.get('h', 0.0))))
+
+                            def row_key(y, h):
+                                # Bucket by row using mid-y.
+                                return y + h * 0.5
+
+                            # Sort by row then column.
+                            frames.sort(key=lambda it: (row_key(it[2], it[4]), it[1] + it[3] * 0.5))
+
+                            # Now assign increasing index per sorted list.
+                            spatial_idx = None
+                            for i, it in enumerate(frames):
+                                if it[0] == sess.session_id:
+                                    spatial_idx = i + 1
+                                    break
+                            if spatial_idx is not None:
+                                item["title"] = f"{win_idx}.{tab_idx}.{spatial_idx}"
+                                item["spatialIndex"] = spatial_idx
+                        except Exception:
+                            pass
                     if wf:
                         item["rawWindowFrame"] = {
                             "x": float(wf.origin.x),
@@ -180,6 +288,16 @@ async def main(connection):
                             "w": float(wf.size.width),
                             "h": float(wf.size.height),
                         }
+                        item["windowFrame"] = {
+                            "x": float(wf.origin.x),
+                            "y": float(wf.origin.y),
+                            "w": float(wf.size.width),
+                            "h": float(wf.size.height),
+                        }
+                    if "windowTitle" not in item or not item["windowTitle"]:
+                        item["windowTitle"] = get_window_title(win)
+                    if "windowOwner" not in item or not item["windowOwner"]:
+                        item["windowOwner"] = "iTerm2"
                 except Exception:
                     pass
                 panels.append(item)

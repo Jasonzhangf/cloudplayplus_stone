@@ -5,6 +5,52 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('iTerm2 crop computation', () {
+    test('non-uniform 2x5 layout: per-panel width/height must be preserved',
+        () {
+      // Window 1000x600, 2 rows with unequal heights.
+      const ww = 1000.0;
+      const wh = 600.0;
+      const topH = 260.0;
+      const botH = 340.0;
+      const widths = [120.0, 180.0, 140.0, 260.0, 300.0];
+
+      double x = 0.0;
+      for (final w in widths) {
+        final top = computeIterm2CropRectNorm(
+          fx: x,
+          fy: 0,
+          fw: w,
+          fh: topH,
+          wx: 0,
+          wy: 0,
+          ww: ww,
+          wh: wh,
+        );
+        final bot = computeIterm2CropRectNorm(
+          fx: x,
+          fy: topH,
+          fw: w,
+          fh: botH,
+          wx: 0,
+          wy: 0,
+          ww: ww,
+          wh: wh,
+        );
+
+        expect(top, isNotNull);
+        expect(bot, isNotNull);
+        expect(top!.cropRectNorm['w'], closeTo(w / ww, 1e-9));
+        expect(bot!.cropRectNorm['w'], closeTo(w / ww, 1e-9));
+        expect(top.cropRectNorm['h'], closeTo(topH / wh, 1e-9));
+        expect(bot.cropRectNorm['h'], closeTo(botH / wh, 1e-9));
+        expect(top.cropRectNorm['y'], closeTo(0.0, 1e-9));
+        expect(bot.cropRectNorm['y'], closeTo(topH / wh, 1e-9));
+
+        x += w;
+      }
+      expect(x, closeTo(ww, 1e-9));
+    });
+
     test('prefers doc candidate when it fits without clamping', () {
       final res = computeIterm2CropRectNorm(
         fx: 450,

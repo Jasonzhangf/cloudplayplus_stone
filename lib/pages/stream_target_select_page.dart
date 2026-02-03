@@ -6,6 +6,7 @@ import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/webrtc_service.dart';
 import 'package:cloudplayplus/utils/iterm2/iterm2_crop.dart';
+import 'package:cloudplayplus/widgets/keyboard/local_text_editing_scope.dart';
 import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
@@ -30,6 +31,11 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
       _channel != null &&
       _channel!.state == RTCDataChannelState.RTCDataChannelOpen;
 
+  bool get _dataChannelReady =>
+      WebrtcService.activeReliableDataChannel != null &&
+      WebrtcService.activeReliableDataChannel!.state ==
+          RTCDataChannelState.RTCDataChannelOpen;
+
   VoidCallback? _modeListener;
   bool _didRefreshAfterChannelOpen = false;
 
@@ -53,19 +59,21 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   }
 
   Future<void> _refresh() async {
-    if (!_channelOpen) return;
+    if (!_channelOpen || !_dataChannelReady) return;
     switch (_quick.mode.value) {
       case StreamMode.desktop:
-        await _windows.requestScreenSources(_channel);
+        await _windows.requestScreenSources(
+            WebrtcService.activeReliableDataChannel);
         return;
       case StreamMode.window:
-        await _windows.requestWindowSources(_channel);
+        await _windows.requestWindowSources(
+            WebrtcService.activeReliableDataChannel);
         break;
       case StreamMode.iterm2:
-        await _iterm2.requestPanels(_channel);
+        await _iterm2.requestPanels(WebrtcService.activeReliableDataChannel);
         // Also request window thumbnails so we can render per-panel previews.
         await _windows.requestWindowSources(
-          _channel,
+          WebrtcService.activeReliableDataChannel,
           thumbnail: true,
           thumbnailWidth: 240,
           thumbnailHeight: 135,
@@ -160,8 +168,9 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   }
 
   Future<void> _apply(QuickStreamTarget target) async {
-    if (!_channelOpen) return;
-    await _quick.applyTarget(_channel, target);
+    if (!_channelOpen || !_dataChannelReady) return;
+    await _quick.applyTarget(
+        WebrtcService.activeReliableDataChannel, target);
     if (!mounted) return;
     Navigator.pop(context);
   }
@@ -190,6 +199,10 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
           if (!_channelOpen) {
             _didRefreshAfterChannelOpen = false;
             return const Center(child: Text('连接未就绪：等待 DataChannel…'));
+          }
+          if (!_dataChannelReady) {
+            _didRefreshAfterChannelOpen = false;
+            return const Center(child: Text('连接未就绪：等待控制通道…'));
           }
           if (!_didRefreshAfterChannelOpen) {
             _didRefreshAfterChannelOpen = true;
@@ -417,8 +430,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   }
 
   Map<String, double>? _computePanelCrop(ITerm2PanelInfo p) {
-    final f = p.frame;
-    final wf = p.windowFrame;
+    final f = p.layoutFrame ?? p.frame;
+    final wf = p.layoutWindowFrame ?? p.windowFrame;
     if (f == null || wf == null) return null;
     final fx = f['x'];
     final fy = f['y'];
@@ -436,7 +449,10 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
         wh == null) {
       return null;
     }
-    final res = computeIterm2CropRectNorm(
+    // Keep the list thumbnail crop consistent with the actual capture switch logic.
+    // The session switch uses the best-effort mapper (may incorporate raw window frame).
+    final rwf = p.rawWindowFrame;
+    final res = computeIterm2CropRectNormBestEffort(
       fx: fx,
       fy: fy,
       fw: fw,
@@ -445,6 +461,10 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
       wy: wy,
       ww: ww,
       wh: wh,
+      rawWx: rwf?['x'],
+      rawWy: rwf?['y'],
+      rawWw: rwf?['w'],
+      rawWh: rwf?['h'],
     );
     return res?.cropRectNorm;
   }
@@ -602,6 +622,7 @@ class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
   @override
   void dispose() {
     try {
+      FocusScope.of(context).unfocus();
       SystemChannels.textInput.invokeMethod('TextInput.hide');
     } catch (_) {}
     _focusNode.dispose();
@@ -630,75 +651,79 @@ class _ManualImeAliasSheetState extends State<_ManualImeAliasSheet> {
   @override
   Widget build(BuildContext context) {
     final bottomInset = MediaQuery.of(context).viewInsets.bottom;
-    return AnimatedPadding(
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-      padding: EdgeInsets.only(bottom: bottomInset),
-      child: SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  const Expanded(
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '设置快捷名称',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w700,
+    return LocalTextEditingScope(
+      child: AnimatedPadding(
+        duration: const Duration(milliseconds: 180),
+        curve: Curves.easeOut,
+        padding: EdgeInsets.only(bottom: bottomInset),
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '设置快捷名称',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  IconButton(
-                    tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
-                    icon: Icon(
-                      _imeEnabled
-                          ? Icons.keyboard_hide_outlined
-                          : Icons.keyboard_alt_outlined,
+                    IconButton(
+                      tooltip: _imeEnabled ? '隐藏输入法' : '唤起输入法',
+                      icon: Icon(
+                        _imeEnabled
+                            ? Icons.keyboard_hide_outlined
+                            : Icons.keyboard_alt_outlined,
+                      ),
+                      onPressed: _toggleIme,
                     ),
-                    onPressed: _toggleIme,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: widget.controller,
-                focusNode: _focusNode,
-                autofocus: false,
-                readOnly: !_imeEnabled,
-                showCursor: _imeEnabled,
-                keyboardType:
-                    _imeEnabled ? TextInputType.text : TextInputType.none,
-                decoration: const InputDecoration(
-                  hintText: '点右上角键盘按钮开始输入（最多5个汉字，可留空）',
-                  border: OutlineInputBorder(),
+                  ],
                 ),
-              ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(context),
-                      child: const Text('取消'),
-                    ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: widget.controller,
+                  focusNode: _focusNode,
+                  autofocus: false,
+                  readOnly: !_imeEnabled,
+                  showCursor: _imeEnabled,
+                  keyboardType:
+                      _imeEnabled ? TextInputType.text : TextInputType.none,
+                  decoration: const InputDecoration(
+                    hintText: '点右上角键盘按钮开始输入（最多5个汉字，可留空）',
+                    border: OutlineInputBorder(),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton(
-                      onPressed: () =>
-                          Navigator.pop(context, widget.controller.text.trim()),
-                      child: const Text('保存'),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () => Navigator.pop(context),
+                        child: const Text('取消'),
+                      ),
                     ),
-                  ),
-                ],
-              ),
-            ],
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: ElevatedButton(
+                        onPressed: () => Navigator.pop(
+                          context,
+                          widget.controller.text.trim(),
+                        ),
+                        child: const Text('保存'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),

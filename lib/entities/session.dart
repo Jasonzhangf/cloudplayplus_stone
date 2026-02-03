@@ -10,6 +10,7 @@ import 'package:cloudplayplus/entities/audiosession.dart';
 import 'package:cloudplayplus/entities/device.dart';
 import 'package:cloudplayplus/core/session/session_config.dart';
 import 'package:cloudplayplus/services/capture_target_event_bus.dart';
+import 'package:cloudplayplus/services/diagnostics/diagnostics_log_service.dart';
 import 'package:cloudplayplus/services/remote_iterm2_service.dart';
 import 'package:cloudplayplus/services/remote_window_service.dart';
 import 'package:cloudplayplus/services/quick_target_service.dart';
@@ -28,6 +29,8 @@ import 'package:cloudplayplus/models/stream_mode.dart';
 import 'package:cloudplayplus/models/iterm2_panel.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:flutter_webrtc/src/native/desktop_capturer_impl.dart'
+    show DesktopCapturerSourceNative;
 import 'package:hardware_simulator/hardware_simulator.dart';
 import 'package:synchronized/synchronized.dart';
 import 'package:flutter/services.dart';
@@ -250,8 +253,9 @@ class StreamingSession {
   // Tiered bandwidth strategy state (window/panel, EncodingMode.dynamic).
   BandwidthTierState _adaptiveTierState = const BandwidthTierState.initial();
 
-  // 添加生命周期监听器
-  static final _lifecycleObserver = _AppLifecycleObserver();
+  // Lifecycle observer is per-session. Using a static observer can leak
+  // callbacks/state across sessions and makes removeObserver() incorrect.
+  final _AppLifecycleObserver _lifecycleObserver = _AppLifecycleObserver();
 
   StreamingSession(
     this.controller,
@@ -261,7 +265,7 @@ class StreamingSession {
   })  : signaling = signaling ?? CloudSignalingTransport.instance,
         config = config ?? const SessionConfig() {
     connectionState = StreamingSessionConnectionState.free;
-    // 注册生命周期监听器
+    // Register lifecycle observer for clipboard sync and Android cursor behavior.
     WidgetsBinding.instance.addObserver(_lifecycleObserver);
   }
 
@@ -272,6 +276,10 @@ class StreamingSession {
     if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen)
       return;
     try {
+      DiagnosticsLogService.instance.add(
+        '[captureTargetSwitchResult] ${jsonEncode(payload)}',
+        role: 'host',
+      );
       dc.send(RTCDataChannelMessage(jsonEncode({
         'captureTargetSwitchResult': payload,
       })));
@@ -330,7 +338,9 @@ class StreamingSession {
       return;
     }
     selfSessionType = SelfSessionType.controller;
-    screenId = StreamingSettings.targetScreenId!;
+    // In unit tests and some LAN-only flows, StreamingSettings may not be
+    // initialized. Default to screen 0 instead of crashing.
+    screenId = (StreamingSettings.targetScreenId ?? 0);
     await _lock.synchronized(() async {
       _resetPingState();
       restartPingTimeoutTimer(10);
@@ -427,6 +437,12 @@ class StreamingSession {
       pc!.onDataChannel = (newchannel) async {
         VLOG0(
             '[WebRTC] onDataChannel: ${controlled.websocketSessionid} label=${newchannel.label}');
+        // Always observe datachannel state transitions, even for unsafe channels.
+        newchannel.onDataChannelState = (state) {
+          VLOG0(
+              '[WebRTC] dataChannelState(pre) label=${newchannel.label} state=$state');
+          WebrtcService.notifyDataChannelChanged();
+        };
         if (newchannel.label == "userInputUnsafe") {
           UDPChannel = newchannel;
           inputController = InputController(UDPChannel!, false, screenId);
@@ -461,11 +477,10 @@ class StreamingSession {
                     Uint8List.fromList([LP_PING, RP_PING])));
                 _pingKickoffSent = true;
               }
-              // Mobile controller: restore last selected window/panel/screen on connect.
+              // Controller: restore last selected window/panel/screen on connect.
               // Do NOT mark it as applied until we observe a matching captureTargetChanged;
               // host may temporarily default to screen on cold start/reconnect.
-              if (selfSessionType == SelfSessionType.controller &&
-                  (AppPlatform.isMobile || AppPlatform.isAndroidTV)) {
+              if (selfSessionType == SelfSessionType.controller) {
                 final quick = QuickTargetService.instance;
                 QuickStreamTarget? desired =
                     _restoreTargetSnapshot ?? quick.lastTarget.value;
@@ -860,6 +875,10 @@ class StreamingSession {
         ..ordered = true;
       channel =
           await pc!.createDataChannel('userInput', reliableDataChannelDict);
+      channel?.onDataChannelState = (state) {
+        VLOG0('[WebRTC] dataChannelState(host) label=${channel?.label} state=$state');
+        WebrtcService.notifyDataChannelChanged();
+      };
       _schedulePingKickoff(Uint8List.fromList([LP_PING, RP_PONG]));
 
       channel?.onMessage = (RTCDataChannelMessage msg) {
@@ -894,6 +913,12 @@ class StreamingSession {
           ..ordered = false;
         UDPChannel =
             await pc!.createDataChannel('userInputUnsafe', dataChannelDict);
+
+        UDPChannel?.onDataChannelState = (state) {
+          VLOG0(
+              '[WebRTC] dataChannelState(host) label=${UDPChannel?.label} state=$state');
+          WebrtcService.notifyDataChannelChanged();
+        };
 
         UDPChannel?.onMessage = (RTCDataChannelMessage msg) {
           processDataChannelMessageFromClient(msg);
@@ -1311,7 +1336,6 @@ class StreamingSession {
     RTCDataChannel channel, {
     required bool shouldRestore,
   }) async {
-    if (!AppPlatform.isMobile && !AppPlatform.isAndroidTV) return;
     if (_autoIterm2DefaultPanelAttempted) return;
     if (channel.state != RTCDataChannelState.RTCDataChannelOpen) return;
 
@@ -1341,11 +1365,12 @@ class StreamingSession {
             id: first.id,
             label: first.title.isNotEmpty ? first.title : 'iTerm2',
             windowId: first.windowId,
+            cgWindowId: first.cgWindowId,
             appName: 'iTerm2',
           ),
         );
         await RemoteIterm2Service.instance
-            .selectPanel(channel, sessionId: first.id);
+            .selectPanel(channel, sessionId: first.id, cgWindowId: first.cgWindowId);
       } catch (_) {}
     }
 
@@ -1479,6 +1504,13 @@ class StreamingSession {
   void restartPingTimeoutTimer(int second) {
     _pingTimeoutTimer?.cancel(); // 取消之前的Timer
     _pingTimeoutTimer = Timer(Duration(seconds: second), () {
+      // While actively switching capture targets, ScreenCaptureKit + encoder can
+      // stall briefly (especially with heavy iTerm2 layouts). Avoid tearing down
+      // the whole session on a transient stall.
+      if (_captureSwitchLock.locked) {
+        restartPingTimeoutTimer(second);
+        return;
+      }
       // 超过指定时间秒没收到pingpong，断开连接
       VLOG0(
           "No ping message received within $second seconds, disconnecting...");
@@ -1610,9 +1642,10 @@ class StreamingSession {
         default:
           VLOG0("unhandled message.please debug");
       }
-    } else {
-      Map<String, dynamic> data = jsonDecode(message.text);
-      switch (data.keys.first) {
+   } else {
+     Map<String, dynamic> data = jsonDecode(message.text);
+      VLOG0("[CAPTURE] recv JSON message: ${jsonEncode(data)}");
+     switch (data.keys.first) {
         case "candidate":
           var candidateMap = data["candidate"];
           RTCIceCandidate candidate = RTCIceCandidate(candidateMap['candidate'],
@@ -1693,6 +1726,8 @@ class StreamingSession {
           break;
         case "setCaptureTarget":
           if (!AppPlatform.isDeskTop) break;
+          VLOG0(
+              "[CAPTURE] recv setCaptureTarget: ${jsonEncode(data['setCaptureTarget'])}");
           await _handleSetCaptureTarget(data['setCaptureTarget']);
           break;
         case "adaptiveEncoding":
@@ -2045,6 +2080,8 @@ class StreamingSession {
         channel?.state != RTCDataChannelState.RTCDataChannelOpen) {
       return;
     }
+    final forceReload =
+        (payload is Map) ? payload['forceReload'] == true : false;
     const runner = HostCommandRunner();
     const timeout = Duration(seconds: 5);
 
@@ -2052,7 +2089,8 @@ class StreamingSession {
 
     HostCommandResult result;
     try {
-      result = await runner.run('python3', ['-c', script], timeout: timeout);
+      result = await runner
+          .run('python3', ['-c', script], timeout: timeout);
     } catch (e) {
       channel?.send(
         RTCDataChannelMessage(
@@ -2094,9 +2132,14 @@ class StreamingSession {
       }
     }
 
+    // Optionally include a monotonic token to help clients detect stale lists.
+    final payloadWithMeta = {
+      ...payloadOut,
+      if (forceReload) 'reload': true,
+    };
     channel?.send(
       RTCDataChannelMessage(
-        jsonEncode({'iterm2Sources': payloadOut}),
+        jsonEncode({'iterm2Sources': payloadWithMeta}),
       ),
     );
   }
@@ -2114,12 +2157,16 @@ class StreamingSession {
             payload.map((k, v) => MapEntry(k.toString(), v));
         _pendingCaptureTargetQueuedAtMs = DateTime.now().millisecondsSinceEpoch;
         _pendingCaptureTargetRetryCount = 0;
+        final requestIdAny = payload['requestId'];
+        final requestId = requestIdAny?.toString();
         _sendCaptureTargetSwitchResult({
           'ok': false,
           'status': 'deferred',
           'reason': 'videoSenderNotReady',
           'queuedAtMs': _pendingCaptureTargetQueuedAtMs,
           'type': (_pendingCaptureTargetPayload?['type'] ?? '').toString(),
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
         });
         _scheduleDrainPendingCaptureTarget();
       }
@@ -2129,6 +2176,8 @@ class StreamingSession {
     await _captureSwitchLock.synchronized(() async {
       final typeAny = (payload is Map) ? payload['type'] : null;
       final type = typeAny?.toString() ?? 'window';
+      final requestIdAny = (payload is Map) ? payload['requestId'] : null;
+      final requestId = requestIdAny?.toString();
       final startedAtMs = DateTime.now().millisecondsSinceEpoch;
 
       // Switching capture targets can leave modifier state "stuck" (e.g. missed key-up).
@@ -2136,6 +2185,8 @@ class StreamingSession {
       _iterm2ModifiersDown.clear();
 
       // Idempotency: ignore repeated target requests (e.g. reconnect restore + UI tap).
+      // NOTE: For iTerm2 we DO NOT ignore, because capture can silently fall back
+      // to screen while streamSettings still says iterm2.
       if (streamSettings != null) {
         if (type == 'screen' && streamSettings!.captureTargetType == 'screen') {
           final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
@@ -2147,6 +2198,8 @@ class StreamingSession {
               'ok': true,
               'status': 'ignored',
               'type': 'screen',
+              if (requestId != null && requestId.isNotEmpty)
+                'requestId': requestId,
               'sourceId': streamSettings!.desktopSourceId,
               'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
             });
@@ -2162,28 +2215,15 @@ class StreamingSession {
               'ok': true,
               'status': 'ignored',
               'type': 'window',
+              if (requestId != null && requestId.isNotEmpty)
+                'requestId': requestId,
               'windowId': streamSettings!.windowId,
               'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
             });
             return;
           }
         }
-        if (type == 'iterm2') {
-          final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
-          final sessionId = sessionIdAny?.toString() ?? '';
-          if (sessionId.isNotEmpty &&
-              streamSettings!.captureTargetType == 'iterm2' &&
-              streamSettings!.iterm2SessionId == sessionId) {
-            _sendCaptureTargetSwitchResult({
-              'ok': true,
-              'status': 'ignored',
-              'type': 'iterm2',
-              'sessionId': sessionId,
-              'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
-            });
-            return;
-          }
-        }
+        // Intentionally skip idempotency short-circuit for iTerm2.
       }
 
       if (type == 'window') {
@@ -2303,15 +2343,17 @@ class StreamingSession {
             ? windowIdAny.toInt()
             : int.tryParse('$windowIdAny');
         if (selected == null) {
-          _sendCaptureTargetSwitchResult({
-            'ok': false,
-            'status': 'failed',
-            'type': 'window',
-            'reason': 'windowNotFound',
-            'windowId': windowId,
-            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
-          });
-          return;
+        _sendCaptureTargetSwitchResult({
+          'ok': false,
+          'status': 'failed',
+          'type': 'window',
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
+          'reason': 'windowNotFound',
+          'windowId': windowId,
+          'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+        });
+        return;
         }
         final ok = await _switchCaptureToSource(
           selected,
@@ -2325,7 +2367,15 @@ class StreamingSession {
           'ok': ok,
           'status': ok ? 'applied' : 'failed',
           'type': 'window',
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
           'windowId': selected.windowId,
+          if (!ok &&
+              (streamSettings?.captureTargetType ?? '')
+                      .toString()
+                      .toLowerCase() ==
+                  'iterm2')
+            'reason': 'blockedByActiveIterm2',
           'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
         });
         return;
@@ -2342,14 +2392,16 @@ class StreamingSession {
         final screens =
             await desktopCapturer.getSources(types: [SourceType.Screen]);
         if (screens.isEmpty) {
-          _sendCaptureTargetSwitchResult({
-            'ok': false,
-            'status': 'failed',
-            'type': 'screen',
-            'reason': 'noScreens',
-            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
-          });
-          return;
+        _sendCaptureTargetSwitchResult({
+          'ok': false,
+          'status': 'failed',
+          'type': 'screen',
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
+          'reason': 'noScreens',
+          'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+        });
+        return;
         }
         DesktopCapturerSource? selected;
         final sourceIdAny = (payload is Map) ? payload['sourceId'] : null;
@@ -2380,7 +2432,15 @@ class StreamingSession {
           'ok': ok,
           'status': ok ? 'applied' : 'failed',
           'type': 'screen',
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
           'sourceId': selected.id,
+          if (!ok &&
+              (streamSettings?.captureTargetType ?? '')
+                      .toString()
+                      .toLowerCase() ==
+                  'iterm2')
+            'reason': 'blockedByActiveIterm2',
           'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
         });
         return;
@@ -2390,15 +2450,17 @@ class StreamingSession {
         final sessionIdAny = (payload is Map) ? payload['sessionId'] : null;
         final sessionId = sessionIdAny?.toString() ?? '';
         if (sessionId.isEmpty) {
-          _sendCaptureTargetSwitchResult({
-            'ok': false,
-            'status': 'failed',
-            'type': 'iterm2',
-            'reason': 'missingSessionId',
-            'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
-          });
-          return;
-        }
+        _sendCaptureTargetSwitchResult({
+          'ok': false,
+          'status': 'failed',
+          'type': 'iterm2',
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
+          'reason': 'missingSessionId',
+          'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
+        });
+        return;
+      }
         if (streamSettings != null) {
           streamSettings!.captureTargetType = 'iterm2';
           streamSettings!.iterm2SessionId = sessionId;
@@ -2418,6 +2480,8 @@ class StreamingSession {
             'status': 'failed',
             'type': 'iterm2',
             'sessionId': sessionId,
+            if (requestId != null && requestId.isNotEmpty)
+              'requestId': requestId,
             'reason': 'activateAndCropException:$e',
             'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
           });
@@ -2429,6 +2493,8 @@ class StreamingSession {
             'status': 'failed',
             'type': 'iterm2',
             'sessionId': sessionId,
+            if (requestId != null && requestId.isNotEmpty)
+              'requestId': requestId,
             'reason': 'activateAndCropExit:${meta.exitCode}',
             'stderr': meta.stderrText,
             'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
@@ -2448,84 +2514,132 @@ class StreamingSession {
           }
         } catch (_) {}
 
-        Map<String, double>? cropRectNorm;
-        String? cropTag;
-        double? cropPenalty;
-        int? iterm2MinWidth;
-        int? iterm2MinHeight;
-        if (metaAny != null) {
-          final frameAny = metaAny!['frame'];
+       Map<String, double>? cropRectNorm;
+       String? cropTag;
+       double? cropPenalty;
+       int? iterm2MinWidth;
+       int? iterm2MinHeight;
+       int? cgWindowId;
+       if (metaAny != null) {
+         // Extract cgWindowId if provided by client (from AppleScript).
+         if (metaAny!['cgWindowId'] is num) {
+           cgWindowId = (metaAny!['cgWindowId'] as num).toInt();
+         }
+
+         final frameAny = metaAny!['frame'];
           final windowFrameAny = metaAny!['windowFrame'];
           final rawWindowFrameAny = metaAny!['rawWindowFrame'];
-          if (frameAny is Map && windowFrameAny is Map) {
-            final fx = (frameAny['x'] is num)
-                ? (frameAny['x'] as num).toDouble()
-                : null;
-            final fy = (frameAny['y'] is num)
-                ? (frameAny['y'] as num).toDouble()
-                : null;
-            final fw = (frameAny['w'] is num)
-                ? (frameAny['w'] as num).toDouble()
-                : null;
-            final fh = (frameAny['h'] is num)
-                ? (frameAny['h'] as num).toDouble()
-                : null;
-            final wx = (windowFrameAny['x'] is num)
-                ? (windowFrameAny['x'] as num).toDouble()
-                : 0.0;
-            final wy = (windowFrameAny['y'] is num)
-                ? (windowFrameAny['y'] as num).toDouble()
-                : 0.0;
-            final ww = (windowFrameAny['w'] is num)
-                ? (windowFrameAny['w'] as num).toDouble()
-                : null;
-            final wh = (windowFrameAny['h'] is num)
-                ? (windowFrameAny['h'] as num).toDouble()
-                : null;
-            final rawWx = (rawWindowFrameAny is Map && rawWindowFrameAny['x'] is num)
+          final layoutFrameAny = metaAny!['layoutFrame'];
+          final layoutWindowFrameAny = metaAny!['layoutWindowFrame'];
+
+          double? rawWx;
+          double? rawWy;
+          double? rawWw;
+          double? rawWh;
+          if (rawWindowFrameAny is Map) {
+            rawWx = (rawWindowFrameAny['x'] is num)
                 ? (rawWindowFrameAny['x'] as num).toDouble()
                 : null;
-            final rawWy = (rawWindowFrameAny is Map && rawWindowFrameAny['y'] is num)
+            rawWy = (rawWindowFrameAny['y'] is num)
                 ? (rawWindowFrameAny['y'] as num).toDouble()
                 : null;
-            final rawWw = (rawWindowFrameAny is Map && rawWindowFrameAny['w'] is num)
+            rawWw = (rawWindowFrameAny['w'] is num)
                 ? (rawWindowFrameAny['w'] as num).toDouble()
                 : null;
-            final rawWh = (rawWindowFrameAny is Map && rawWindowFrameAny['h'] is num)
+            rawWh = (rawWindowFrameAny['h'] is num)
                 ? (rawWindowFrameAny['h'] as num).toDouble()
                 : null;
-            if (fx != null &&
-                fy != null &&
-                fw != null &&
-                fh != null &&
-                ww != null &&
-                wh != null &&
-                ww > 0 &&
-                wh > 0) {
-              final res = computeIterm2CropRectNormBestEffort(
-                fx: fx,
-                fy: fy,
-                fw: fw,
-                fh: fh,
-                wx: wx,
-                wy: wy,
-                ww: ww,
-                wh: wh,
-                rawWx: rawWx,
-                rawWy: rawWy,
-                rawWw: rawWw,
-                rawWh: rawWh,
-              );
-              if (res != null) {
-                iterm2MinWidth = res.windowMinWidth;
-                iterm2MinHeight = res.windowMinHeight;
-                cropRectNorm = res.cropRectNorm;
-                cropTag = res.tag;
-                cropPenalty = res.penalty;
-                VLOG0(
-                    '[iTerm2] cropRectNorm=$cropRectNorm tag=${res.tag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny rawWindowFrame=$rawWindowFrameAny');
+          }
+
+          Iterm2CropComputationResult? _computeFromLayoutNormalized(
+              Map f, Map w) {
+            final fx = (f['x'] is num) ? (f['x'] as num).toDouble() : null;
+            final fy = (f['y'] is num) ? (f['y'] as num).toDouble() : null;
+            final fw = (f['w'] is num) ? (f['w'] as num).toDouble() : null;
+            final fh = (f['h'] is num) ? (f['h'] as num).toDouble() : null;
+            final ww = (w['w'] is num) ? (w['w'] as num).toDouble() : null;
+            final wh = (w['h'] is num) ? (w['h'] as num).toDouble() : null;
+            if (fx == null || fy == null || fw == null || fh == null) return null;
+            if (ww == null || wh == null || ww <= 0 || wh <= 0) return null;
+
+            // Use a strict normalized mapping in the layout coordinate space.
+            // This avoids guessing origin direction/insets.
+            double clamp01(double v) => v.clamp(0.0, 1.0);
+            final x = clamp01(fx / ww);
+            final y = clamp01(fy / wh);
+            final wN = clamp01(fw / ww);
+            final hN = clamp01(fh / wh);
+            if (wN <= 0 || hN <= 0) return null;
+
+            return Iterm2CropComputationResult(
+              cropRectNorm: {'x': x, 'y': y, 'w': wN, 'h': hN},
+              tag: 'layoutNorm',
+              penalty: 0.0,
+              windowMinWidth: ww.round(),
+              windowMinHeight: wh.round(),
+            );
+          }
+
+          // Prefer the lower-penalty candidate between Session.frame and layoutFrame.
+          Iterm2CropComputationResult? resLayout;
+          if (layoutFrameAny is Map && layoutWindowFrameAny is Map) {
+            resLayout = _computeFromLayoutNormalized(
+              layoutFrameAny.map((k, v) => MapEntry(k.toString(), v)),
+              layoutWindowFrameAny.map((k, v) => MapEntry(k.toString(), v)),
+            );
+            if (resLayout != null) {
+              cropTag = 'layout:${resLayout.tag}';
+            }
+          }
+
+          // For now: force layout-normalized crop whenever available.
+          // This matches the actual split layout and avoids coordinate-space guesses.
+          Iterm2CropComputationResult? res;
+          if (resLayout != null) {
+            res = resLayout;
+          } else {
+            // Fallback to legacy best-effort using Session.frame + windowFrame/rawWindowFrame.
+            Iterm2CropComputationResult? resFrame;
+            if (frameAny is Map && windowFrameAny is Map) {
+              final f = frameAny.map((k, v) => MapEntry(k.toString(), v));
+              final w = windowFrameAny.map((k, v) => MapEntry(k.toString(), v));
+              // Use the existing best-effort helper.
+              final fx = (f['x'] is num) ? (f['x'] as num).toDouble() : null;
+              final fy = (f['y'] is num) ? (f['y'] as num).toDouble() : null;
+              final fw = (f['w'] is num) ? (f['w'] as num).toDouble() : null;
+              final fh = (f['h'] is num) ? (f['h'] as num).toDouble() : null;
+              final wx = (w['x'] is num) ? (w['x'] as num).toDouble() : 0.0;
+              final wy = (w['y'] is num) ? (w['y'] as num).toDouble() : 0.0;
+              final ww = (w['w'] is num) ? (w['w'] as num).toDouble() : null;
+              final wh = (w['h'] is num) ? (w['h'] as num).toDouble() : null;
+              if (fx != null && fy != null && fw != null && fh != null && ww != null && wh != null) {
+                resFrame = computeIterm2CropRectNormBestEffort(
+                  fx: fx,
+                  fy: fy,
+                  fw: fw,
+                  fh: fh,
+                  wx: rawWx ?? wx,
+                  wy: rawWy ?? wy,
+                  ww: rawWw ?? ww,
+                  wh: rawWh ?? wh,
+                  rawWx: rawWx,
+                  rawWy: rawWy,
+                  rawWw: rawWw,
+                  rawWh: rawWh,
+                );
               }
             }
+            res = resFrame;
+          }
+          if (res != null) cropTag ??= res.tag;
+          if (res != null) {
+            iterm2MinWidth = res.windowMinWidth;
+            iterm2MinHeight = res.windowMinHeight;
+            cropRectNorm = res.cropRectNorm;
+            cropTag ??= res.tag;
+            cropPenalty = res.penalty;
+            VLOG0(
+                '[iTerm2] cropRectNorm=$cropRectNorm tag=${cropTag} penalty=${res.penalty.toStringAsFixed(1)} frame=$frameAny windowFrame=$windowFrameAny rawWindowFrame=$rawWindowFrameAny layoutFrame=$layoutFrameAny');
           }
         }
 
@@ -2539,6 +2653,8 @@ class StreamingSession {
             'status': 'failed',
             'type': 'iterm2',
             'sessionId': sessionId,
+            if (requestId != null && requestId.isNotEmpty)
+              'requestId': requestId,
             'reason': 'cropRectUnavailable',
             'meta': metaAny,
             'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
@@ -2546,106 +2662,64 @@ class StreamingSession {
           return;
         }
 
-        final sources =
-            await desktopCapturer.getSources(types: [SourceType.Window]);
+        // IMPORTANT: Avoid using `desktopCapturer.getSources(types: [Window])`
+        // in the iTerm2 switching path.
+        //
+        // We observed native crashes (EXC_BAD_ACCESS) on some macOS setups when
+        // enumerating window sources.
+        //
+        // However, the iTerm2 python API returns `TerminalWindow.window_id`,
+        // which is NOT the macOS CGWindowID used by ScreenCaptureKit.
+        //
+        // If we pass that id into the capturer, it may select the wrong window
+        // (often the host app itself), which matches the user's logs.
+        //
+        // So for now, we only proceed if we can map to a real CGWindowID via an
+        // AppleScript query (no desktop enumeration).
         DesktopCapturerSource? selected;
-        if (windowId != null) {
-          for (final s in sources) {
-            if (s.windowId == windowId) {
-              selected = s;
-              break;
-            }
-          }
+        // Prefer the parsed `cgWindowId` from meta, but also accept a top-level
+        // `cgWindowId` to ease client upgrades.
+        int? cgId = cgWindowId;
+        if (cgId == null) {
+          final topAny = (payload is Map) ? payload['cgWindowId'] : null;
+          if (topAny is num) cgId = topAny.toInt();
         }
-        DesktopCapturerSource? bestItermWindowByFrameMatch() {
-          if (iterm2MinWidth == null || iterm2MinHeight == null) return null;
-          final targetW = iterm2MinWidth!.toDouble();
-          final targetH = iterm2MinHeight!.toDouble();
-
-          bool isIterm(DesktopCapturerSource s) {
-            final an = (s.appName ?? '').toLowerCase();
-            final aid = (s.appId ?? '').toLowerCase();
-            return an.contains('iterm') || aid.contains('iterm');
-          }
-
-          double frameW(DesktopCapturerSource s) {
-            final f = s.frame;
-            if (f == null) return 0;
-            final w = (f['width'] ?? f['w']);
-            return w ?? 0.0;
-          }
-
-          double frameH(DesktopCapturerSource s) {
-            final f = s.frame;
-            if (f == null) return 0;
-            final h = (f['height'] ?? f['h']);
-            return h ?? 0.0;
-          }
-
-          DesktopCapturerSource? best;
-          double bestScore = double.infinity;
-          for (final s in sources) {
-            // Prefer iTerm2 windows; but allow fallback if metadata is missing.
-            final w = frameW(s);
-            final h = frameH(s);
-            if (w <= 0 || h <= 0) continue;
-            // iTerm2 frame sizes may be in a different scale space (points vs pixels).
-            // Try a small set of scale factors and pick the best match.
-            const scales = <double>[1.0, 2.0, 0.5];
-            double bestSizeScore = double.infinity;
-            for (final scale in scales) {
-              final tw = targetW * scale;
-              final th = targetH * scale;
-              final score = (w - tw).abs() + (h - th).abs();
-              if (score < bestSizeScore) bestSizeScore = score;
-            }
-
-            // Additional soft constraint: aspect ratio similarity.
-            final aspect = w / h;
-            final targetAspect = targetW / targetH;
-            final aspectPenalty = ((aspect - targetAspect).abs() * 1200.0);
-
-            final sizeScore = bestSizeScore + aspectPenalty;
-            final itermPenalty = isIterm(s) ? 0.0 : 5000.0;
-            final score = sizeScore + itermPenalty;
-            if (score < bestScore) {
-              bestScore = score;
-              best = s;
-            }
-          }
-          return best;
-        }
-
-        // iTerm2's `TerminalWindow.window_id` is not guaranteed to match macOS CGWindowID.
-        // If we can't find the window by ID, fall back to best match by window size.
-        selected ??= bestItermWindowByFrameMatch();
-        if (selected == null) {
-          for (final s in sources) {
-            if ((s.appName ?? '').toLowerCase().contains('iterm')) {
-              selected = s;
-              break;
-            }
-          }
-        }
-        selected ??= sources.isNotEmpty ? sources.first : null;
-        if (selected == null) {
+        if (cgId == null) {
           _sendCaptureTargetSwitchResult({
             'ok': false,
             'status': 'failed',
             'type': 'iterm2',
             'sessionId': sessionId,
-            'reason': 'noWindowSources',
+            if (requestId != null && requestId.isNotEmpty)
+              'requestId': requestId,
+            'reason': 'missingCgWindowId',
+            'meta': metaAny,
             'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
           });
           return;
         }
+
+        selected = DesktopCapturerSourceNative(
+          cgId.toString(),
+          'iTerm2',
+          ThumbnailSize(0, 0),
+          SourceType.Window,
+          cgId,
+          'com.googlecode.iterm2',
+          'iTerm2',
+          null,
+        );
         if (streamSettings != null) {
           streamSettings!.cropRect = cropRectNorm;
         }
         final selectionDebug = <String, dynamic>{
           'iterm2MetaWindowId': windowId,
+          'iterm2CgWindowId': cgId,
           'iterm2WindowFrame': metaAny?['windowFrame'],
           'iterm2SessionFrame': metaAny?['frame'],
+          'iterm2LayoutFrame': metaAny?['layoutFrame'],
+          'iterm2LayoutWindowFrame': metaAny?['layoutWindowFrame'],
+          'iterm2SpatialIndex': metaAny?['spatialIndex'],
           'iterm2CropRectNorm': cropRectNorm,
           'iterm2CropTag': cropTag,
           'iterm2CropPenalty': cropPenalty,
@@ -2662,6 +2736,7 @@ class StreamingSession {
             'iterm2SessionId': sessionId,
             'cropRect': cropRectNorm,
             'iterm2WindowSelection': selectionDebug,
+            'cgWindowId': cgId,
           },
           cropRectNormalized: cropRectNorm,
           minWidthConstraint: iterm2MinWidth,
@@ -2669,13 +2744,27 @@ class StreamingSession {
         );
         _iterm2MinWidthConstraint = iterm2MinWidth;
         _iterm2MinHeightConstraint = iterm2MinHeight;
+
+        // Some macOS setups report successful capture start but keep outputting
+        // the previous window. Emit a loud log + structured result so
+        // controller can diagnose without guessing.
+        if (ok) {
+          VLOG0(
+              '[iTerm2] applied switch: sessionId=$sessionId cgWindowId=$cgId crop=$cropRectNorm');
+        } else {
+          VLOG0(
+              '[iTerm2] failed switch: sessionId=$sessionId cgWindowId=$cgId crop=$cropRectNorm');
+        }
         _sendCaptureTargetSwitchResult({
           'ok': ok,
           'status': ok ? 'applied' : 'failed',
           'type': 'iterm2',
           'sessionId': sessionId,
+          if (requestId != null && requestId.isNotEmpty)
+            'requestId': requestId,
           'windowId': selected.windowId,
           'cropRectNorm': cropRectNorm,
+          'iterm2WindowSelection': selectionDebug,
           'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
         });
         return;
@@ -2685,6 +2774,8 @@ class StreamingSession {
         'ok': false,
         'status': 'failed',
         'type': type,
+        if (requestId != null && requestId.isNotEmpty)
+          'requestId': requestId,
         'reason': 'unknownType',
         'durationMs': DateTime.now().millisecondsSinceEpoch - startedAtMs,
       });
@@ -2699,6 +2790,23 @@ class StreamingSession {
     int? minHeightConstraint,
   }) async {
     if (pc == null || videoSender == null) return false;
+
+    // Guard: prevent unintended fallback to screen while iTerm2 target is active.
+    // Some clients repeatedly request screen/window lists; we should not switch
+    // capture unless the request explicitly targets screen/window.
+    final activeCap = (streamSettings?.captureTargetType ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    final requestedCap = (extraCaptureTarget?['captureTargetType'] ?? '')
+        .toString()
+        .trim()
+        .toLowerCase();
+    if (activeCap == 'iterm2' && requestedCap != 'iterm2') {
+      VLOG0(
+          '[CAPTURE] ignore switch to ${desktopSourceTypeToString[source.type]} while iterm2 active');
+      return false;
+    }
 
     final int fps = streamSettings?.framerate ?? 30;
     final frameAny = source.frame;

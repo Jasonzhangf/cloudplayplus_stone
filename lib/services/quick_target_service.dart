@@ -235,7 +235,8 @@ class QuickTargetService {
         }
         break;
       case StreamMode.iterm2:
-        await RemoteIterm2Service.instance.selectPanel(channel, sessionId: target.id);
+        await RemoteIterm2Service.instance
+            .selectPanel(channel, sessionId: target.id, cgWindowId: target.cgWindowId);
         break;
     }
   }
@@ -259,4 +260,3 @@ class QuickTargetService {
     await rememberTarget(t);
   }
 }
-

@@ -5,8 +5,13 @@ class ITerm2PanelInfo {
   final String detail;
   final int index;
   final int? windowId;
+  final int? cgWindowId;
   final Map<String, double>? frame;
   final Map<String, double>? windowFrame;
+  final Map<String, double>? rawWindowFrame;
+  final Map<String, double>? layoutFrame;
+  final Map<String, double>? layoutWindowFrame;
+  final int? spatialIndex;
 
   const ITerm2PanelInfo({
     required this.id,
@@ -14,8 +19,13 @@ class ITerm2PanelInfo {
     required this.detail,
     required this.index,
     this.windowId,
+    this.cgWindowId,
     this.frame,
     this.windowFrame,
+    this.rawWindowFrame,
+    this.layoutFrame,
+    this.layoutWindowFrame,
+    this.spatialIndex,
   });
 
   factory ITerm2PanelInfo.fromMap(Map<String, dynamic> map) {
@@ -45,8 +55,15 @@ class ITerm2PanelInfo {
       index: (map['index'] is num) ? (map['index'] as num).toInt() : 0,
       windowId:
           (map['windowId'] is num) ? (map['windowId'] as num).toInt() : null,
+      cgWindowId:
+          (map['cgWindowId'] is num) ? (map['cgWindowId'] as num).toInt() : null,
       frame: parseRect(map['frame']),
       windowFrame: parseRect(map['windowFrame']),
+      rawWindowFrame: parseRect(map['rawWindowFrame']),
+      layoutFrame: parseRect(map['layoutFrame']),
+      layoutWindowFrame: parseRect(map['layoutWindowFrame']),
+      spatialIndex:
+          (map['spatialIndex'] is num) ? (map['spatialIndex'] as num).toInt() : null,
     );
   }
 
@@ -57,8 +74,13 @@ class ITerm2PanelInfo {
       detail: detail ?? this.detail,
       index: index,
       windowId: windowId,
+      cgWindowId: cgWindowId,
       frame: frame,
       windowFrame: windowFrame,
+      rawWindowFrame: rawWindowFrame,
+      layoutFrame: layoutFrame,
+      layoutWindowFrame: layoutWindowFrame,
+      spatialIndex: spatialIndex,
     );
   }
 }

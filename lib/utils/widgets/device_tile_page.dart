@@ -58,6 +58,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
   late TextEditingController _deviceNameController;
   final FocusNode _connectPasswordFocusNode = FocusNode();
   late TextEditingController setpasswordController;
+  bool _rememberConnectPasswordHashOnly = true;
 
   // 虚拟显示器尺寸的FocusNode
   final FocusNode _virtualDisplayWidthFocusNode = FocusNode();
@@ -96,12 +97,19 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
 
     DeviceSelectManager.lastSelectedDevice = widget.device;
 
-    // Load saved connect password (local only).
-    final savedPasswordKey = 'connectPassword_${widget.device.uid}';
-    final savedPassword =
-        SharedPreferencesManager.getString(savedPasswordKey) ?? '';
-    if (savedPassword.isNotEmpty) {
-      _passwordController.text = savedPassword;
+    // Load saved connect password preference + password (local only).
+    final rememberHashKey = 'connectPasswordRememberHash_${widget.device.uid}';
+    _rememberConnectPasswordHashOnly =
+        SharedPreferencesManager.getBool(rememberHashKey) ?? true;
+
+    // We no longer auto-fill plaintext by default. Only keep a masked hint.
+    if (_rememberConnectPasswordHashOnly) {
+      final savedPwHashKey = 'connectPasswordHash_${widget.device.uid}';
+      final cachedHash = SharedPreferencesManager.getString(savedPwHashKey) ?? '';
+      if (cachedHash.trim().isNotEmpty) {
+        // Show masked placeholder to signal "hash saved".
+        _passwordController.text = '***';
+      }
     }
     // 从缓存中加载虚拟显示器尺寸，如果没有则使用默认值
     _virtualDisplayWidth =
@@ -1588,6 +1596,7 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     final connectPassword = _passwordController.text;
     final savedPasswordKey = 'connectPassword_${widget.device.uid}';
     final savedPwHashKey = 'connectPasswordHash_${widget.device.uid}';
+    final rememberHashKey = 'connectPasswordRememberHash_${widget.device.uid}';
 
     // Persist connect password/hash locally for this device.
     //
@@ -1599,11 +1608,18 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     //   can use hash-only mode (no plaintext needed).
     String? connectPasswordHash;
     final pwTrimmed = connectPassword.trim();
-    if (pwTrimmed.isNotEmpty) {
+    if (pwTrimmed.isNotEmpty && pwTrimmed != '***') {
       try {
         connectPasswordHash = HashUtil.hash(pwTrimmed);
-        await SharedPreferencesManager.setString(savedPasswordKey, pwTrimmed);
-        await SharedPreferencesManager.setString(savedPwHashKey, connectPasswordHash);
+        await SharedPreferencesManager.setBool(
+            rememberHashKey, _rememberConnectPasswordHashOnly);
+        if (_rememberConnectPasswordHashOnly) {
+          // Hash-only mode: never persist plaintext.
+          await SharedPreferencesManager.setString(savedPasswordKey, '');
+          await SharedPreferencesManager.setString(savedPwHashKey, connectPasswordHash);
+          // Keep UI hint.
+          _passwordController.text = '***';
+        }
       } catch (_) {
         connectPasswordHash = null;
       }
@@ -1637,7 +1653,8 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
     await context.read<AppStore>().dispatch(
           AppIntentConnectCloud(
             deviceConnectionId: device.websocketSessionid,
-            connectPassword: pwTrimmed.isNotEmpty ? pwTrimmed : null,
+            // Hash-only: never send plaintext.
+            connectPassword: null,
             connectPasswordHash: connectPasswordHash,
           ),
         );
@@ -1651,8 +1668,11 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
         'connectPassword_${widget.device.uid}', '');
     await SharedPreferencesManager.setString(
         'connectPasswordHash_${widget.device.uid}', '');
+    await SharedPreferencesManager.setBool(
+        'connectPasswordRememberHash_${widget.device.uid}', false);
     setState(() {
       _passwordController.text = '';
+      _rememberConnectPasswordHashOnly = false;
     });
   }
 
@@ -1662,12 +1682,49 @@ class _DeviceDetailPageState extends State<DeviceDetailPage> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('请输入连接密码'),
-        content: TextField(
-          controller: controller,
-          obscureText: true,
-          decoration: const InputDecoration(
-            hintText: '与 Host 端一致（无密码可留空）',
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextField(
+              controller: controller,
+              obscureText: true,
+              decoration: const InputDecoration(
+                hintText: '与 Host 端一致（无密码可留空）',
+              ),
+            ),
+            const SizedBox(height: 12),
+            StatefulBuilder(
+              builder: (context, setInner) {
+                return CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('记住二级密码 Hash（本机）'),
+                  subtitle: const Text('将保存 hash 并显示为 ***，可随时清理'),
+                  value: _rememberConnectPasswordHashOnly,
+                  onChanged: (v) {
+                    setInner(() {
+                      _rememberConnectPasswordHashOnly = v == true;
+                    });
+                    final rememberKey =
+                        'connectPasswordRememberHash_${widget.device.uid}';
+                    // Best-effort persist; connecting will also persist.
+                    SharedPreferencesManager.setBool(
+                        rememberKey, _rememberConnectPasswordHashOnly);
+                    if (!_rememberConnectPasswordHashOnly) {
+                      // If user opts out, clear stored secret.
+                      SharedPreferencesManager.setString(
+                          'connectPassword_${widget.device.uid}', '');
+                      SharedPreferencesManager.setString(
+                          'connectPasswordHash_${widget.device.uid}', '');
+                      _passwordController.text = '';
+                    }
+                  },
+                  controlAffinity: ListTileControlAffinity.leading,
+                );
+              },
+            ),
+          ],
         ),
         actions: [
           TextButton(

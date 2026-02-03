@@ -46,7 +46,8 @@ void main() {
 
     test('RemoteIterm2Service.selectPanel sends expected JSON', () async {
       final dc = FakeRTCDataChannel();
-      await RemoteIterm2Service.instance.selectPanel(dc, sessionId: 'sess-1');
+      await RemoteIterm2Service.instance
+          .selectPanel(dc, sessionId: 'sess-1', cgWindowId: 1);
       expect(dc.sent, hasLength(1));
       final decoded = jsonDecode(dc.sent.single.text) as Map<String, dynamic>;
       final payload = decoded['setCaptureTarget'] as Map<String, dynamic>;

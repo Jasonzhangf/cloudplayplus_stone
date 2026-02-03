@@ -47,7 +47,12 @@ class DiagnosticsLogService {
       _tail.removeFirst();
     }
     // Best-effort file write.
-    _sink?.writeln(line);
+    try {
+      _sink?.writeln(line);
+    } catch (_) {
+      // If the sink is in a bad state, drop it and keep in-memory logging only.
+      _sink = null;
+    }
     // Rotate daily on write boundary (cheap).
     unawaited(_rotateIfNeeded(role: role));
   }

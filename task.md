@@ -173,6 +173,113 @@ async def main(connection):
 iterm2.run_until_complete(main)
 PY
 
+---
+
+# 本地回归与稳定性（Loopback + DataChannel + iTerm2 切换）任务
+
+> 目标：本地完成可复现回归流程，先在 loopback 自测修复，再到真机。
+> 重点：DataChannel 自动重试（后台 15s 超时），iTerm2 panel 正确切换与裁切。
+
+## 一、状态快照（当前已完成）
+
+- [x] ControlRequestManager 后台重试（15s 超时）
+- [x] 控制通道状态变化统一触发 dataChannelRevision
+- [x] iTerm2 panel 切换携带 cgWindowId
+- [x] iTerm2 panel 裁切使用真实 session frame（支持非均匀布局）
+- [x] 基础单测：`iterm2_crop_test` / `iterm2_prev_next_panel_test`
+- [x] 关键控制日志写入文件（DiagnosticsLogService）
+- [x] 快照日志（DiagnosticsSnapshotService）
+- [~] 真实机回归（macOS host + Android controller）：
+  - [x] 修复 iTerm2 activate+crop 脚本返回 cgWindowId（CoreGraphics 匹配）
+  - [x] iTerm2 切换忽略幂等逻辑（强制 re-apply）
+  - [x] 防止 iTerm2 激活时被 screen/window 请求覆盖（host 侧 guard）
+  - [x] controller 对 host 'ignored' 进行自动重试（新 requestId）
+- [x] iTerm2 裁切：在 Session.frame 与 layoutFrame 间按 penalty 选最佳（非均匀宽高）
+- [x] iTerm2 panel 排序按空间坐标（layout/frame）优先，修复序号/切换顺序错位
+- [x] iTerm2 sources/activate 脚本输出 spatialIndex，按空间顺序重标号（修复 1.1.x 对不上）
+- [x] iTerm2 panel 列表刷新强制重取（防止 1.1.x 重新标号后错配）
+
+
+## 二、回归流程设计（必须执行）
+
+> 状态说明：
+> - [ ] 未开始
+> - [~] 进行中
+> - [x] 已完成
+
+### 2.1 Loopback 双进程（Headless）
+- [x] Host/Controller headless 启动（通过 macOS app binary，环境变量控制角色）
+- [x] CLI 端口固定：Host 19001 / Controller 19002
+- [x] 基线：连接成功 + DataChannel ready
+
+启动方式（macOS Debug app）：
+
+```bash
+# 先 build
+flutter build macos --debug
+
+# 终端 A：Host
+LOOPBACK_MODE=host LOOPBACK_HIDE_WINDOW=true CLI_ROLE=host \
+  build/macos/Build/Products/Debug/CloudPlayPlus.app/Contents/MacOS/CloudPlayPlus
+
+# 终端 B：Controller
+LOOPBACK_MODE=controller LOOPBACK_HIDE_WINDOW=true CLI_ROLE=controller LOOPBACK_HOST_ADDR=127.0.0.1 \
+  build/macos/Build/Products/Debug/CloudPlayPlus.app/Contents/MacOS/CloudPlayPlus
+
+# 检查端口
+lsof -n -P -iTCP:17999 -sTCP:LISTEN
+lsof -n -P -iTCP:19001 -sTCP:LISTEN
+lsof -n -P -iTCP:19002 -sTCP:LISTEN
+```
+
+### 2.2 自动回归动作（必跑）
+- [x] 请求 iTerm2 panel 列表（带 cgWindowId）
+- [x] 按次序切换 panel（至少 10 次）
+- [ ] 快捷切换 prev/next（至少 5 次）
+- [x] 切换期间不允许断连（本轮 10 次切换未出现断连）
+
+执行方式（CLI）：
+
+```bash
+# controller 连接 host
+python3 scripts/cli_sequence.py --role controller --cmd connect --params '{"host":"127.0.0.1","port":17999}'
+
+# 刷新 targets (windows/screens/iterm2)
+python3 scripts/cli_sequence.py --role controller --cmd refresh_targets
+
+# 列出 panels
+python3 scripts/cli_sequence.py --role controller --cmd list_iterm2_panels
+
+# 切换 panel (示例)
+python3 scripts/cli_sequence.py --role controller --cmd set_capture_target \
+  --params '{"type":"iterm2","iterm2SessionId":"<sessionId>","cgWindowId":<cgWindowId>}'
+
+# 压力切换
+python3 scripts/ui_loopback/cli_burst_switch_panels.py --count 10
+```
+
+### 2.3 断连保护（DataChannel 不稳定）
+- [ ] DataChannel 未就绪时后台自动重试（15s 超时）
+- [ ] 不弹 UI 提示 retry
+- [ ] 超时才失败，且有日志快照
+
+### 2.4 裁切精度验证（2x5 非均匀布局）
+- [ ] Panel 宽高不均匀，裁切范围必须匹配真实 frame
+- [ ] 上下 panel 纵向裁切正确
+
+## 三、执行记录（逐项打钩）
+
+- [x] 启动 loopback host/controller 并运行自动回归（通过 `scripts/loopback/run_loopback_and_regress.sh`）
+- [ ] 发现问题即修复并回归
+- [ ] 通过后再上真机验证
+
+## 四、日志与快照要求（必须保留）
+
+- [x] 控制消息日志落盘（DiagnosticsLogService）
+- [x] 快照日志落盘（DiagnosticsSnapshotService）
+- [ ] 每次回归完成后记录日志文件路径
+
+
 python3 - <<'PY'
 import iterm2
 async def main(connection):
@@ -899,3 +1006,66 @@ flutter run -d macos -t scripts/verify/verify_iterm2_panel_encoding_matrix_app.d
 
 - 组合切换过程中不黑屏（每个 case `looksNonBlack=true`）
 - cropRect 对应 panel 1.1.2 的内容稳定（不会跳到 1.1.1 等其它 panel）
+
+---
+
+# 七、CLI WebSocket 控制协议（实现中）
+
+文档：`docs/cli_websocket_protocol.md`
+
+目标：Host + Controller 都提供本地可控 CLI（WebSocket），用于自动化本地回归，不再依赖真机远程调试基础逻辑。
+
+端口（固定）：
+- Host CLI: `ws://127.0.0.1:19001`
+- Controller CLI: `ws://127.0.0.1:19002`
+
+## 阶段 1：CLI Server 落地
+
+- [x] 文档化协议
+- [~] Host CLI（19001）
+  - [x] ping
+  - [x] get_state（最小实现：返回 sessions、lastTarget、mode）
+  - [ ] disconnect_session
+- [~] Controller CLI（19002）
+- [ ] Controller CLI 进程常驻（后台启动不退出）
+  - [x] ping
+  - [x] connect (LAN)
+  - [x] disconnect
+  - [x] refresh_targets（请求 screen/window/iterm2 列表并等待缓存）
+  - [x] list_screens / list_windows / list_iterm2_panels
+  - [x] set_capture_target: screen / window / iterm2
+  - [ ] set_capture_target: region（base + rect 归一化）
+  - [x] restore_last_target（并实现 fallback：panel/window 不存在 -> 选第一个）
+  - [x] CLI 等待 DataChannel（connect 后 0~6s 轮询）
+
+## 阶段 2：本地自连接回归（必须自动化）
+
+- [~] 本地启动脚本
+  - [x] `scripts/loopback/run_local_host.sh`
+  - [x] `scripts/loopback/run_local_controller.sh`
+  - [x] `scripts/loopback/run_local_macos_controller.sh`（预留）
+- [~] CLI 驱动脚本
+  - [x] `scripts/cli_send.py`（单条发送）
+  - [x] `scripts/cli_sequence.py`（connect -> refresh -> 切换 panel 序列）
+  - [ ] 加断言：切换过程中不得断连（通过 get_state/host 日志判断）
+  - [x] 本地回环：connect -> refresh_targets -> list_iterm2_panels -> set_capture_target（已跑通）
+  - [x] 高频切换 panel 10x5（CLI burst）无断连
+
+## 阶段 3：复现并修复“切 panel 必断开”
+
+- [ ] 用 Controller CLI 驱动真实 iTerm2 panels：首次恢复 1.1.8（不存在则第一个）
+- [ ] 连续点击切换（高频）复现断连
+- [ ] 修复后把该序列固化为回归测试脚本
+
+
+# 八、UI 真实回归：切 panel 不应断开回设备列表（进行中）
+- [x] 复现“不断开但不切换”：原因是 iTerm2 panel 列表缺少 cgWindowId，host 无法切到正确窗口（会抓到 host 自己）
+- [~] 修复路径：Controller 端缺 cgWindowId 时 fail-fast 提示；下一步让 host 返回/推送 cgWindowId（或 controller 侧补一次 windowId->cgWindowId 映射）
+
+
+- [~] 本地复现（macOS controller UI）：连接后进入 panel 列表，反复切换 panel
+- [x] 修复 controller 后台进程崩溃（log sink 异常 / env 模式不生效）
+- [x] 建立 loopback + CLI 驱动基础链路（connect/refresh/list/switch）
+- [ ] 在 UI 层面埋点：记录触发“回到设备列表”的原因（session phase / route）
+- [ ] 复现并修复：切换 panel 不得触发 disconnect / session failed
+- [ ] 补回归：integration_test 或脚本驱动（至少能检测不会自动 pop 回设备列表）

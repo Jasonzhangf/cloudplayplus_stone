@@ -27,28 +27,55 @@ void main() {
 
     final dc = FakeRTCDataChannel();
     svc.panels.value = const [
-      ITerm2PanelInfo(id: 'a', title: '1', detail: '', index: 0),
-      ITerm2PanelInfo(id: 'b', title: '2', detail: '', index: 1),
-      ITerm2PanelInfo(id: 'c', title: '3', detail: '', index: 2),
+      ITerm2PanelInfo(
+        id: 'a',
+        title: '1',
+        detail: '',
+        index: 0,
+        cgWindowId: 1,
+        layoutFrame: {'x': 0, 'y': 0, 'w': 100, 'h': 100},
+      ),
+      ITerm2PanelInfo(
+        id: 'b',
+        title: '2',
+        detail: '',
+        index: 1,
+        cgWindowId: 1,
+        layoutFrame: {'x': 100, 'y': 0, 'w': 100, 'h': 100},
+      ),
+      ITerm2PanelInfo(
+        id: 'c',
+        title: '3',
+        detail: '',
+        index: 2,
+        cgWindowId: 1,
+        layoutFrame: {'x': 200, 'y': 0, 'w': 100, 'h': 100},
+      ),
     ];
 
     svc.selectedSessionId.value = 'b';
     await svc.selectNextPanel(dc);
+    // Wait for retry loop to send (ControlRequestManager backs off asynchronously).
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     expect(dc.sent, isNotEmpty);
     final nextMsg = jsonDecode(dc.sent.last.text) as Map<String, dynamic>;
     expect(nextMsg.containsKey('setCaptureTarget'), isTrue);
-    expect((nextMsg['setCaptureTarget'] as Map)['sessionId'], 'c');
+    final nextPayload = (nextMsg['setCaptureTarget'] as Map);
+    expect(nextPayload['sessionId'], 'c');
+    expect((nextPayload['requestId'] as String?)?.isNotEmpty ?? false, isTrue);
 
     // Simulate host ack so pending selection is cleared.
     svc.handleCaptureTargetSwitchResult({
       'type': 'iterm2',
       'sessionId': 'c',
+      'requestId': nextPayload['requestId'],
       'ok': true,
       'status': 'applied',
     });
 
     svc.selectedSessionId.value = 'a';
     await svc.selectPrevPanel(dc);
+    await Future<void>.delayed(const Duration(milliseconds: 300));
     final prevMsg = jsonDecode(dc.sent.last.text) as Map<String, dynamic>;
     expect((prevMsg['setCaptureTarget'] as Map)['sessionId'], 'c');
   });

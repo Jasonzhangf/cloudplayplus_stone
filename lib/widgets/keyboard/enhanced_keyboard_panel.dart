@@ -4,6 +4,7 @@ import 'package:vk/vk.dart';
 import '../../controller/screen_controller.dart';
 import '../../core/blocks/input/chord_key_sender.dart';
 import '../../models/shortcut.dart';
+import '../../services/keyboard_state_manager.dart';
 import '../../services/shortcut_service.dart';
 import '../../services/webrtc_service.dart';
 import 'shortcut_bar.dart';
@@ -140,6 +141,9 @@ class _EnhancedKeyboardPanelState extends State<EnhancedKeyboardPanel> {
         WidgetsBinding.instance.addPostFrameCallback((_) {
           // Do not auto-hide IME when user is editing local UI text (rename dialogs, etc).
           if (ScreenController.localTextEditing.value) return;
+          // When local UI is not editing but some other subsystem owns the IME,
+          // do not interfere.
+          if (KeyboardStateManager.instance.owners > 0) return;
           // If the user explicitly requested the system IME (remote input), don't fight it.
           if (ScreenController.systemImeActive.value) return;
           SystemChannels.textInput.invokeMethod('TextInput.hide');
