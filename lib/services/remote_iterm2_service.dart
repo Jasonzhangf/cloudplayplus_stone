@@ -31,6 +31,7 @@ class RemoteIterm2Service {
   Timer? _timeoutTimer;
   Timer? _pendingRetryTimer;
   Timer? _pendingRelativeTimer;
+  Timer? _initPrefetchTimer;
   int? _pendingRelativeDelta;
   int _pendingRelativeRetries = 0;
   int _requestToken = 0;
@@ -38,6 +39,21 @@ class RemoteIterm2Service {
   String? _pendingSelectRequestId;
   int _pendingSelectRetries = 0;
   RTCDataChannel? _lastChannel;
+
+  void prefetchPanelsOnChannelReady(RTCDataChannel? channel) {
+    if (channel == null || channel.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+    // Avoid spamming: if we already have panels or are loading, do nothing.
+    if (loading.value || panels.value.isNotEmpty) return;
+
+    _initPrefetchTimer?.cancel();
+    _initPrefetchTimer = Timer(const Duration(milliseconds: 250), () {
+      _initPrefetchTimer = null;
+      if (panels.value.isNotEmpty || loading.value) return;
+      unawaited(requestPanels(channel));
+    });
+  }
 
   String _newRequestId() {
     // Monotonic id (good enough for in-session de-dupe; no need for UUID).
@@ -228,8 +244,10 @@ class RemoteIterm2Service {
     // Persist channel for retry.
     _lastChannel = channel;
 
-    // Ensure we have at least some panels and a selected id; best-effort request if empty.
-    if (panels.value.isEmpty || selectedSessionId.value == null) {
+    // Ensure we have at least some panels; best-effort request if empty.
+    // We intentionally do NOT require selectedSessionId here. If the host hasn't
+    // reported it yet, we still let the first tap perform a deterministic action.
+    if (panels.value.isEmpty) {
       VLOG0('[iterm2] selectRelative(delta=$delta): panels empty -> requestPanels and retry');
       await requestPanels(channel);
       // Do not block UI here; but auto-retry a few times so first tap can work.
@@ -268,6 +286,7 @@ class RemoteIterm2Service {
     final delta = _pendingRelativeDelta;
     if (delta == null) return;
     if (_pendingRelativeRetries >= 6) return;
+
     _pendingRelativeRetries++;
     final delayMs = (180 * _pendingRelativeRetries).clamp(180, 1200).toInt();
     _pendingRelativeTimer = Timer(Duration(milliseconds: delayMs), () {
@@ -457,6 +476,12 @@ class RemoteIterm2Service {
             selectedSessionId.value = parsed.first.id;
           }
         }
+      }
+
+      // If the user pressed next/prev before we had a selectedSessionId,
+      // retry the pending relative action once we have a fresh snapshot.
+      if (_pendingRelativeDelta != null) {
+        _scheduleRelativeRetry();
       }
       loading.value = false;
     } catch (e) {

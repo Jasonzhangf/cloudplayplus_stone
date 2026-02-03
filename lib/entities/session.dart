@@ -878,6 +878,13 @@ class StreamingSession {
       channel?.onDataChannelState = (state) {
         VLOG0('[WebRTC] dataChannelState(host) label=${channel?.label} state=$state');
         WebrtcService.notifyDataChannelChanged();
+
+        // Prefetch iTerm2 panels as soon as the reliable control channel is open.
+        // This makes the very first "next/prev panel" action work without the
+        // user needing to open the picker page first.
+        if (state == RTCDataChannelState.RTCDataChannelOpen) {
+          RemoteIterm2Service.instance.prefetchPanelsOnChannelReady(channel);
+        }
       };
       _schedulePingKickoff(Uint8List.fromList([LP_PING, RP_PONG]));
 

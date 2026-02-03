@@ -146,11 +146,25 @@ void main() {
     // Clear sent messages from sources request
     dc.sent.clear();
 
+    Future<Map<String, dynamic>> popSetCaptureTarget() async {
+      // First call may trigger a sources refresh; poll briefly for the real switch.
+      for (int i = 0; i < 12; i++) {
+        final sent = dc.sent.toList(growable: false);
+        for (final m in sent) {
+          final msg = jsonDecode(m.text) as Map<String, dynamic>;
+          final payloadAny = msg['setCaptureTarget'];
+          if (payloadAny is Map) {
+            return payloadAny.map((k, v) => MapEntry(k.toString(), v));
+          }
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 40));
+      }
+      throw StateError('expected setCaptureTarget not sent');
+    }
+
     // Select next panel (a -> b)
     await iterm2Service.selectNextPanel(dc);
-    expect(dc.sent.length, 1);
-    final msg1 = jsonDecode(dc.sent.first.text) as Map<String, dynamic>;
-    final payload1 = msg1['setCaptureTarget'] as Map<String, dynamic>;
+    final payload1 = await popSetCaptureTarget();
     expect(payload1['sessionId'], 'b');
     expect(payload1['cgWindowId'], 1002);
 
@@ -158,9 +172,7 @@ void main() {
 
     // Select next panel (b -> c)
     await iterm2Service.selectNextPanel(dc);
-    expect(dc.sent.length, 1);
-    final msg2 = jsonDecode(dc.sent.first.text) as Map<String, dynamic>;
-    final payload2 = msg2['setCaptureTarget'] as Map<String, dynamic>;
+    final payload2 = await popSetCaptureTarget();
     expect(payload2['sessionId'], 'c');
     expect(payload2['cgWindowId'], 1003);
 
@@ -168,9 +180,7 @@ void main() {
 
     // Select prev panel (c -> b)
     await iterm2Service.selectPrevPanel(dc);
-    expect(dc.sent.length, 1);
-    final msg3 = jsonDecode(dc.sent.first.text) as Map<String, dynamic>;
-    final payload3 = msg3['setCaptureTarget'] as Map<String, dynamic>;
+    final payload3 = await popSetCaptureTarget();
     expect(payload3['sessionId'], 'b');
     expect(payload3['cgWindowId'], 1002);
 
@@ -178,9 +188,7 @@ void main() {
 
     // Select prev panel (b -> a)
     await iterm2Service.selectPrevPanel(dc);
-    expect(dc.sent.length, 1);
-    final msg4 = jsonDecode(dc.sent.first.text) as Map<String, dynamic>;
-    final payload4 = msg4['setCaptureTarget'] as Map<String, dynamic>;
+    final payload4 = await popSetCaptureTarget();
     expect(payload4['sessionId'], 'a');
     expect(payload4['cgWindowId'], 1001);
   });

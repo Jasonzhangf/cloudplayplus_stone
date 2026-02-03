@@ -11,6 +11,7 @@ import 'package:cloudplayplus/controller/screen_controller.dart';
 import 'package:cloudplayplus/services/keyboard_state_manager.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/services.dart';
 
@@ -40,6 +41,9 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
   VoidCallback? _modeListener;
   bool _didRefreshAfterChannelOpen = false;
 
+  Timer? _iterm2RefreshRetryTimer;
+  int _iterm2RefreshRetryAttempt = 0;
+
   @override
   void initState() {
     super.initState();
@@ -52,6 +56,8 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
 
   @override
   void dispose() {
+    _iterm2RefreshRetryTimer?.cancel();
+    _iterm2RefreshRetryTimer = null;
     if (_modeListener != null) {
       _quick.mode.removeListener(_modeListener!);
       _modeListener = null;
@@ -71,7 +77,7 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
             WebrtcService.activeReliableDataChannel);
         break;
       case StreamMode.iterm2:
-        await _iterm2.requestPanels(WebrtcService.activeReliableDataChannel);
+        await _refreshIterm2WithRetry();
         // Also request window thumbnails so we can render per-panel previews.
         await _windows.requestWindowSources(
           WebrtcService.activeReliableDataChannel,
@@ -81,6 +87,43 @@ class _StreamTargetSelectPageState extends State<StreamTargetSelectPage> {
         );
         break;
     }
+  }
+
+  Future<void> _refreshIterm2WithRetry() async {
+    _iterm2RefreshRetryTimer?.cancel();
+    _iterm2RefreshRetryTimer = null;
+    _iterm2RefreshRetryAttempt = 0;
+
+    final dc = WebrtcService.activeReliableDataChannel;
+    if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
+      return;
+    }
+
+    await _iterm2.requestPanels(dc);
+    _scheduleIterm2RefreshRetry();
+  }
+
+  void _scheduleIterm2RefreshRetry() {
+    _iterm2RefreshRetryTimer?.cancel();
+    _iterm2RefreshRetryTimer = null;
+
+    // If we already have panels (or no error), no need to retry.
+    if (_iterm2.panels.value.isNotEmpty) return;
+    if (_iterm2.error.value == null) return;
+    if (_iterm2RefreshRetryAttempt >= 6) return;
+
+    _iterm2RefreshRetryAttempt++;
+    final delayMs = (250 * _iterm2RefreshRetryAttempt).clamp(250, 1500).toInt();
+    _iterm2RefreshRetryTimer = Timer(Duration(milliseconds: delayMs), () {
+      _iterm2RefreshRetryTimer = null;
+      if (!mounted) return;
+      final dc = WebrtcService.activeReliableDataChannel;
+      if (dc == null || dc.state != RTCDataChannelState.RTCDataChannelOpen) {
+        return;
+      }
+      unawaited(_iterm2.requestPanels(dc));
+      _scheduleIterm2RefreshRetry();
+    });
   }
 
   Future<int?> _pickFavoriteSlot(BuildContext context) async {
