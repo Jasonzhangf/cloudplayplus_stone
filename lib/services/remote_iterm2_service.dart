@@ -28,6 +28,7 @@ class RemoteIterm2Service {
   final ValueNotifier<String?> selectedSessionId = ValueNotifier<String?>(null);
   final ValueNotifier<bool> loading = ValueNotifier<bool>(false);
   final ValueNotifier<String?> error = ValueNotifier<String?>(null);
+  String? _lastSelectedBeforeRequest;
   Timer? _timeoutTimer;
   Timer? _pendingRetryTimer;
   Timer? _pendingRelativeTimer;
@@ -129,6 +130,11 @@ class RemoteIterm2Service {
     _pendingSelectRetries = 0;
     loading.value = true;
     error.value = null;
+    _lastSelectedBeforeRequest = selectedSessionId.value;
+    // Optimistically update selection so UI doesn't double-highlight.
+    if (selectedSessionId.value != sessionId) {
+      selectedSessionId.value = sessionId;
+    }
 
     DiagnosticsSnapshotService.instance.capture(
       'iterm2.selectPanel.start',
@@ -164,6 +170,10 @@ class RemoteIterm2Service {
     if (cgWindowId == null) {
       loading.value = false;
       error.value = '缺少 cgWindowId：无法切换 iTerm2 panel（请先刷新 panel 列表或升级 host）';
+      // Roll back optimistic selection on failure.
+      if (_lastSelectedBeforeRequest != null) {
+        selectedSessionId.value = _lastSelectedBeforeRequest;
+      }
       VLOG0('[iterm2] selectPanel: missing cgWindowId sessionId=$sessionId');
       DiagnosticsSnapshotService.instance.capture(
         'iterm2.selectPanel.missingCgWindowId',
@@ -207,6 +217,10 @@ class RemoteIterm2Service {
     } catch (e) {
       loading.value = false;
       error.value = 'iTerm2 切换失败：$e';
+      // Roll back optimistic selection on failure.
+      if (_lastSelectedBeforeRequest != null) {
+        selectedSessionId.value = _lastSelectedBeforeRequest;
+      }
       DiagnosticsSnapshotService.instance.capture(
         'iterm2.selectPanel.error',
         extra: {
