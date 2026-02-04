@@ -181,6 +181,11 @@ class LoopbackTestRunner {
   void _handleHostSideMessage(String text) {
     try {
       final m = jsonDecode(text) as Map<String, dynamic>;
+      final iterm2Req = m['iterm2SourcesRequest'];
+      if (iterm2Req is Map) {
+        _sendIterm2Sources();
+        return;
+      }
       final setCaptureTarget = m['setCaptureTarget'];
       if (setCaptureTarget is Map) {
         final type = setCaptureTarget['type']?.toString();
@@ -201,6 +206,51 @@ class LoopbackTestRunner {
     } catch (e) {
       _log('Host: error handling message: $e');
     }
+  }
+
+  void _sendIterm2Sources() {
+    if (_dc == null || _dc!.state != RTCDataChannelState.RTCDataChannelOpen) {
+      _log('Host: cannot send iterm2Sources - dc not ready');
+      return;
+    }
+    final payload = {
+      'iterm2Sources': {
+        'selectedSessionId': 'sess-1',
+        'panels': [
+          {
+            'id': 'sess-1',
+            'title': '1.1.1',
+            'detail': 'tab1',
+            'index': 0,
+            'cgWindowId': 1001,
+          },
+          {
+            'id': 'sess-2',
+            'title': '1.1.2',
+            'detail': 'tab2',
+            'index': 1,
+            'cgWindowId': 1001,
+          },
+          {
+            'id': 'sess-3',
+            'title': '1.1.3',
+            'detail': 'tab3',
+            'index': 2,
+            'cgWindowId': 1001,
+          },
+          {
+            'id': 'sess-4',
+            'title': '1.1.4',
+            'detail': 'tab4',
+            'index': 3,
+            'cgWindowId': 1001,
+          },
+        ],
+      }
+    };
+    final js = jsonEncode(payload);
+    _dc!.send(RTCDataChannelMessage(js));
+    _log('Host: sent iterm2Sources ${js.length}B');
   }
 
   void _sendCaptureTargetChanged({
@@ -376,33 +426,39 @@ class LoopbackTestRunner {
       'QuickTarget: mode=${quick.mode.value} lastTarget=${quick.lastTarget.value?.encode()}',
     );
     
-    // 模拟 iterm2 panels
-    const panels = [
-      ITerm2PanelInfo(
-        id: 'sess-1',
-        title: '1.1.1',
-        detail: 'tab1',
-        index: 0,
-        cgWindowId: 1001,
-      ),
-      ITerm2PanelInfo(
-        id: 'sess-2',
-        title: '1.1.2',
-        detail: 'tab2',
-        index: 1,
-        cgWindowId: 1002,
-      ),
-      ITerm2PanelInfo(
-        id: 'sess-3',
-        title: '1.1.8',
-        detail: 'tab8',
-        index: 7,
-        cgWindowId: 1008,
-      ),
-    ];
-    
-    // 更新 iterm2 服务
-    RemoteIterm2Service.instance.panels.value = panels;
+    // Use real iTerm2 panels from the host via DataChannel request.
+    // This ensures loopback exercises the same logic as the mobile client.
+    RemoteIterm2Service.instance.panels.value = const [];
+    await RemoteIterm2Service.instance.requestPanels(dc);
+    // Wait for panels to arrive (host sends "iterm2Sources" back).
+    final gotPanels = Completer<void>();
+    void maybeDone() {
+      if (RemoteIterm2Service.instance.panels.value.isNotEmpty &&
+          !gotPanels.isCompleted) {
+        gotPanels.complete();
+      }
+    }
+
+    RemoteIterm2Service.instance.panels.addListener(maybeDone);
+    // Also poll a bit to avoid missing a synchronous update.
+    maybeDone();
+    await gotPanels.future.timeout(const Duration(seconds: 5), onTimeout: () {
+      return;
+    });
+    try {
+      RemoteIterm2Service.instance.panels.removeListener(maybeDone);
+    } catch (_) {}
+
+    final panels = RemoteIterm2Service.instance.panels.value;
+    if (panels.isEmpty) {
+      _log('ERROR: no iterm2 panels received in loopback; abort test');
+      throw StateError('no iterm2 panels received');
+    }
+
+    _log('Received iterm2 panels count=${panels.length}');
+    for (int i = 0; i < panels.length && i < 5; i++) {
+      _log('Panel[$i] title=${panels[i].title} id=${panels[i].id} cg=${panels[i].cgWindowId}');
+    }
 
     _log('DataChannel: ${dc.label}@${dc.state}');
 
@@ -413,41 +469,44 @@ class LoopbackTestRunner {
       }
     }
 
-    // Restore to last panel
-    _log('Switching to last panel 1.1.8 (sess-3)...');
+    // Restore to a deterministic panel (prefer last panel to catch edge cases).
+    final targetLast = panels.last;
+    _log('Switching to last panel ${targetLast.title} (${targetLast.id})...');
     await RemoteIterm2Service.instance.selectPanel(
       dc,
-      sessionId: 'sess-3',
-      cgWindowId: 1008,
+      sessionId: targetLast.id,
+      cgWindowId: targetLast.cgWindowId,
     );
     await Future<void>.delayed(const Duration(seconds: 2));
     await assertDcOpen('restore 1.1.8');
 
     // Test 2: rapid switching (simulate repeated taps)
     _log('=== Test 2: Rapid switching should not disconnect ===');
-    _log('Switching to 1.1.1 (sess-1)...');
+    final target0 = panels.first;
+    _log('Switching to first panel ${target0.title} (${target0.id})...');
     await RemoteIterm2Service.instance.selectPanel(
       dc,
-      sessionId: 'sess-1',
-      cgWindowId: 1001,
+      sessionId: target0.id,
+      cgWindowId: target0.cgWindowId,
     );
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await assertDcOpen('switch 1.1.1');
 
-    _log('Switching to 1.1.2 (sess-2)...');
+    final target1 = (panels.length > 1) ? panels[1] : panels.first;
+    _log('Switching to second panel ${target1.title} (${target1.id})...');
     await RemoteIterm2Service.instance.selectPanel(
       dc,
-      sessionId: 'sess-2',
-      cgWindowId: 1002,
+      sessionId: target1.id,
+      cgWindowId: target1.cgWindowId,
     );
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await assertDcOpen('switch 1.1.2');
 
-    _log('Switching back to 1.1.8 (sess-3)...');
+    _log('Switching back to last panel ${targetLast.title} (${targetLast.id})...');
     await RemoteIterm2Service.instance.selectPanel(
       dc,
-      sessionId: 'sess-3',
-      cgWindowId: 1008,
+      sessionId: targetLast.id,
+      cgWindowId: targetLast.cgWindowId,
     );
     await Future<void>.delayed(const Duration(milliseconds: 300));
     await assertDcOpen('switch back 1.1.8');

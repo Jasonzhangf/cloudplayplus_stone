@@ -27,6 +27,13 @@ class DiagnosticsLogService {
 
   String? get currentLogPath => _path;
 
+  /// Expose the current on-disk log file path (if any). Useful for in-app
+  /// "share logs" UX on platforms where file sharing is supported.
+  ///
+  /// Note: this is best-effort; on some platforms we may only keep an
+  /// in-memory tail (see [_defaultLogDir] fallback).
+  String? get currentLogFilePath => _path;
+
   Future<void> init({String role = 'app'}) async {
     if (_inited) return;
     _inited = true;
